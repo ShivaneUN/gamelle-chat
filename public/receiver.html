@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Récepteur - Gamelle Chat</title>
+<link rel="stylesheet" href="/style.css?v=15">
+</head>
+<body>
+<div class="wrap">
+  <div class="page-head">
+    <h1>🐱 Récepteur</h1>
+    <a class="home-btn" href="/">🏠 Accueil</a>
+  </div>
+  <div class="pair-code">
+    <span class="muted">Code de jumelage</span>
+    <div id="pairCode" class="pair-code-value"></div>
+    <p class="hint">Scanne le QR ou ouvre le lien sur le Contrôleur</p>
+    <div id="controllerQr" class="pair-qr-box"></div>
+    <span class="muted">Lien Contrôleur</span>
+    <a id="controllerLink" class="pair-link" href="#"></a>
+    <button type="button" class="ghost" id="copyControllerLink">Copier le lien</button>
+  </div>
+  <div id="status" class="status off">Connexion...</div>
+
+  <div class="card" id="updateCard">
+    <label>Mise à jour</label>
+    <p class="hint" data-update-status style="margin:8px 0;">Vérification…</p>
+    <div class="row">
+      <button type="button" class="ghost" data-update-check>Vérifier</button>
+      <button type="button" data-update-apply hidden>Mettre à jour</button>
+    </div>
+    <p class="hint">Photos, alarmes et certificats restent sur la tablette.</p>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">🎥 Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+    <div class="live-wrap">
+      <video id="localVideo" autoplay playsinline muted></video>
+    </div>
+    <p id="camHint" class="hint">Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.</p>
+    <div class="action-panel">
+      <button id="camBtn" type="button">📷 Caméra</button>
+      <button id="unlockMicBtn" class="ghost" type="button">🎙️ Micro</button>
+      <button id="talkSoundBtn" class="toggle-on" type="button">✅ Voix</button>
+      <button id="alarmSoundBtn" class="toggle-on" type="button">✅ Alarme</button>
+    </div>
+  </div>
+
+  <div class="card panel-card">
+    <div class="action-panel">
+      <button id="openAlbumBtn" class="ghost" type="button">🖼️ Album</button>
+      <button id="openLibraryBtn" class="ghost" type="button">💬 Bibliothèque</button>
+      <button id="openAlarmBtn" class="ghost" type="button">🔔 Alarme</button>
+      <button id="openSchedBtn" class="ghost" type="button">⏰ Horaires</button>
+    </div>
+  </div>
+</div>
+
+<div id="albumModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="albumModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="albumTitle">
+    <div class="modal-head">
+      <h2 id="albumTitle">🖼️ Album</h2>
+      <div class="modal-head-actions">
+        <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
+        <button type="button" class="ghost modal-close" data-close="albumModal">Fermer</button>
+      </div>
+    </div>
+    <p class="hint">Photos et vidéos conservées sur la tablette.</p>
+    <div id="gallery" class="gallery"></div>
+  </div>
+</div>
+
+<div id="libraryModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="libraryModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="libraryTitle">
+    <div class="modal-head">
+      <h2 id="libraryTitle">💬 Bibliothèque</h2>
+      <div class="modal-head-actions">
+        <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
+        <button type="button" class="ghost modal-close" data-close="libraryModal">Fermer</button>
+      </div>
+    </div>
+    <p class="hint lib-sync-hint">Messages texte et audio, partagés avec tous les appareils jumelés.</p>
+    <div id="msgList"></div>
+    <button class="ghost" id="addMsg" type="button">+ Nouveau message</button>
+  </div>
+</div>
+
+<div id="alarmModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="alarmModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="alarmTitle">
+    <div class="modal-head">
+      <h2 id="alarmTitle">🔔 Alarme</h2>
+      <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
+    </div>
+    <p class="hint lib-sync-hint">Choisis un son, puis déclenche. Synchronisé.</p>
+    <div id="manualAlarmMsg" class="sound-picker"></div>
+    <div class="row alarm-actions">
+      <input id="manualAlarmDuration" type="number" min="5" max="120" value="30" style="width:72px;" title="Durée en secondes">
+      <span class="hint" style="margin:0;">sec</span>
+      <button id="startAlarmBtn" type="button">🔔 Déclencher</button>
+      <button id="stopAlarmManualBtn" class="danger" type="button" disabled>⏹ Arrêter</button>
+    </div>
+  </div>
+</div>
+
+<div id="schedModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="schedModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="schedTitle">
+    <div class="modal-head">
+      <h2 id="schedTitle">⏰ Horaires</h2>
+      <div class="modal-head-actions">
+        <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
+        <button type="button" class="ghost modal-close" data-close="schedModal">Fermer</button>
+      </div>
+    </div>
+    <p class="hint lib-sync-hint">Les horaires se synchronisent tout de suite.</p>
+    <div id="schedList"></div>
+    <button class="ghost" id="addSched" type="button">+ Ajouter un horaire</button>
+  </div>
+</div>
+
+<div id="alarmBanner" class="alarm-banner" style="display:none;">
+  <h2>🔔 C'est l'heure !</h2>
+  <p id="alarmMsg"></p>
+  <button id="stopAlarmBtn">Arrêter maintenant</button>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/webrtc-config.js?v=3"></script>
+<script src="/message-library-ui.js?v=5"></script>
+<script src="/schedule-ui.js?v=10"></script>
+<script src="/alarm-ui.js?v=4"></script>
+<script src="/qr.js?v=1"></script>
+<script src="/update-ui.js?v=1"></script>
+<script src="/receiver.js?v=13"></script>
+</body>
+</html>
