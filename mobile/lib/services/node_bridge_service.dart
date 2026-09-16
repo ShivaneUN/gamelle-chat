@@ -28,6 +28,7 @@ class NodeBridgeService {
   String? publicUrl;
   String? pairCode;
   String? tunnelError;
+  bool tunnelEnabled = true;
 
   String? get controllerPublicUrl {
     final base = publicUrl;
@@ -204,6 +205,7 @@ class NodeBridgeService {
   }
 
   Future<void> _startTunnel() async {
+    if (!tunnelEnabled) return;
     if (_tunnelStarted) return;
     _tunnelStarted = true;
     await _clearStalePublicUrl();
@@ -227,6 +229,35 @@ class NodeBridgeService {
       tunnelError = e.toString();
       _controller.add(NodeBridgeMessage(tag: 'tunnelError', message: tunnelError!));
     }
+  }
+
+  Future<void> _stopTunnel() async {
+    try {
+      await CloudflareTunnel.stop();
+    } catch (_) {}
+    publicUrl = null;
+    tunnelError = null;
+    _tunnelStarted = false;
+    await _clearStalePublicUrl();
+    _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
+  }
+
+  /// Active ou coupe le tunnel Cloudflare sans toucher au serveur Node.
+  Future<void> setTunnelEnabled(bool enabled) async {
+    if (tunnelEnabled == enabled) {
+      if (!enabled) return;
+      if (_tunnelStarted || status != NodeStatus.running) return;
+    }
+    tunnelEnabled = enabled;
+    if (!enabled) {
+      await _stopTunnel();
+      _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'off'));
+      return;
+    }
+    if (status == NodeStatus.running) {
+      await _startTunnel();
+    }
+    _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'on'));
   }
 
   /// Lance Node.js (Foreground Service, sinon dans le process Flutter).
@@ -266,20 +297,23 @@ class NodeBridgeService {
 
   Future<String?> projectPath() => Nodejs.getNodeJsProjectPath();
 
-  /// Relance Node après une mise à jour GitHub, sans tuer l’app.
-  Future<bool> restartAfterUpdate() async {
-    try {
-      await CloudflareTunnel.stop();
-    } catch (_) {}
+  /// Arrête Node + tunnel sans quitter l’app.
+  Future<void> stop() async {
+    await _stopTunnel();
     try {
       await const MethodChannel('gamelle/github').invokeMethod<void>('stopNode');
     } catch (_) {}
     status = NodeStatus.idle;
-    publicUrl = null;
-    tunnelError = null;
-    _tunnelStarted = false;
+    lastError = null;
     _pollStarted = false;
     _infoPollStarted = false;
+    pairCode = null;
+    _controller.add(const NodeBridgeMessage(tag: 'node', message: 'STOPPED'));
+  }
+
+  /// Relance Node après une mise à jour GitHub, sans tuer l’app.
+  Future<bool> restartAfterUpdate() async {
+    await stop();
     await Future<void>.delayed(const Duration(milliseconds: 900));
     return start();
   }
