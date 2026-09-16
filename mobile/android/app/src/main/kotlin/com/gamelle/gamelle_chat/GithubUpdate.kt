@@ -1,15 +1,16 @@
 package com.gamelle.gamelle_chat
 
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.util.zip.ZipInputStream
 
 /**
- * Récupère server.js + public/ depuis GitHub (comme un git pull),
- * les pose dans gamelle-persist/ota, puis les recopie sur nodejs-project.
- * Dépôt public : aucun jeton.
+ * Met à jour server.js + public/ depuis le dépôt public, sans jeton ni api.github.com
+ * (l’API anonyme tombe en 403 après 60 appels/heure).
  */
 object GithubUpdate {
     const val OWNER = "ShivaneUN"
@@ -46,9 +47,8 @@ object GithubUpdate {
         forgetStoredToken(filesDir)
         val local = localSha(filesDir)
         return try {
-            val remote = fetchHead()
-            val sha = remote.optString("sha")
-            val msg = remote.optJSONObject("commit")?.optString("message")?.lineSequence()?.firstOrNull().orEmpty()
+            val head = fetchHead()
+            val sha = head.sha
             val available = sha.isNotBlank() && sha != local
             mapOf(
                 "ok" to true,
@@ -63,7 +63,7 @@ object GithubUpdate {
                     available -> "Une mise à jour est disponible (${short(local)} → ${short(sha)})."
                     else -> "Déjà à jour (${short(sha)})."
                 },
-                "detail" to msg,
+                "detail" to head.title,
             )
         } catch (e: Exception) {
             mapOf(
@@ -80,7 +80,7 @@ object GithubUpdate {
         forgetStoredToken(filesDir)
         return try {
             val head = fetchHead()
-            val sha = head.optString("sha")
+            val sha = head.sha
             if (sha.isBlank()) {
                 return mapOf("ok" to false, "restart" to false, "message" to "Commit GitHub introuvable.")
             }
@@ -88,17 +88,13 @@ object GithubUpdate {
                 applyStoredOverlay(filesDir)
                 return mapOf("ok" to true, "restart" to false, "message" to "Déjà à jour.", "available" to false)
             }
-            val files = wantedFiles(sha)
-            if (files.isEmpty()) {
-                return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server à tirer.")
-            }
             val tmp = File(filesDir, "gamelle-persist/ota-tmp")
             if (tmp.exists()) tmp.deleteRecursively()
             tmp.mkdirs()
-            for (path in files) {
-                val dest = File(tmp, path)
-                dest.parentFile?.mkdirs()
-                dest.writeBytes(downloadRaw(path, sha))
+            val count = downloadZipWanted(tmp)
+            if (count == 0) {
+                tmp.deleteRecursively()
+                return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server à tirer.")
             }
             val ota = otaDir(filesDir)
             if (ota.exists()) ota.deleteRecursively()
@@ -128,6 +124,8 @@ object GithubUpdate {
         }
     }
 
+    private data class Head(val sha: String, val title: String)
+
     private fun wanted(path: String): Boolean {
         if (path.contains("..")) return false
         if (path == "server.js" || path == "update-service.js") return true
@@ -147,64 +145,101 @@ object GithubUpdate {
         }
     }
 
-    private fun fetchHead(): JSONObject {
-        val body = httpGet(
-            "https://api.github.com/repos/$OWNER/$REPO/commits/$BRANCH",
-            "application/vnd.github+json",
+    private fun fetchHead(): Head {
+        val xml = String(
+            httpGet("https://github.com/$OWNER/$REPO/commits/$BRANCH.atom"),
+            StandardCharsets.UTF_8,
         )
-        return JSONObject(String(body, StandardCharsets.UTF_8))
-    }
-
-    private fun wantedFiles(sha: String): List<String> {
-        val body = httpGet(
-            "https://api.github.com/repos/$OWNER/$REPO/git/trees/$sha?recursive=1",
-            "application/vnd.github+json",
-        )
-        val json = JSONObject(String(body, StandardCharsets.UTF_8))
-        val tree = json.optJSONArray("tree") ?: return emptyList()
-        val out = ArrayList<String>()
-        for (i in 0 until tree.length()) {
-            val item = tree.optJSONObject(i) ?: continue
-            if (item.optString("type") != "blob") continue
-            val path = item.optString("path")
-            if (wanted(path)) out.add(path)
+        val sha = Regex("""Commit/([0-9a-f]{40})""", RegexOption.IGNORE_CASE)
+            .find(xml)
+            ?.groupValues
+            ?.get(1)
+            .orEmpty()
+        if (sha.isBlank()) {
+            throw RuntimeException("Commit introuvable dans le flux GitHub.")
         }
-        return out
+        val titles = Regex("""<title>\s*(?:<!\[CDATA\[)?(.*?)(?:]]>)?\s*</title>""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(xml)
+            .map { it.groupValues[1].trim() }
+            .toList()
+        val title = titles.drop(1).firstOrNull().orEmpty()
+        return Head(sha, title)
     }
 
-    private fun downloadRaw(path: String, sha: String): ByteArray {
-        val encoded = path.split('/').joinToString("/") { android.net.Uri.encode(it) }
-        return httpGet(
-            "https://api.github.com/repos/$OWNER/$REPO/contents/$encoded?ref=$sha",
-            "application/vnd.github.raw",
-        )
+    private fun downloadZipWanted(destRoot: File): Int {
+        val url = "https://codeload.github.com/$OWNER/$REPO/zip/refs/heads/$BRANCH"
+        var count = 0
+        val conn = open(url)
+        try {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val err = conn.errorStream?.readBytes() ?: ByteArray(0)
+                throw RuntimeException("HTTP $code ${String(err, StandardCharsets.UTF_8).take(240)}")
+            }
+            ZipInputStream(BufferedInputStream(conn.inputStream)).use { zis ->
+                while (true) {
+                    val entry = zis.nextEntry ?: break
+                    if (entry.isDirectory) {
+                        zis.closeEntry()
+                        continue
+                    }
+                    val rel = stripZipRoot(entry.name)
+                    if (!wanted(rel)) {
+                        zis.closeEntry()
+                        continue
+                    }
+                    val out = File(destRoot, rel)
+                    out.parentFile?.mkdirs()
+                    out.outputStream().use { zis.copyTo(it) }
+                    zis.closeEntry()
+                    count++
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+        return count
     }
 
-    private fun httpGet(url: String, accept: String): ByteArray {
-        var current = url
-        repeat(6) {
+    private fun stripZipRoot(name: String): String {
+        val n = name.replace('\\', '/')
+        val i = n.indexOf('/')
+        return if (i >= 0) n.substring(i + 1) else n
+    }
+
+    private fun httpGet(url: String): ByteArray {
+        val conn = open(url)
+        try {
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val bytes = stream?.readBytes() ?: ByteArray(0)
+            if (code !in 200..299) {
+                throw RuntimeException("HTTP $code ${String(bytes, StandardCharsets.UTF_8).take(240)}")
+            }
+            return bytes
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun open(startUrl: String): HttpURLConnection {
+        var current = startUrl
+        repeat(8) {
             val conn = URL(current).openConnection() as HttpURLConnection
             conn.connectTimeout = 20000
             conn.readTimeout = 120000
             conn.instanceFollowRedirects = false
             conn.setRequestProperty("User-Agent", "GamelleChat")
-            conn.setRequestProperty("Accept", accept)
+            conn.setRequestProperty("Accept", "*/*")
             val code = conn.responseCode
             if (code in 300..399) {
                 val loc = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (loc.isNullOrBlank()) throw RuntimeException("Redirect sans Location ($code)")
-                current = loc
+                current = if (loc.startsWith("http")) loc else URL(URL(current), loc).toString()
                 return@repeat
             }
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val bytes = stream?.readBytes() ?: ByteArray(0)
-            conn.disconnect()
-            if (code !in 200..299) {
-                val err = String(bytes, StandardCharsets.UTF_8).take(240)
-                throw RuntimeException("HTTP $code $err")
-            }
-            return bytes
+            return conn
         }
         throw RuntimeException("Trop de redirections GitHub")
     }
@@ -214,8 +249,10 @@ object GithubUpdate {
     private fun githubError(e: Exception): String {
         val raw = (e.message ?: e.toString()).take(280)
         return when {
+            raw.contains("HTTP 403") && raw.contains("rate limit", ignoreCase = true) ->
+                "Limite GitHub atteinte. Réessaie dans une heure."
             raw.contains("HTTP 401") || raw.contains("HTTP 403") ->
-                "GitHub a refusé la requête. Réessaie plus tard."
+                "GitHub a refusé la requête. $raw"
             raw.contains("HTTP 404") ->
                 "Dépôt introuvable. Vérifie ShivaneUN/gamelle-chat."
             else -> "Impossible de joindre GitHub. $raw"
