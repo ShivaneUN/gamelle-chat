@@ -37,7 +37,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var tunnel: java.lang.Process? = null
-    private var eventSink: EventChannel.EventSink? = null
+    private var githubProgressSink: EventChannel.EventSink? = null
     private var webEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val urlPattern = Pattern.compile("https://(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com", Pattern.CASE_INSENSITIVE)
@@ -110,6 +110,18 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        EventChannel(messenger, "gamelle/github_progress").setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    githubProgressSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    githubProgressSink = null
+                }
+            },
+        )
+
         MethodChannel(messenger, "gamelle/github").setMethodCallHandler { call, result ->
             when (call.method) {
                 "status", "apply" -> {
@@ -123,7 +135,13 @@ class MainActivity : FlutterActivity() {
                             if (call.method == "status") {
                                 GithubUpdate.status(filesDir, installed)
                             } else {
-                                GithubUpdate.apply(filesDir, installed)
+                                GithubUpdate.apply(filesDir, installed) { pct, label ->
+                                    mainHandler.post {
+                                        githubProgressSink?.success(
+                                            mapOf("pct" to pct, "label" to label),
+                                        )
+                                    }
+                                }
                             }
                         } catch (e: Exception) {
                             mapOf(
@@ -190,6 +208,10 @@ class MainActivity : FlutterActivity() {
                     keepWebViewsAlive()
                     moveTaskToBack(true)
                     result.success(true)
+                }
+                "restartApp" -> {
+                    result.success(true)
+                    mainHandler.postDelayed({ relaunchApp() }, 350)
                 }
                 else -> result.notImplemented()
             }
@@ -670,6 +692,26 @@ class MainActivity : FlutterActivity() {
             stopService(stop)
         } catch (_: Exception) {
         }
+    }
+
+    private fun relaunchApp() {
+        try {
+            stopTunnel()
+            stopNodeService()
+        } catch (_: Exception) {
+        }
+        val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return
+        launch.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP,
+        )
+        startActivity(launch)
+        try {
+            finishAffinity()
+        } catch (_: Exception) {
+        }
+        AndroidProcess.killProcess(AndroidProcess.myPid())
     }
 
     private fun shutdownAll() {

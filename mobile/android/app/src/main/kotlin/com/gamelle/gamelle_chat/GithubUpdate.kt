@@ -74,9 +74,14 @@ object GithubUpdate {
         }
     }
 
-    fun apply(filesDir: File, installedVersion: String): Map<String, Any?> {
+    fun apply(
+        filesDir: File,
+        installedVersion: String,
+        onProgress: (Double, String) -> Unit = { _, _ -> },
+    ): Map<String, Any?> {
         forgetStoredToken(filesDir)
         return try {
+            onProgress(0.04, "Recherche de la release…")
             val remote = fetchLatestTag()
             if (remote.isBlank()) {
                 return mapOf("ok" to false, "restart" to false, "message" to "Release GitHub introuvable.")
@@ -84,6 +89,7 @@ object GithubUpdate {
             val local = localTag(filesDir, installedVersion)
             if (!isNewer(remote, local)) {
                 applyStoredOverlay(filesDir)
+                onProgress(1.0, "Déjà à jour (${display(remote)}).")
                 return mapOf(
                     "ok" to true,
                     "restart" to false,
@@ -94,11 +100,12 @@ object GithubUpdate {
             val tmp = File(filesDir, "gamelle-persist/ota-tmp")
             if (tmp.exists()) tmp.deleteRecursively()
             tmp.mkdirs()
-            val count = downloadZipWanted(tmp, remote)
+            val count = downloadZipWanted(tmp, remote, onProgress)
             if (count == 0) {
                 tmp.deleteRecursively()
                 return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server dans ${display(remote)}.")
             }
+            onProgress(0.90, "Installation ${display(remote)}…")
             val ota = otaDir(filesDir)
             if (ota.exists()) ota.deleteRecursively()
             tmp.copyRecursively(ota, overwrite = true)
@@ -112,12 +119,13 @@ object GithubUpdate {
                 StandardCharsets.UTF_8,
             )
             applyStoredOverlay(filesDir)
+            onProgress(1.0, "Mise à jour installée (${display(remote)}).")
             mapOf(
                 "ok" to true,
                 "restart" to true,
                 "available" to false,
                 "remote" to display(remote),
-                "message" to "Mise à jour installée (${display(remote)}). Redémarrage du serveur…",
+                "message" to "Mise à jour installée (${display(remote)}). Redémarrage…",
             )
         } catch (e: Exception) {
             mapOf(
@@ -185,10 +193,15 @@ object GithubUpdate {
         }
     }
 
-    private fun downloadZipWanted(destRoot: File, tag: String): Int {
+    private fun downloadZipWanted(
+        destRoot: File,
+        tag: String,
+        onProgress: (Double, String) -> Unit,
+    ): Int {
         val encoded = java.net.URLEncoder.encode(tag, "UTF-8").replace("+", "%20")
         val url = "https://codeload.github.com/$OWNER/$REPO/zip/refs/tags/$encoded"
-        var count = 0
+        val zipFile = File(destRoot.parentFile, "ota-download.zip")
+        if (zipFile.exists()) zipFile.delete()
         val conn = open(url)
         try {
             val code = conn.responseCode
@@ -196,28 +209,46 @@ object GithubUpdate {
                 val err = conn.errorStream?.readBytes() ?: ByteArray(0)
                 throw RuntimeException("HTTP $code ${String(err, StandardCharsets.UTF_8).take(240)}")
             }
-            ZipInputStream(BufferedInputStream(conn.inputStream)).use { zis ->
-                while (true) {
-                    val entry = zis.nextEntry ?: break
-                    if (entry.isDirectory) {
-                        zis.closeEntry()
-                        continue
+            val length = conn.contentLengthLong
+            val buf = ByteArray(64 * 1024)
+            var got = 0L
+            conn.inputStream.use { input ->
+                zipFile.outputStream().use { out ->
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        got += n
+                        val frac = if (length > 0L) (got.toDouble() / length).coerceIn(0.0, 1.0) else 0.45
+                        onProgress(0.08 + 0.72 * frac, "Téléchargement…")
                     }
-                    val rel = stripZipRoot(entry.name)
-                    if (!wanted(rel)) {
-                        zis.closeEntry()
-                        continue
-                    }
-                    val out = File(destRoot, rel)
-                    out.parentFile?.mkdirs()
-                    out.outputStream().use { zis.copyTo(it) }
-                    zis.closeEntry()
-                    count++
                 }
             }
         } finally {
             conn.disconnect()
         }
+        onProgress(0.82, "Extraction…")
+        var count = 0
+        ZipInputStream(BufferedInputStream(zipFile.inputStream())).use { zis ->
+            while (true) {
+                val entry = zis.nextEntry ?: break
+                if (entry.isDirectory) {
+                    zis.closeEntry()
+                    continue
+                }
+                val rel = stripZipRoot(entry.name)
+                if (!wanted(rel)) {
+                    zis.closeEntry()
+                    continue
+                }
+                val out = File(destRoot, rel)
+                out.parentFile?.mkdirs()
+                out.outputStream().use { zis.copyTo(it) }
+                zis.closeEntry()
+                count++
+            }
+        }
+        zipFile.delete()
         return count
     }
 
