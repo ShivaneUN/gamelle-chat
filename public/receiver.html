@@ -5,34 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Récepteur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=15">
+<link rel="stylesheet" href="/style.css?v=24">
 </head>
 <body>
 <div class="wrap">
   <div class="page-head">
     <h1>🐱 Récepteur</h1>
-    <a class="home-btn" href="/">🏠 Accueil</a>
   </div>
   <div class="pair-code">
     <span class="muted">Code de jumelage</span>
     <div id="pairCode" class="pair-code-value"></div>
-    <p class="hint">Scanne le QR ou ouvre le lien sur le Contrôleur</p>
-    <div id="controllerQr" class="pair-qr-box"></div>
+    <p class="hint">Bouton QR en haut pour scanner, ou copie le lien.</p>
+    <div id="controllerQr" class="pair-qr-box" hidden></div>
     <span class="muted">Lien Contrôleur</span>
     <a id="controllerLink" class="pair-link" href="#"></a>
     <button type="button" class="ghost" id="copyControllerLink">Copier le lien</button>
   </div>
   <div id="status" class="status off">Connexion...</div>
-
-  <div class="card" id="updateCard">
-    <label>Mise à jour</label>
-    <p class="hint" data-update-status style="margin:8px 0;">Vérification…</p>
-    <div class="row">
-      <button type="button" class="ghost" data-update-check>Vérifier</button>
-      <button type="button" data-update-apply hidden>Mettre à jour</button>
-    </div>
-    <p class="hint">Photos, alarmes et certificats restent sur la tablette.</p>
-  </div>
 
   <div class="card">
     <h3 class="card-title">🎥 Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
@@ -96,7 +85,10 @@
       <h2 id="alarmTitle">🔔 Alarme</h2>
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
-    <p class="hint lib-sync-hint">Choisis un son, puis déclenche. Synchronisé.</p>
+    <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
+    <label class="sched-sound-lab">Son 1</label>
+    <div id="manualAlarmSound1" class="sound-picker"></div>
+    <label class="sched-sound-lab">Son 2 (ensuite)</label>
     <div id="manualAlarmMsg" class="sound-picker"></div>
     <div class="row alarm-actions">
       <input id="manualAlarmDuration" type="number" min="5" max="120" value="30" style="width:72px;" title="Durée en secondes">
@@ -117,7 +109,7 @@
         <button type="button" class="ghost modal-close" data-close="schedModal">Fermer</button>
       </div>
     </div>
-    <p class="hint lib-sync-hint">Les horaires se synchronisent tout de suite.</p>
+    <p class="hint lib-sync-hint">Tous les jours, ou seulement certains (L M M J V S D). Son 1 puis son 2 à la suite.</p>
     <div id="schedList"></div>
     <button class="ghost" id="addSched" type="button">+ Ajouter un horaire</button>
   </div>
@@ -132,10 +124,11 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/schedule-ui.js?v=10"></script>
-<script src="/alarm-ui.js?v=4"></script>
-<script src="/qr.js?v=1"></script>
-<script src="/update-ui.js?v=1"></script>
-<script src="/receiver.js?v=13"></script>
+<script src="/alarm-sounds.js?v=4"></script>
+<script src="/schedule-ui.js?v=13"></script>
+<script src="/alarm-ui.js?v=5"></script>
+<script src="/qr.js?v=5"></script>
+<script src="/talk-pcm.js?v=2"></script>
+<script src="/receiver.js?v=23"></script>
 </body>
 </html>

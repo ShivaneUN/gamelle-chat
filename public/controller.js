@@ -1,5 +1,12 @@
-const params = new URLSearchParams(location.search);
-const code = params.get('code');
+function readControllerCode() {
+  const params = new URLSearchParams(location.search);
+  let next = (params.get('code') || '').trim();
+  if (next.length >= 4) return next;
+  const m = String(location.pathname || '').match(/\/c\/([^/]+)\/?$/);
+  if (m && m[1]) return decodeURIComponent(m[1]).trim();
+  return '';
+}
+const code = readControllerCode();
 const statusEl = document.getElementById('status');
 const remoteVideo = document.getElementById('remoteVideo');
 const remoteRelay = document.getElementById('remoteRelay');
@@ -7,7 +14,19 @@ const liveHint = document.getElementById('liveHint');
 const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
-if (!code) { alert('Code manquant, retour à l\'accueil'); location.href = '/'; }
+if (!code) {
+  fetch('/api/active-code').then((r) => r.json()).then((j) => {
+    const c = String((j && j.code) || '').trim();
+    if (c.length >= 4) {
+      location.replace('/controller.html?code=' + encodeURIComponent(c));
+      return;
+    }
+    setTimeout(() => location.reload(), 800);
+  }).catch(() => {
+    setTimeout(() => location.reload(), 800);
+  });
+  throw new Error('code-redirect');
+}
 
 const socket = io();
 let pcCam = null;   // reçoit la caméra du récepteur
@@ -168,13 +187,16 @@ async function refreshMicStatus() {
 refreshMicStatus();
 
 function unlockSoundEngine() {
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = new AC();
-      window.__gamelleAudioCtx.resume().catch(() => {});
-    }
-  } catch (e) {}
+  if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
+  else {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = new AC();
+        window.__gamelleAudioCtx.resume().catch(() => {});
+      }
+    } catch (e) {}
+  }
 }
 
 function renderTalkSoundBtn() {
@@ -216,7 +238,9 @@ document.getElementById('alarmSoundBtn').onclick = () => {
 unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
-document.addEventListener('pointerdown', unlockSoundEngine, { once: true });
+document.addEventListener('pointerdown', unlockSoundEngine);
+document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
+document.addEventListener('click', unlockSoundEngine);
 
 unlockMicBtn.onclick = () => { talking ? stopTalk() : startTalk(); };
 
@@ -315,17 +339,16 @@ socket.on('signal', async (payload) => {
 
 // --- Capture photo / vidéo ---
 document.getElementById('photoBtn').onclick = () => socket.emit('take-photo');
+document.getElementById('screenOnBtn').onclick = () => socket.emit('screen-on');
+document.getElementById('screenOffBtn').onclick = () => socket.emit('screen-off');
 document.getElementById('videoBtn').onclick = () => {
   socket.emit('start-video');
   setTimeout(() => socket.emit('stop-video'), 5000);
 };
 
 // --- Parler à distance (clic on/off, pas besoin de maintenir) ---
-let talkAudioCtx = null;
-let talkProcessor = null;
-let talkSource = null;
-let talkPlayCtx = null;
-let talkNextTime = 0;
+let talkCapture = null;
+const talkPlayState = { nextTime: 0 };
 
 async function startTalk() {
   try {
@@ -333,72 +356,40 @@ async function startTalk() {
       alert('Cette page n\'est pas en HTTPS. Ouvre l\'URL trycloudflare.com (Contrôleur) ou https://localhost:3000 (tablette).');
       return;
     }
-    talkStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
-
-    talkAudioCtx = window.__gamelleAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = talkAudioCtx;
-    if (talkAudioCtx.state === 'suspended') talkAudioCtx.resume().catch(() => {});
-    talkSource = talkAudioCtx.createMediaStreamSource(talkStream);
-    talkProcessor = talkAudioCtx.createScriptProcessor(2048, 1, 1);
-    talkProcessor.onaudioprocess = (ev) => {
-      if (!talking) return;
-      const samples = ev.inputBuffer.getChannelData(0);
-      const buf = new Int16Array(samples.length);
-      for (let i = 0; i < samples.length; i++) {
-        const s = Math.max(-1, Math.min(1, samples[i]));
-        buf[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      socket.emit('talk-audio', { rate: talkAudioCtx.sampleRate, samples: Array.from(buf) });
-    };
-    const mute = talkAudioCtx.createGain();
-    mute.gain.value = 0;
-    talkSource.connect(talkProcessor);
-    talkProcessor.connect(mute);
-    mute.connect(talkAudioCtx.destination);
-
+    unlockSoundEngine();
+    try {
+      talkStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
+    } catch (e) {
+      talkStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    }
     talking = true;
+    talkCapture = await startTalkCapture(talkStream, ({ rate, samples }) => {
+      if (!talking) return;
+      socket.emit('talk-audio', { rate, samples });
+    });
     renderMicStatus('granted');
   } catch (err) {
     talking = false;
+    stopTalkCapture(talkCapture);
+    talkCapture = null;
+    if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
+    talkStream = null;
     refreshMicStatus();
     alert('Micro indisponible: ' + err.message);
   }
 }
 function stopTalk() {
   talking = false;
-  if (talkProcessor) { try { talkProcessor.disconnect(); } catch (e) {} talkProcessor = null; }
-  if (talkSource) { try { talkSource.disconnect(); } catch (e) {} talkSource = null; }
+  stopTalkCapture(talkCapture);
+  talkCapture = null;
   if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
   talkStream = null;
   renderMicStatus('granted');
 }
 
 socket.on('talk-audio', ({ rate, samples }) => {
-  if (!talkSoundOn || !samples || !samples.length) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    if (!talkPlayCtx) {
-      talkPlayCtx = window.__gamelleAudioCtx || new AC();
-      if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = talkPlayCtx;
-    }
-    const ctx = talkPlayCtx;
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-      return;
-    }
-    const float32 = new Float32Array(samples.length);
-    for (let i = 0; i < samples.length; i++) float32[i] = samples[i] / 0x8000;
-    const buf = ctx.createBuffer(1, float32.length, rate || ctx.sampleRate);
-    buf.getChannelData(0).set(float32);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    const now = ctx.currentTime;
-    if (talkNextTime < now + 0.05) talkNextTime = now + 0.05;
-    src.start(talkNextTime);
-    talkNextTime += buf.duration;
-  } catch (e) {}
+  if (!talkSoundOn) return;
+  playTalkPcm(talkPlayState, rate, samples);
 });
 
 // --- Galerie ---

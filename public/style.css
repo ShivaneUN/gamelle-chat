@@ -49,13 +49,24 @@ body {
   display: flex;
   justify-content: center;
   margin: 10px 0 12px;
+  background: #ffffff !important;
+  border-radius: 12px;
+  padding: 12px;
+  color-scheme: only light;
+  filter: none !important;
+}
+.pair-qr-box[hidden] {
+  display: none !important;
 }
 .pair-qr {
   width: 180px;
   height: 180px;
-  background: #fff;
-  border-radius: 10px;
-  padding: 8px;
+  background: #ffffff !important;
+  padding: 0;
+  border-radius: 0;
+  display: block;
+  image-rendering: pixelated;
+  filter: none !important;
 }
 .pair-link {
   display: block;
@@ -147,8 +158,9 @@ video { width: 100%; border-radius: 12px; background: #000; }
 .live-wrap video, .live-wrap img { width: 100%; display: none; vertical-align: top; }
 .live-wrap img.on,
 .live-wrap video.on { display: block !important; }
-.sched-item { display: flex; align-items: center; gap: 8px; background: #0d1017; padding: 8px; border-radius: 8px; margin-top: 8px; }
+.sched-item { display: flex; align-items: center; gap: 8px; background: #0d1017; padding: 8px; border-radius: 8px; margin-top: 8px; min-width: 0; }
 .sched-item.sched-alarm { flex-direction: column; align-items: stretch; }
+.sched-sound-lab { font-size: 12px; color: #888; margin-top: 6px; }
 .sched-item select { width: 100%; min-height: 44px; font-size: 16px; }
 .sound-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .sound-opt {
@@ -209,9 +221,131 @@ video { width: 100%; border-radius: 12px; background: #000; }
 .sound-sheet-list .sound-opt {
   min-height: 42px;
 }
-.sched-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sched-item input[type=time] { width: auto; }
-.sched-item input[type=text] { flex: 1; }
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+.sched-days {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.sched-all { width: 100%; margin-top: 0; min-height: 40px; }
+.sched-all.on { background: #1f4d2e; color: #7be08a; }
+.sched-day-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.sched-day {
+  margin-top: 0;
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 2px;
+  background: #2a2f3d;
+  color: #ddd;
+  font-size: 13px;
+  overflow: hidden;
+}
+.sched-day.on { background: #ff7a45; color: #111; }
+.sched-time-btn {
+  flex: 1 1 120px;
+  min-width: 0;
+  margin-top: 0;
+  min-height: 44px;
+  background: #0d1017;
+  color: #fff;
+  border: 1px solid #333;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.sched-item input[type=number] {
+  flex: 0 0 72px;
+  width: 72px;
+}
+.time-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 940;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.time-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+.time-sheet-panel {
+  position: relative;
+  width: min(520px, 100%);
+  background: #1a1e29;
+  border-radius: 18px 18px 0 0;
+  padding: 12px 12px max(16px, env(safe-area-inset-bottom, 16px));
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+}
+.time-sheet-title {
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.time-sheet-labs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+}
+.time-sheet-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  height: min(36vh, 240px);
+  margin: 8px 0 12px;
+}
+.time-sheet-col {
+  overflow-y: auto;
+  background: #0d1017;
+  border-radius: 10px;
+  padding: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+.time-opt {
+  width: 100%;
+  margin-top: 0;
+  min-height: 44px;
+  background: transparent;
+  color: #ddd;
+}
+.time-opt.selected {
+  background: #ff7a45;
+  color: #111;
+}
+.time-sheet-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.time-sheet-footer button {
+  margin-top: 0;
+  min-height: 52px;
+  width: 100%;
+}
+.sched-item input[type=text] { flex: 1; min-width: 0; }
 .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .gallery .item { position: relative; }
 .gallery img, .gallery video { width: 100%; border-radius: 8px; }
@@ -248,7 +382,7 @@ video { width: 100%; border-radius: 12px; background: #000; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 12px;
 }
 .modal-backdrop {
   position: absolute;
@@ -257,11 +391,12 @@ video { width: 100%; border-radius: 12px; background: #000; }
 }
 .modal-sheet {
   position: relative;
-  width: min(440px, 100%);
+  width: min(520px, 100%);
   height: auto;
   min-height: 0;
-  max-height: 55vh;
-  overflow: auto;
+  max-height: 86vh;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: #1a1e29;
   border-radius: 16px;
   padding: 16px 16px 18px;
@@ -270,8 +405,8 @@ video { width: 100%; border-radius: 12px; background: #000; }
 }
 .modal-sheet.expanded {
   width: min(720px, 100%);
-  height: calc(100vh - 24px);
-  max-height: calc(100vh - 24px);
+  height: calc(100dvh - 16px);
+  max-height: calc(100dvh - 16px);
 }
 .modal-head {
   display: flex;

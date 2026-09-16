@@ -61,11 +61,11 @@
 
   function pickVersion(byteLen) {
     const countBits = (v) => (v <= 9 ? 8 : 16);
-    for (let v = 1; v <= 6; v++) {
+    for (let v = 1; v <= 10; v++) {
       const bits = 4 + countBits(v) + byteLen * 8 + 4;
       if (Math.ceil(bits / 8) <= capacity(v)) return v;
     }
-    return 6;
+    return 10;
   }
 
   function bitsToBytes(bits) {
@@ -299,8 +299,8 @@
 
   function makeQrDataUrl(text, scale) {
     const mod = buildMatrix(String(text || ''));
-    const quiet = 2;
-    const s = scale || 6;
+    const quiet = 4;
+    const s = scale || 8;
     const n = mod.length;
     const dim = (n + quiet * 2) * s;
     const canvas = document.createElement('canvas');
@@ -309,7 +309,7 @@
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, dim, dim);
-    ctx.fillStyle = '#111111';
+    ctx.fillStyle = '#000000';
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
         if (mod[y][x]) ctx.fillRect((x + quiet) * s, (y + quiet) * s, s, s);
@@ -318,37 +318,54 @@
     return canvas.toDataURL('image/png');
   }
 
+  function paintImg(img, text) {
+    img.alt = 'QR code';
+    img.className = 'pair-qr';
+    try {
+      img.src = makeQrDataUrl(text, 8);
+    } catch (e) {
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&ecc=M&margin=4&data='
+        + encodeURIComponent(text);
+    }
+  }
+
   function renderQr(el, text) {
     if (!el || !text) return;
     try {
-      const url = makeQrDataUrl(text, 5);
       if (el.tagName === 'IMG') {
-        el.src = url;
-        el.alt = 'QR code';
-      } else if (el.tagName === 'CANVAS') {
-        const img = new Image();
-        img.onload = () => {
-          const ctx = el.getContext('2d');
-          ctx.fillStyle = '#fff';
-          ctx.fillRect(0, 0, el.width, el.height);
-          ctx.drawImage(img, 0, 0, el.width, el.height);
-        };
-        img.src = url;
-      } else {
-        el.innerHTML = '';
-        const img = document.createElement('img');
-        img.src = url;
-        img.alt = 'QR code';
-        img.className = 'pair-qr';
-        el.appendChild(img);
+        paintImg(el, text);
+        return;
       }
+      el.innerHTML = '';
+      const img = document.createElement('img');
+      paintImg(img, text);
+      el.appendChild(img);
     } catch (e) {
-      if (el.tagName === 'IMG') {
-        el.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(text);
-      }
+      el.innerHTML = '';
     }
   }
 
   global.renderQr = renderQr;
   global.makeQrDataUrl = makeQrDataUrl;
+  global.isQuickTunnelOrigin = function (text) {
+    try {
+      const u = new URL(String(text || ''));
+      const h = u.hostname || '';
+      return h.endsWith('.trycloudflare.com') && h !== 'api.trycloudflare.com';
+    } catch (e) {
+      return false;
+    }
+  };
+  global.isScannableQrUrl = function (text) {
+    try {
+      const u = new URL(String(text || ''));
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+      const h = u.hostname;
+      if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
+      if (h === 'api.trycloudflare.com') return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
 })(window);

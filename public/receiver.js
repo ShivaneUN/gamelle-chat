@@ -4,46 +4,69 @@ function genPairCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function ensurePairCode() {
+function readStoredPairCode() {
   const params = new URLSearchParams(location.search);
   let next = (params.get('code') || '').trim();
-  if (next.length >= 4) {
-    try { localStorage.setItem(PAIR_KEY, next); } catch (e) {}
-    return next;
-  }
+  if (next.length >= 4) return next;
   try {
     const saved = localStorage.getItem(PAIR_KEY);
-    if (saved && String(saved).trim().length >= 4) next = String(saved).trim();
+    if (saved && String(saved).trim().length >= 4) return String(saved).trim();
   } catch (e) {}
-  if (!next || next.length < 4) next = genPairCode();
-  try { localStorage.setItem(PAIR_KEY, next); } catch (e) {}
-  try {
-    const url = new URL(location.href);
-    url.searchParams.set('code', next);
-    history.replaceState(null, '', url.pathname + url.search);
-  } catch (e) {}
-  return next;
+  return '';
 }
 
-const code = ensurePairCode();
+function commitPairCode(next) {
+  const codeVal = String(next || '').trim();
+  if (codeVal.length < 4) return codeVal;
+  try { localStorage.setItem(PAIR_KEY, codeVal); } catch (e) {}
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set('code', codeVal);
+    history.replaceState(null, '', url.pathname + url.search);
+  } catch (e) {}
+  const el = document.getElementById('pairCode');
+  if (el) el.textContent = codeVal;
+  return codeVal;
+}
+
+let code = '';
+
+async function resolvePairCode() {
+  try {
+    const j = await fetch('/api/active-code').then((r) => r.json());
+    if (j && j.code && String(j.code).trim().length >= 4) {
+      code = commitPairCode(String(j.code).trim());
+      return code;
+    }
+  } catch (e) {}
+  const stored = readStoredPairCode();
+  if (stored && stored.length >= 4) {
+    code = commitPairCode(stored);
+    return code;
+  }
+  code = commitPairCode(genPairCode());
+  return code;
+}
+
 const statusEl = document.getElementById('status');
 const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
 const pairCodeEl = document.getElementById('pairCode');
-if (pairCodeEl) pairCodeEl.textContent = code;
+if (pairCodeEl && code) pairCodeEl.textContent = code;
 
 function controllerUrl(origin) {
-  return String(origin || '').replace(/\/$/, '') + '/controller.html?code=' + encodeURIComponent(code);
+  return String(origin || '').replace(/\/$/, '') + '/c/' + encodeURIComponent(code);
 }
 
 function paintControllerLink(url) {
   const a = document.getElementById('controllerLink');
   const btn = document.getElementById('copyControllerLink');
+  const qrBox = document.getElementById('controllerQr');
   if (!a || !url) return;
   a.href = url;
   a.textContent = url;
-  if (typeof renderQr === 'function') renderQr(document.getElementById('controllerQr'), url);
+  if (qrBox) qrBox.innerHTML = '';
   if (btn) {
     btn.onclick = async () => {
       try {
@@ -57,15 +80,31 @@ function paintControllerLink(url) {
   }
 }
 
-paintControllerLink(controllerUrl(location.origin));
+function applyRemoteOrigin(origin) {
+  if (!origin) return false;
+  if (typeof isQuickTunnelOrigin === 'function' && !isQuickTunnelOrigin(origin)) return false;
+  paintControllerLink(String(origin).replace(/\/$/, ''));
+  return true;
+}
+
+function showWaitingCloudLink() {
+  const a = document.getElementById('controllerLink');
+  const qrBox = document.getElementById('controllerQr');
+  if (a) {
+    a.removeAttribute('href');
+    a.textContent = 'En attente du lien cloud…';
+  }
+  if (qrBox) qrBox.innerHTML = '';
+}
+
+showWaitingCloudLink();
+
 (async function waitPublicControllerUrl() {
-  for (let i = 0; i < 20; i++) {
+  for (;;) {
+    if (applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__)) return;
     try {
       const info = await fetch('/api/info').then((r) => r.json());
-      if (info.publicUrl) {
-        paintControllerLink(controllerUrl(info.publicUrl));
-        return;
-      }
+      if (info.publicUrl && applyRemoteOrigin(info.publicUrl)) return;
     } catch (e) {}
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -82,8 +121,10 @@ let alarmSoundOn = true;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 socket.on('connect', () => {
-  socket.emit('join', { code, role: 'receiver' });
-  startBatteryWatch();
+  resolvePairCode().then((c) => {
+    socket.emit('join', { code: c, role: 'receiver' });
+    startBatteryWatch();
+  });
 });
 socket.on('peers', ({ controllers }) => {
   if (controllers > 0) {
@@ -200,6 +241,7 @@ unlockMicBtn.onclick = async () => {
       alert('Le navigateur n\'expose pas le micro. Utilise Chrome, en https://');
       return;
     }
+    unlockSoundEngine();
     if (micOn) {
       micOn = false;
       stopMicTalk();
@@ -207,14 +249,19 @@ unlockMicBtn.onclick = async () => {
       renderMicStatus('granted');
       return;
     }
-    const testStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
-    if (camOn && localStream) {
-      testStream.getAudioTracks().forEach((t) => localStream.addTrack(t));
-      startMicTalk(localStream, false);
-    } else {
-      startMicTalk(testStream, true);
+    let testStream;
+    try {
+      testStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
+    } catch (e) {
+      testStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     }
     micOn = true;
+    if (camOn && localStream) {
+      testStream.getAudioTracks().forEach((t) => localStream.addTrack(t));
+      await startMicTalk(localStream, false);
+    } else {
+      await startMicTalk(testStream, true);
+    }
     renderMicStatus('granted');
     refreshMicStatus();
   } catch (e) {
@@ -234,13 +281,16 @@ unlockMicBtn.onclick = async () => {
 
 function unlockSoundEngine() {
   if ('speechSynthesis' in window) speechSynthesis.getVoices();
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = new AC();
-      window.__gamelleAudioCtx.resume().catch(() => {});
-    }
-  } catch (e) {}
+  if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
+  else {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) {
+        if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = new AC();
+        window.__gamelleAudioCtx.resume().catch(() => {});
+      }
+    } catch (e) {}
+  }
 }
 
 function renderTalkSoundBtn() {
@@ -282,46 +332,46 @@ document.getElementById('alarmSoundBtn').onclick = () => {
 unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
-document.addEventListener('pointerdown', unlockSoundEngine, { once: true });
+document.addEventListener('pointerdown', unlockSoundEngine);
+document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
+document.addEventListener('click', unlockSoundEngine);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) unlockSoundEngine();
+  if (camOn) keepCameraAlive();
+});
+setInterval(() => {
+  if (camOn) keepCameraAlive();
+}, 2000);
 
-let talkSendCtx = null;
-let talkSendProc = null;
-let talkSendSrc = null;
+function nativeScreen(cmd) {
+  try {
+    if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
+      GamelleHost.postMessage(cmd);
+    }
+  } catch (e) {}
+}
+socket.on('screen-on', () => nativeScreen('on'));
+socket.on('screen-off', () => nativeScreen('off'));
+
+let talkCapture = null;
 let talkSendStream = null;
 let talkSendOwnsStream = false;
+const talkPlayState = { nextTime: 0 };
 
-function startMicTalk(stream, ownsStream) {
+async function startMicTalk(stream, ownsStream) {
   stopMicTalk();
   if (!stream) return;
   talkSendStream = stream;
   talkSendOwnsStream = !!ownsStream;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return;
-  talkSendCtx = window.__gamelleAudioCtx || new AC();
-  if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = talkSendCtx;
-  if (talkSendCtx.state === 'suspended') talkSendCtx.resume().catch(() => {});
-  talkSendSrc = talkSendCtx.createMediaStreamSource(stream);
-  talkSendProc = talkSendCtx.createScriptProcessor(2048, 1, 1);
-  talkSendProc.onaudioprocess = (ev) => {
+  talkCapture = await startTalkCapture(stream, ({ rate, samples }) => {
     if (!micOn) return;
-    const samples = ev.inputBuffer.getChannelData(0);
-    const buf = new Int16Array(samples.length);
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      buf[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    socket.emit('talk-audio', { rate: talkSendCtx.sampleRate, samples: Array.from(buf) });
-  };
-  const mute = talkSendCtx.createGain();
-  mute.gain.value = 0;
-  talkSendSrc.connect(talkSendProc);
-  talkSendProc.connect(mute);
-  mute.connect(talkSendCtx.destination);
+    socket.emit('talk-audio', { rate, samples });
+  });
 }
 
 function stopMicTalk() {
-  if (talkSendProc) { try { talkSendProc.disconnect(); } catch (e) {} talkSendProc = null; }
-  if (talkSendSrc) { try { talkSendSrc.disconnect(); } catch (e) {} talkSendSrc = null; }
+  stopTalkCapture(talkCapture);
+  talkCapture = null;
   if (talkSendOwnsStream && talkSendStream) {
     talkSendStream.getTracks().forEach((t) => t.stop());
   }
@@ -370,7 +420,7 @@ async function enableCamera() {
     if (localStream.getAudioTracks && localStream.getAudioTracks().length) {
       micOn = true;
       renderMicStatus('granted');
-      startMicTalk(localStream, false);
+      await startMicTalk(localStream, false);
     }
     startLiveRelay();
     socket.emit('cam-status', { on: true });
@@ -409,7 +459,7 @@ socket.on('switch-camera', async ({ deviceId }) => {
     if (localStream) localStream.getTracks().forEach((t) => t.stop());
     localStream = newStream;
     localVideo.srcObject = localStream;
-    if (micOn) startMicTalk(localStream, false);
+    if (micOn) await startMicTalk(localStream, false);
   } catch (e) {
     console.warn('Changement de caméra impossible:', e.message);
   }
@@ -434,65 +484,114 @@ function disableCamera() {
   if (keepTalking) {
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((s) => {
       if (!micOn) { s.getTracks().forEach((t) => t.stop()); return; }
-      startMicTalk(s, true);
+      startMicTalk(s, true).catch(() => {});
     }).catch(() => {});
   }
 }
 
 // Relais JPEG via le serveur : marche aussi hors WiFi (4G / autre réseau)
 let liveRelayTimer = null;
+let liveGrabber = null;
+let liveGrabberTrack = null;
+let jsAwakeOsc = null;
+
+function keepJsAwake() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = new AC();
+    const ctx = window.__gamelleAudioCtx;
+    ctx.resume().catch(() => {});
+    if (jsAwakeOsc) return;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0.00001;
+    osc.frequency.value = 20;
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.start();
+    jsAwakeOsc = osc;
+  } catch (e) {}
+}
+
+function keepCameraAlive() {
+  if (!camOn) return;
+  keepJsAwake();
+  try {
+    if (localStream) {
+      localStream.getVideoTracks().forEach((t) => { t.enabled = true; });
+    }
+    if (localVideo) localVideo.play().catch(() => {});
+  } catch (e) {}
+  startLiveRelay();
+}
+
 function startLiveRelay() {
   stopLiveRelay();
+  keepJsAwake();
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  liveRelayTimer = setInterval(() => {
-    if (!camOn) return;
-    if (!localVideo.videoWidth) return;
-    const wSrc = localVideo.videoWidth;
-    const hSrc = localVideo.videoHeight;
-    const w = 240;
-    const h = Math.max(1, Math.round(hSrc * (w / wSrc)));
-    canvas.width = w;
-    canvas.height = h;
-    try { ctx.drawImage(localVideo, 0, 0, w, h); } catch (e) { return; }
-    const data = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
-    if (data) socket.emit('live-frame', data);
-  }, 250);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  liveGrabber = null;
+  liveGrabberTrack = null;
+  const tick = () => {
+    if (!camOn || !localStream) return;
+    const track = localStream.getVideoTracks()[0];
+    if (!track || track.readyState !== 'live') return;
+    const paint = (srcW, srcH, draw) => {
+      if (!srcW || !srcH) return;
+      const w = 240;
+      const h = Math.max(1, Math.round(srcH * (w / srcW)));
+      canvas.width = w;
+      canvas.height = h;
+      try { draw(w, h); } catch (e) { return; }
+      const data = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
+      if (data) socket.emit('live-frame', data);
+    };
+    if (typeof ImageCapture === 'function') {
+      try {
+        if (liveGrabberTrack !== track) {
+          liveGrabber = new ImageCapture(track);
+          liveGrabberTrack = track;
+        }
+        liveGrabber.grabFrame().then((bmp) => {
+          paint(bmp.width, bmp.height, (w, h) => {
+            ctx.drawImage(bmp, 0, 0, w, h);
+            if (bmp.close) bmp.close();
+          });
+        }).catch(() => {
+          liveGrabber = null;
+          liveGrabberTrack = null;
+          if (localVideo.videoWidth) {
+            paint(localVideo.videoWidth, localVideo.videoHeight, (w, h) => {
+              ctx.drawImage(localVideo, 0, 0, w, h);
+            });
+          }
+        });
+        return;
+      } catch (e) {
+        liveGrabber = null;
+        liveGrabberTrack = null;
+      }
+    }
+    if (localVideo.videoWidth) {
+      paint(localVideo.videoWidth, localVideo.videoHeight, (w, h) => {
+        ctx.drawImage(localVideo, 0, 0, w, h);
+      });
+    }
+  };
+  liveRelayTimer = setInterval(tick, 250);
+  tick();
 }
 function stopLiveRelay() {
   if (liveRelayTimer) { clearInterval(liveRelayTimer); liveRelayTimer = null; }
+  liveGrabber = null;
+  liveGrabberTrack = null;
 }
 
 // --- Voix du contrôleur (relais PCM, marche hors LAN) ---
-let talkPlayCtx = null;
-let talkNextTime = 0;
-
 socket.on('talk-audio', ({ rate, samples }) => {
-  if (!talkSoundOn || !samples || !samples.length) return;
-  try {
-    if (!talkPlayCtx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      talkPlayCtx = window.__gamelleAudioCtx || new AC();
-      if (!window.__gamelleAudioCtx) window.__gamelleAudioCtx = talkPlayCtx;
-    }
-    const ctx = talkPlayCtx;
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-      return;
-    }
-    const float32 = new Float32Array(samples.length);
-    for (let i = 0; i < samples.length; i++) float32[i] = samples[i] / 0x8000;
-    const buf = ctx.createBuffer(1, float32.length, rate || ctx.sampleRate);
-    buf.getChannelData(0).set(float32);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    const now = ctx.currentTime;
-    if (talkNextTime < now + 0.05) talkNextTime = now + 0.05;
-    src.start(talkNextTime);
-    talkNextTime += buf.duration;
-  } catch (e) {}
+  if (!talkSoundOn) return;
+  playTalkPcm(talkPlayState, rate, samples);
 });
 
 socket.on('signal', async (payload) => {
@@ -583,7 +682,3 @@ function startBatteryWatch() {
   });
 }
 
-if (typeof bindAppUpdate === 'function') {
-  const updateCard = document.getElementById('updateCard');
-  if (updateCard) bindAppUpdate(updateCard);
-}

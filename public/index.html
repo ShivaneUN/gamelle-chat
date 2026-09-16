@@ -3,138 +3,37 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gamelle Chat - Prototype</title>
-<link rel="stylesheet" href="/style.css?v=15">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Gamelle Chat</title>
+<link rel="stylesheet" href="/style.css?v=24">
 </head>
 <body>
 <div class="wrap center">
   <h1>🐾 Gamelle Chat</h1>
-  <p class="muted">Même WiFi ou 4G — choisis ton rôle</p>
-
-  <div class="card" id="remoteBox" style="display:none;">
-    <label>Accès à distance (autre WiFi / 4G)</label>
-    <div id="publicQr" class="pair-qr-box"></div>
-    <p id="publicUrl" class="pair-link" style="margin-top:0;"></p>
-    <button type="button" class="ghost" id="copyUrlBtn">Copier le lien</button>
-    <p class="hint">Scanne le QR ou ouvre ce lien sur le Contrôleur. Même code de jumelage.</p>
-  </div>
-
-  <div class="card">
-    <label>Code de jumelage</label>
-    <div class="row">
-      <input id="code" maxlength="6" placeholder="ex: 482913" />
-      <button id="genBtn" class="ghost">Générer</button>
-    </div>
-    <p class="hint">Même code sur tous les appareils. Tu peux connecter <strong>plusieurs Contrôleurs</strong> en même temps (un Récepteur).</p>
-    <div id="controllerQr" class="pair-qr-box"></div>
-    <p class="hint">QR Contrôleur (avec le code)</p>
-  </div>
-
-  <div class="card" id="updateCard">
-    <label>Mise à jour</label>
-    <p class="hint" data-update-status style="margin:8px 0;">Vérification…</p>
-    <div class="row">
-      <button type="button" class="ghost" data-update-check>Vérifier</button>
-      <button type="button" data-update-apply hidden>Mettre à jour</button>
-    </div>
-    <p class="hint">Sur la tablette (là où tourne le serveur). Photos et alarmes restent en local.</p>
-  </div>
-
-  <div class="card">
-    <button class="big" onclick="go('controller')">📱 Je suis le CONTRÔLEUR<br><span class="small">(téléphone — plusieurs possibles avec le même code)</span></button>
-    <button class="big alt" onclick="go('receiver')">🐱 Je suis le RÉCEPTEUR<br><span class="small">(la tablette posée près de la gamelle)</span></button>
-  </div>
+  <p class="muted">Ouverture du contrôleur…</p>
 </div>
-
-<script src="/qr.js?v=1"></script>
-<script src="/update-ui.js?v=1"></script>
 <script>
-const PAIR_KEY = 'gamellePairCode';
-function genCode(){ return Math.floor(100000 + Math.random()*900000).toString(); }
-
-const codeInput = document.getElementById('code');
-try {
-  const saved = localStorage.getItem(PAIR_KEY);
-  codeInput.value = saved && saved.length >= 4 ? saved : genCode();
-} catch (e) {
-  codeInput.value = genCode();
-}
-try { localStorage.setItem(PAIR_KEY, codeInput.value); } catch (e) {}
-
-function currentCode() {
-  return (codeInput.value || '').trim();
-}
-
-function saveCode() {
-  const code = currentCode();
-  if (code.length >= 4) {
-    try { localStorage.setItem(PAIR_KEY, code); } catch (e) {}
-  }
-}
-
-let publicBase = location.origin;
-
-function controllerLink() {
-  const code = currentCode();
-  if (code.length < 4) return '';
-  return String(publicBase || location.origin).replace(/\/$/, '') + '/controller.html?code=' + encodeURIComponent(code);
-}
-
-function refreshQrs() {
-  const ctrl = controllerLink();
-  if (ctrl && typeof renderQr === 'function') renderQr(document.getElementById('controllerQr'), ctrl);
-  if (publicBase && publicBase !== location.origin && typeof renderQr === 'function') {
-    renderQr(document.getElementById('publicQr'), publicBase);
-  }
-}
-
-document.getElementById('genBtn').onclick = () => {
-  codeInput.value = genCode();
-  saveCode();
-  refreshQrs();
-};
-codeInput.addEventListener('input', () => { saveCode(); refreshQrs(); });
-
-function go(role){
-  const code = currentCode();
-  if(!code || code.length < 4){ alert('Entre un code de jumelage (au moins 4 chiffres)'); return; }
-  saveCode();
-  location.href = `/${role}.html?code=${encodeURIComponent(code)}`;
-}
-
-function showPublicUrl(url) {
-  if (!url) return false;
-  publicBase = url.replace(/\/$/, '');
-  document.getElementById('remoteBox').style.display = 'block';
-  document.getElementById('publicUrl').textContent = publicBase;
-  document.getElementById('copyUrlBtn').onclick = async () => {
+(async function openController() {
+  for (;;) {
     try {
-      await navigator.clipboard.writeText(publicBase);
-      document.getElementById('copyUrlBtn').textContent = 'Copié ✅';
-    } catch (e) {
-      prompt('Copie cette adresse :', publicBase);
-    }
-  };
-  refreshQrs();
-  return true;
-}
-
-refreshQrs();
-
-(async function waitPublicUrl() {
-  for (let i = 0; i < 20; i++) {
+      const j = await fetch('/api/active-code').then((r) => r.json());
+      const code = j && j.code ? String(j.code).trim() : '';
+      if (code.length >= 4) {
+        location.replace('/controller.html?code=' + encodeURIComponent(code));
+        return;
+      }
+    } catch (e) {}
     try {
       const info = await fetch('/api/info').then((r) => r.json());
-      if (showPublicUrl(info.publicUrl)) return;
+      const code = info && info.pairCode ? String(info.pairCode).trim() : '';
+      if (code.length >= 4) {
+        location.replace('/controller.html?code=' + encodeURIComponent(code));
+        return;
+      }
     } catch (e) {}
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 800));
   }
 })();
-
-if (typeof bindAppUpdate === 'function') {
-  const updateCard = document.getElementById('updateCard');
-  if (updateCard) bindAppUpdate(updateCard);
-}
 </script>
 </body>
 </html>

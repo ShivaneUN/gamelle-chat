@@ -1,4 +1,5 @@
 const express = require('express');
+const http = require('http');
 const https = require('https');
 const { Server } = require('socket.io');
 const path = require('path');
@@ -7,14 +8,47 @@ const os = require('os');
 const selfsigned = require('selfsigned');
 const updater = require('./update-service');
 
+function isMobileBundle() {
+  return path.basename(__dirname) === 'nodejs-project';
+}
+
+function storageRoot() {
+  if (!isMobileBundle()) return __dirname;
+  const root = path.join(__dirname, '..', 'gamelle-persist');
+  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function copyDirIfMissing(src, dest) {
+  if (!src || src === dest || !fs.existsSync(src)) return;
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+  let names = [];
+  try { names = fs.readdirSync(src); } catch (e) { return; }
+  for (const name of names) {
+    const from = path.join(src, name);
+    const to = path.join(dest, name);
+    let st;
+    try { st = fs.statSync(from); } catch (e) { continue; }
+    if (st.isDirectory()) copyDirIfMissing(from, to);
+    else if (name === 'public-url.json') continue;
+    else if (!fs.existsSync(to)) {
+      try { fs.copyFileSync(from, to); } catch (e) {}
+    }
+  }
+}
+
+const STORE = storageRoot();
+
 const app = express();
 
 // --- Certificat HTTPS auto-signé, généré une seule fois et réutilisé ensuite ---
 // Nécessaire pour que le navigateur autorise la caméra et le micro sur une IP locale
 // (Chrome/Android bloque ces accès en http:// sauf sur localhost).
-const CERT_DIR = path.join(__dirname, 'certs');
+const CERT_DIR = path.join(STORE, 'certs');
 const KEY_PATH = path.join(CERT_DIR, 'key.pem');
 const CERT_PATH = path.join(CERT_DIR, 'cert.pem');
+copyDirIfMissing(path.join(__dirname, 'certs'), CERT_DIR);
+copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'certs'), CERT_DIR);
 if (!fs.existsSync(CERT_DIR)) fs.mkdirSync(CERT_DIR, { recursive: true });
 
 function generateCert() {
@@ -56,14 +90,53 @@ const PORT = Number(process.env.PORT) || 3000;
 const liveJpegs = {};
 
 // --- Dossiers de stockage ---
-const RECEIVER_DIR = path.join(__dirname, 'uploads', 'receiver');   // photos/vidéos : permanent
-const CONTROLLER_DIR = path.join(__dirname, 'uploads', 'controller'); // photos/vidéos : purgé 24h
-const AUDIO_DIR = path.join(__dirname, 'uploads', 'audio');          // messages vocaux enregistrés : permanent
-const DATA_DIR = path.join(__dirname, 'data');
+const RECEIVER_DIR = path.join(STORE, 'uploads', 'receiver');
+const CONTROLLER_DIR = path.join(STORE, 'uploads', 'controller');
+const AUDIO_DIR = path.join(STORE, 'uploads', 'audio');
+const DATA_DIR = path.join(STORE, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'schedules.json');
+const ACTIVE_CODE_FILE = path.join(DATA_DIR, 'active-code.json');
+copyDirIfMissing(path.join(__dirname, 'uploads', 'receiver'), RECEIVER_DIR);
+copyDirIfMissing(path.join(__dirname, 'uploads', 'controller'), CONTROLLER_DIR);
+copyDirIfMissing(path.join(__dirname, 'uploads', 'audio'), AUDIO_DIR);
+copyDirIfMissing(path.join(__dirname, 'data'), DATA_DIR);
+copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'data'), DATA_DIR);
+copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'receiver'), RECEIVER_DIR);
+copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'controller'), CONTROLLER_DIR);
+copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'audio'), AUDIO_DIR);
 [RECEIVER_DIR, CONTROLLER_DIR, AUDIO_DIR, DATA_DIR].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
+
+function roomWeight(room) {
+  if (!room) return 0;
+  return ((room.schedules && room.schedules.length) || 0) + ((room.messages && room.messages.length) || 0);
+}
+
+function mergeSchedulesFrom(srcFile) {
+  if (!srcFile || srcFile === DATA_FILE || !fs.existsSync(srcFile)) return;
+  let incoming = {};
+  try { incoming = JSON.parse(fs.readFileSync(srcFile, 'utf8')); } catch (e) { return; }
+  let current = {};
+  try {
+    if (fs.existsSync(DATA_FILE)) current = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch (e) {}
+  if (!incoming || typeof incoming !== 'object') return;
+  let changed = false;
+  Object.keys(incoming).forEach((code) => {
+    if (roomWeight(incoming[code]) > roomWeight(current[code])) {
+      current[code] = incoming[code];
+      changed = true;
+    }
+  });
+  if (changed) {
+    try { fs.writeFileSync(DATA_FILE, JSON.stringify(current, null, 2)); } catch (e) {}
+  }
+}
+
+mergeSchedulesFrom(path.join(__dirname, 'data', 'schedules.json'));
+mergeSchedulesFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'schedules.json'));
+console.log('Stockage persistant :', STORE);
 
 app.use((req, res, next) => {
   // Ne pas toucher à autoplay : un header trop strict coupe bip / TTS / audio en HTTPS local
@@ -76,12 +149,57 @@ app.use('/media/controller', express.static(CONTROLLER_DIR));
 app.use('/media/audio', express.static(AUDIO_DIR));
 app.use(express.json({ limit: '50mb' }));
 
+function isQuickTunnelUrl(url) {
+  try {
+    const host = new URL(String(url)).hostname || '';
+    return host.endsWith('.trycloudflare.com') && host !== 'api.trycloudflare.com';
+  } catch (e) {
+    return false;
+  }
+}
+
+function readNativePublicUrl() {
+  try {
+    const extra = path.join(DATA_DIR, 'public-url.json');
+    if (!fs.existsSync(extra)) return null;
+    const j = JSON.parse(fs.readFileSync(extra, 'utf8'));
+    if (j && j.url) {
+      const url = String(j.url).replace(/\/$/, '');
+      if (isQuickTunnelUrl(url)) return url;
+    }
+  } catch (e) {}
+  return null;
+}
+
 app.get('/api/info', (_req, res) => {
   res.json({
-    publicUrl,
+    publicUrl: publicUrl || readNativePublicUrl(),
     localUrl: `https://${getLocalIp()}:${PORT}`,
     version: updater.pkgVersion(),
+    pairCode: readActiveCode(),
   });
+});
+
+app.get('/api/active-code', (_req, res) => {
+  res.json({ code: readActiveCode() });
+});
+
+app.post('/api/alarm-stop', (_req, res) => {
+  const code = readActiveCode();
+  if (code) stopRoomAlarm(code);
+  res.json({ ok: true });
+});
+app.get('/api/alarm-stop', (_req, res) => {
+  const code = readActiveCode();
+  if (code) stopRoomAlarm(code);
+  res.json({ ok: true });
+});
+
+app.get('/c/:code', (req, res) => {
+  const code = String(req.params.code || '').trim();
+  if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'controller.html'));
 });
 
 app.get('/api/update/status', (_req, res) => {
@@ -122,26 +240,138 @@ function loadPersisted() {
   return {};
 }
 function persist() {
-  const dump = {};
+  let dump = {};
+  try {
+    if (fs.existsSync(DATA_FILE)) dump = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) || {};
+  } catch (e) {}
   for (const code in rooms) dump[code] = {
     schedules: rooms[code].schedules,
     messages: rooms[code].messages,
-    manualAlarm: rooms[code].manualAlarm || { messageId: '', duration: 30 },
+    manualAlarm: rooms[code].manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(dump, null, 2));
 }
 
-function assignMessageToAlarms(room, messageId) {
-  if (!room.manualAlarm) room.manualAlarm = { messageId: '', duration: 30 };
-  room.manualAlarm.messageId = messageId;
-  if (!room.schedules.length) {
-    room.schedules.push({ id: 's' + Date.now(), time: '08:00', messageId, duration: 30 });
+function notifyFlutter(tag, message) {
+  try { require('flutter-bridge').send(tag, String(message)); } catch (e) {}
+}
+
+function readActiveCode() {
+  try {
+    if (fs.existsSync(ACTIVE_CODE_FILE)) {
+      const j = JSON.parse(fs.readFileSync(ACTIVE_CODE_FILE, 'utf8'));
+      if (j && j.code && String(j.code).trim().length >= 4) return String(j.code).trim();
+    }
+  } catch (e) {}
+  const keys = Object.keys(persisted || {});
+  const nonempty = keys.filter((k) => roomWeight(persisted[k]) > 0);
+  if (nonempty.length) return nonempty[0];
+  if (keys.length) return keys[0];
+  return null;
+}
+
+function writeActiveCode(code) {
+  if (!code || String(code).trim().length < 4) return;
+  try {
+    fs.writeFileSync(ACTIVE_CODE_FILE, JSON.stringify({ code: String(code).trim() }));
+  } catch (e) {}
+}
+
+function ensureActiveCode() {
+  let code = readActiveCode();
+  if (!code) {
+    code = String(Math.floor(100000 + Math.random() * 900000));
+  }
+  writeActiveCode(code);
+  return code;
+}
+
+function allWeekDays() {
+  return [0, 1, 2, 3, 4, 5, 6];
+}
+
+function normalizeDays(days) {
+  if (!Array.isArray(days) || !days.length) return allWeekDays();
+  const set = new Set(days.map(Number).filter((n) => n >= 0 && n <= 6));
+  if (!set.size) return allWeekDays();
+  return allWeekDays().filter((n) => set.has(n));
+}
+
+function scheduleMatchesWeekday(s, weekday) {
+  return normalizeDays(s && s.days).includes(Number(weekday));
+}
+
+function remapBuiltinSound(id) {
+  if (id === 'kibble' || id === 'meow') return 'beep';
+  return id || '';
+}
+
+function normalizeSchedule(s) {
+  if (!s) return { id: 's' + Date.now(), time: '08:00', duration: 30, sound1: 'beep', sound2: '', messageId: '', days: allWeekDays() };
+  let sound1;
+  let sound2;
+  if (s.sound1 !== undefined || s.sound2 !== undefined) {
+    sound1 = remapBuiltinSound(s.sound1 || '');
+    sound2 = remapBuiltinSound(s.sound2 || s.messageId || '');
   } else {
-    room.schedules.forEach((s) => { s.messageId = messageId; });
+    sound1 = 'beep';
+    sound2 = s.messageId || '';
+  }
+  return {
+    id: s.id || ('s' + Date.now()),
+    time: s.time || '08:00',
+    duration: Math.min(120, Math.max(5, Number(s.duration) || 30)),
+    sound1,
+    sound2,
+    messageId: s.messageId || sound2 || '',
+    days: normalizeDays(s.days),
+  };
+}
+
+function resolveAlarmSound(room, id) {
+  if (!id) return null;
+  if (id === 'beep' || id === 'chime') {
+    return { type: 'builtin', id };
+  }
+  const msg = (room.messages || []).find((m) => m.id === id);
+  if (!msg) return { type: 'builtin', id: 'beep' };
+  return {
+    type: 'message',
+    text: (msg.text || '').trim(),
+    audioUrl: msg.audioUrl || null,
+    name: msg.name || '',
+  };
+}
+
+function soundsForSchedule(room, s) {
+  const n = normalizeSchedule(s);
+  const out = [];
+  const a = resolveAlarmSound(room, n.sound1);
+  const b = resolveAlarmSound(room, n.sound2);
+  if (a) out.push(a);
+  if (b && n.sound2 !== n.sound1) out.push(b);
+  if (!out.length) out.push({ type: 'builtin', id: 'beep' });
+  return out;
+}
+
+function assignMessageToAlarms(room, messageId) {
+  if (!room.manualAlarm) room.manualAlarm = { messageId: '', sound1: 'beep', sound2: '', duration: 30 };
+  room.manualAlarm.messageId = messageId;
+  room.manualAlarm.sound2 = messageId;
+  if (!room.manualAlarm.sound1) room.manualAlarm.sound1 = 'beep';
+  if (!room.schedules.length) {
+    room.schedules.push({ id: 's' + Date.now(), time: '08:00', messageId, sound1: 'beep', sound2: messageId, duration: 30, days: allWeekDays() });
+  } else {
+    room.schedules.forEach((s) => {
+      s.messageId = messageId;
+      s.sound2 = messageId;
+      if (!s.sound1) s.sound1 = 'beep';
+    });
   }
 }
 
 const persisted = loadPersisted();
+ensureActiveCode();
 
 // rooms[code] = { controllerIds: Set, receiverId, schedules, messages, _lastFired, camOn, cameras }
 const rooms = {};
@@ -149,9 +379,9 @@ function getRoom(code) {
   if (!rooms[code]) {
     const saved = persisted[code] || {};
     rooms[code] = {
-      schedules: saved.schedules || [],
+      schedules: (saved.schedules || []).map(normalizeSchedule),
       messages: saved.messages || [],
-      manualAlarm: saved.manualAlarm || { messageId: '', duration: 30 },
+      manualAlarm: saved.manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
       _lastFired: {},
       controllerIds: new Set(),
       receiverId: null,
@@ -220,7 +450,10 @@ io.on('connection', (socket) => {
     socket.data.role = role;
 
     if (role === 'controller') room.controllerIds.add(socket.id);
-    if (role === 'receiver') room.receiverId = socket.id;
+    if (role === 'receiver') {
+      room.receiverId = socket.id;
+      writeActiveCode(code);
+    }
 
     emitPeers(code, room);
 
@@ -302,16 +535,19 @@ io.on('connection', (socket) => {
   // --- Horaires : modifiables depuis n'importe quel appareil, synchronisés sur les 2 ---
   socket.on('update-schedules', (schedules) => {
     const room = getRoom(socket.data.code);
-    room.schedules = schedules;
+    room.schedules = (schedules || []).map(normalizeSchedule);
     persist();
     broadcastRoomState(socket.data.code, room);
   });
 
-  socket.on('update-manual-alarm', ({ messageId, duration }) => {
+  socket.on('update-manual-alarm', ({ messageId, duration, sound1, sound2 }) => {
     if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
-    if (!room.manualAlarm) room.manualAlarm = { messageId: '', duration: 30 };
+    if (!room.manualAlarm) room.manualAlarm = { messageId: '', sound1: 'beep', sound2: '', duration: 30 };
     if (messageId !== undefined) room.manualAlarm.messageId = messageId || '';
+    if (sound1 !== undefined) room.manualAlarm.sound1 = sound1 || '';
+    if (sound2 !== undefined) room.manualAlarm.sound2 = sound2 || '';
+    if (sound2 !== undefined && messageId === undefined) room.manualAlarm.messageId = sound2 || '';
     if (duration !== undefined) room.manualAlarm.duration = Math.min(120, Math.max(5, Number(duration) || 30));
     persist();
     broadcastRoomState(socket.data.code, room);
@@ -341,7 +577,16 @@ io.on('connection', (socket) => {
     }
     room.messages = room.messages.filter((m) => m.id !== id);
     // Détache ce message des horaires qui l'utilisaient
-    room.schedules.forEach((s) => { if (s.messageId === id) s.messageId = null; });
+    room.schedules.forEach((s) => {
+      if (s.messageId === id) s.messageId = null;
+      if (s.sound2 === id) s.sound2 = '';
+      if (s.sound1 === id) s.sound1 = 'beep';
+    });
+    if (room.manualAlarm) {
+      if (room.manualAlarm.messageId === id) room.manualAlarm.messageId = '';
+      if (room.manualAlarm.sound2 === id) room.manualAlarm.sound2 = '';
+      if (room.manualAlarm.sound1 === id) room.manualAlarm.sound1 = 'beep';
+    }
     persist();
     broadcastRoomState(socket.data.code, room);
   });
@@ -411,6 +656,14 @@ io.on('connection', (socket) => {
   socket.on('switch-camera', (payload) => emitToRole(socket.data.code, 'receiver', 'switch-camera', payload));
 
   socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
+  socket.on('screen-on', () => {
+    notifyFlutter('screen', 'on');
+    emitToRole(socket.data.code, 'receiver', 'screen-on');
+  });
+  socket.on('screen-off', () => {
+    notifyFlutter('screen', 'off');
+    emitToRole(socket.data.code, 'receiver', 'screen-off');
+  });
   socket.on('start-video', () => emitToRole(socket.data.code, 'receiver', 'start-video'));
   socket.on('stop-video', () => emitToRole(socket.data.code, 'receiver', 'stop-video'));
 
@@ -452,19 +705,35 @@ io.on('connection', (socket) => {
   });
 });
 
-function startRoomAlarm(code, { messageId, duration, text, audioUrl, name } = {}) {
+function startRoomAlarm(code, { messageId, duration, text, audioUrl, name, sound1, sound2, sequence } = {}) {
   const room = getRoom(code);
   const dur = Math.min(120, Math.max(5, Number(duration) || 30));
-  const msg = messageId ? (room.messages || []).find((m) => m.id === messageId) : null;
+  let seq = Array.isArray(sequence) ? sequence.filter(Boolean) : [];
+  if (!seq.length) {
+    const fake = {
+      sound1: sound1 !== undefined ? remapBuiltinSound(sound1) : 'beep',
+      sound2: sound2 !== undefined ? sound2 : (messageId || ''),
+      messageId: messageId || '',
+      duration: dur,
+    };
+    seq = soundsForSchedule(room, fake);
+  }
   if (room._alarmTimer) clearTimeout(room._alarmTimer);
-  const spoken = ((msg && msg.text) || text || (msg && msg.name) || name || '').trim();
+  const firstMsg = seq.find((p) => p && p.type === 'message') || {};
+  const spoken = (firstMsg.text || text || firstMsg.name || name || '').trim();
   room._alarmPayload = {
     message: spoken,
-    audioUrl: (msg && msg.audioUrl) || audioUrl || null,
+    audioUrl: firstMsg.audioUrl || audioUrl || null,
     duration: dur,
+    sequence: seq,
   };
   room._alarmUntil = Date.now() + dur * 1000;
   io.to(code).emit('alarm', room._alarmPayload);
+  notifyFlutter('screen', 'on');
+  notifyFlutter('alarm', JSON.stringify({
+    message: spoken || 'C’est l’heure !',
+    duration: dur,
+  }));
   room._alarmTimer = setTimeout(() => stopRoomAlarm(code), dur * 1000);
 }
 
@@ -476,23 +745,36 @@ function stopRoomAlarm(code) {
   room._alarmPayload = null;
   room._alarmUntil = 0;
   io.to(code).emit('alarm-stop');
+  notifyFlutter('alarm-stop', '');
 }
 
-// --- Vérifie toutes les 15s si une sonnerie doit se déclencher ---
+// --- Vérifie toutes les 5s : horaires du jour (tous les jours ou jours choisis) ---
 setInterval(() => {
   const now = new Date();
   const current = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   for (const code in rooms) {
     const room = rooms[code];
-    (room.schedules || []).forEach((s) => {
-      const key = s.id + current;
-      if (s.time === current && room._lastFired[s.id] !== key) {
-        room._lastFired[s.id] = key;
-        startRoomAlarm(code, { messageId: s.messageId, duration: s.duration });
-      }
+    if (!room._lastFired) room._lastFired = {};
+    const due = [];
+    (room.schedules || []).forEach((raw) => {
+      const s = normalizeSchedule(raw);
+      if (!s.time || s.time !== current) return;
+      if (!scheduleMatchesWeekday(s, now.getDay())) return;
+      const key = `${s.id}|${day}|${s.time}`;
+      if (room._lastFired[s.id] === key) return;
+      room._lastFired[s.id] = key;
+      due.push(s);
     });
+    if (!due.length) continue;
+    const duration = Math.max.apply(null, due.map((s) => s.duration || 30));
+    const sequence = [];
+    due.forEach((s) => {
+      soundsForSchedule(room, s).forEach((part) => sequence.push(part));
+    });
+    startRoomAlarm(code, { duration, sequence });
   }
-}, 15000);
+}, 5000);
 
 // --- Purge auto après 24h : UNIQUEMENT sur le stockage contrôleur (le récepteur garde tout) ---
 setInterval(() => {
@@ -523,6 +805,16 @@ function getLocalIp() {
   return 'localhost';
 }
 
+const TUNNEL_PORT = Number(process.env.TUNNEL_PORT) || (PORT + 1);
+const httpOrigin = http.createServer(app);
+io.attach(httpOrigin);
+httpOrigin.on('error', (err) => {
+  console.warn('Origine tunnel HTTP:', err.message || err);
+});
+httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
+  console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
@@ -535,7 +827,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('================================================\n');
   } else {
     console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
-    startPublicTunnel(`https://127.0.0.1:${PORT}`);
+    startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
 });
 
@@ -549,7 +841,8 @@ async function startPublicTunnel(origin) {
       console.log('Téléchargement de cloudflared (une seule fois)...');
       await install(bin);
     }
-    const tunnel = Tunnel.quick(origin, { '--no-tls-verify': true });
+    const tunnelOpts = origin.startsWith('https:') ? { '--no-tls-verify': true } : {};
+    const tunnel = Tunnel.quick(origin, tunnelOpts);
     tunnel.once('url', (url) => {
       publicUrl = url.replace(/\/$/, '');
       console.log(`Depuis n'importe où (4G / autre WiFi) : ${publicUrl}`);
