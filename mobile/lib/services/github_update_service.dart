@@ -29,27 +29,13 @@ class GithubUpdateService {
   static final GithubUpdateService instance = GithubUpdateService._();
   static const _ch = MethodChannel('gamelle/github');
 
-  Future<String> loadToken() async {
-    try {
-      return '${await _ch.invokeMethod<String>('loadToken') ?? ''}';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  Future<void> saveToken(String token) async {
-    try {
-      await _ch.invokeMethod<void>('saveToken', token);
-    } catch (_) {}
-  }
-
-  Future<GithubUpdateStatus> check(String token) async {
-    final raw = await _ch.invokeMethod<dynamic>('status', {'token': token});
+  Future<GithubUpdateStatus> check() async {
+    final raw = await _ch.invokeMethod<dynamic>('status');
     return GithubUpdateStatus.from(raw);
   }
 
-  Future<GithubUpdateStatus> apply(String token) async {
-    final raw = await _ch.invokeMethod<dynamic>('apply', {'token': token});
+  Future<GithubUpdateStatus> apply() async {
+    final raw = await _ch.invokeMethod<dynamic>('apply');
     return GithubUpdateStatus.from(raw);
   }
 }

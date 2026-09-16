@@ -113,13 +113,12 @@ class MainActivity : FlutterActivity() {
         MethodChannel(messenger, "gamelle/github").setMethodCallHandler { call, result ->
             when (call.method) {
                 "status", "apply" -> {
-                    val token = (call.arguments as? Map<*, *>)?.get("token") as? String
                     Thread {
                         val map = try {
                             if (call.method == "status") {
-                                GithubUpdate.status(filesDir, token)
+                                GithubUpdate.status(filesDir)
                             } else {
-                                GithubUpdate.apply(filesDir, token)
+                                GithubUpdate.apply(filesDir)
                             }
                         } catch (e: Exception) {
                             mapOf(
@@ -144,11 +143,6 @@ class MainActivity : FlutterActivity() {
                     stopNodeService()
                     result.success(true)
                 }
-                "saveToken" -> {
-                    GithubUpdate.saveToken(filesDir, call.arguments as? String ?: "")
-                    result.success(true)
-                }
-                "loadToken" -> result.success(GithubUpdate.readToken(filesDir))
                 else -> result.notImplemented()
             }
         }
