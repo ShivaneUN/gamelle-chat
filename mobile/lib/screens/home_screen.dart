@@ -191,8 +191,43 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  String get _localHost {
-    return _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), '');
+  Future<void> _showLocalWifi() async {
+    final url = _bridge.localUrl;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: _card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: const Row(
+            children: [
+              Icon(Icons.wifi_rounded, color: _accent),
+              SizedBox(width: 10),
+              Text('Wi-Fi local'),
+            ],
+          ),
+          content: SelectableText(
+            url,
+            style: const TextStyle(color: _accent, fontSize: 16, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Fermer', style: TextStyle(color: _muted)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: _accent),
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _copy(url, done: 'Lien local copié');
+              },
+              child: const Text('Copier'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -258,18 +293,43 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _pairingPanel({required bool expand}) {
     final remote = _bridge.publicUrl;
     final pair = _bridge.pairCode;
-    final qr = remote == null
-        ? const SizedBox(
-            height: 220,
-            child: Center(child: CircularProgressIndicator(color: _accent)),
+    final qrSize = expand ? 260.0 : 220.0;
+    final qrFace = remote == null
+        ? SizedBox(
+            width: qrSize,
+            height: qrSize,
+            child: const Center(child: CircularProgressIndicator(color: _accent)),
           )
         : GestureDetector(
             onTap: () => _copy(remote),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(18),
-              child: ScanQr(data: remote, size: expand ? 260 : 220),
+              child: ScanQr(data: remote, size: qrSize),
             ),
           );
+    final qr = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        qrFace,
+        Positioned(
+          right: 8,
+          top: 8,
+          child: Material(
+            color: _card,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _applying ? null : _showLocalWifi,
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.wifi_rounded, color: _accent, size: 22),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
 
     final body = Column(
       children: [
@@ -327,12 +387,6 @@ class _HomeScreenState extends State<HomeScreen> {
           highlighted: true,
           onTap: _applying ? null : _openReceiver,
         ),
-      _ActionTile(
-        icon: Icons.wifi_rounded,
-        title: 'Wi-Fi local',
-        subtitle: 'copier $_localHost',
-        onTap: _applying ? null : () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-      ),
       _ActionTile(
         icon: Icons.system_update_alt_rounded,
         title: 'Mises à jour',
