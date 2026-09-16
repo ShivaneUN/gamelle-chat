@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Gamelle Chat</title>
+<link rel="stylesheet" href="/style.css?v=24">
+</head>
+<body>
+<div class="wrap center">
+  <h1>🐾 Gamelle Chat</h1>
+  <p class="muted">Ouverture du contrôleur…</p>
+</div>
+<script>
+(async function openController() {
+  for (;;) {
+    try {
+      const j = await fetch('/api/active-code').then((r) => r.json());
+      const code = j && j.code ? String(j.code).trim() : '';
+      if (code.length >= 4) {
+        location.replace('/controller.html?code=' + encodeURIComponent(code));
+        return;
+      }
+    } catch (e) {}
+    try {
+      const info = await fetch('/api/info').then((r) => r.json());
+      const code = info && info.pairCode ? String(info.pairCode).trim() : '';
+      if (code.length >= 4) {
+        location.replace('/controller.html?code=' + encodeURIComponent(code));
+        return;
+      }
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 800));
+  }
+})();
+</script>
+</body>
+</html>

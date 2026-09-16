@@ -1,0 +1,10 @@
+{
+  "name": "gamelle-chat",
+  "version": "0.0.1",
+  "main": "main.js",
+  "dependencies": {
+    "express": "^4.21.2",
+    "selfsigned": "^1.10.14",
+    "socket.io": "^4.8.3"
+  }
+}
