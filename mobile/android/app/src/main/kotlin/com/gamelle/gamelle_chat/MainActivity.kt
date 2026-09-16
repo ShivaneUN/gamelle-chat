@@ -3,6 +3,9 @@ package com.gamelle.gamelle_chat
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -136,11 +139,22 @@ class MainActivity : FlutterActivity() {
                             if (call.method == "status") {
                                 GithubUpdate.status(filesDir, installed)
                             } else {
-                                GithubUpdate.apply(filesDir, installed) { pct, label ->
-                                    mainHandler.post {
-                                        githubProgressSink?.success(
-                                            mapOf("pct" to pct, "label" to label),
-                                        )
+                                if (!canInstallPackages()) {
+                                    requestInstallPermission()
+                                    mapOf(
+                                        "ok" to false,
+                                        "available" to true,
+                                        "install" to false,
+                                        "restart" to false,
+                                        "message" to "Autorise l’installation d’apps pour Gamelle Chat, puis réessaie.",
+                                    )
+                                } else {
+                                    GithubUpdate.apply(filesDir, installed) { pct, label ->
+                                        mainHandler.post {
+                                            githubProgressSink?.success(
+                                                mapOf("pct" to pct, "label" to label),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -152,7 +166,13 @@ class MainActivity : FlutterActivity() {
                                 "message" to (e.message ?: "Erreur GitHub"),
                             )
                         }
-                        mainHandler.post { result.success(map) }
+                        mainHandler.post {
+                            val path = map["apkPath"] as? String
+                            if (map["install"] == true && !path.isNullOrBlank()) {
+                                installApk(path)
+                            }
+                            result.success(map)
+                        }
                     }.start()
                 }
                 "applyOverlay" -> {
@@ -693,6 +713,38 @@ class MainActivity : FlutterActivity() {
             stopService(stop)
         } catch (_: Exception) {
         }
+    }
+
+    private fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    private fun requestInstallPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:$packageName"),
+        )
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+    }
+
+    private fun installApk(path: String) {
+        val file = File(path)
+        if (!file.exists()) return
+        if (!canInstallPackages()) {
+            requestInstallPermission()
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(uri, "application/vnd.android.package-archive")
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
     }
 
     private fun relaunchApp() {

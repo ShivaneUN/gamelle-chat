@@ -46,7 +46,7 @@ object GithubUpdate {
 
     fun status(filesDir: File, installedVersion: String): Map<String, Any?> {
         forgetStoredToken(filesDir)
-        val local = localTag(filesDir, installedVersion)
+        val local = installedVersion
         return try {
             val remote = fetchLatestTag()
             val available = isNewer(remote, local)
@@ -74,6 +74,8 @@ object GithubUpdate {
         }
     }
 
+    fun apkFile(filesDir: File) = File(filesDir, "gamelle-persist/GamelleChat.apk")
+
     fun apply(
         filesDir: File,
         installedVersion: String,
@@ -84,32 +86,27 @@ object GithubUpdate {
             onProgress(0.04, "Recherche de la release…")
             val remote = fetchLatestTag()
             if (remote.isBlank()) {
-                return mapOf("ok" to false, "restart" to false, "message" to "Release GitHub introuvable.")
+                return mapOf("ok" to false, "restart" to false, "install" to false, "message" to "Release GitHub introuvable.")
             }
-            val local = localTag(filesDir, installedVersion)
+            val local = installedVersion
             if (!isNewer(remote, local)) {
-                applyStoredOverlay(filesDir)
                 onProgress(1.0, "Déjà à jour (${display(remote)}).")
                 return mapOf(
                     "ok" to true,
                     "restart" to false,
+                    "install" to false,
                     "message" to "Déjà à jour (${display(remote)}).",
                     "available" to false,
                 )
             }
-            val tmp = File(filesDir, "gamelle-persist/ota-tmp")
-            if (tmp.exists()) tmp.deleteRecursively()
-            tmp.mkdirs()
-            val count = downloadZipWanted(tmp, remote, onProgress)
-            if (count == 0) {
-                tmp.deleteRecursively()
-                return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server dans ${display(remote)}.")
+            onProgress(0.08, "Téléchargement de l’APK ${display(remote)}…")
+            val apk = apkFile(filesDir)
+            apk.parentFile?.mkdirs()
+            if (apk.exists()) apk.delete()
+            downloadToFile(fetchApkUrl(remote), apk, onProgress)
+            if (!apk.exists() || apk.length() < 1000) {
+                return mapOf("ok" to false, "restart" to false, "install" to false, "message" to "APK GitHub introuvable ou trop petit.")
             }
-            onProgress(0.90, "Installation ${display(remote)}…")
-            val ota = otaDir(filesDir)
-            if (ota.exists()) ota.deleteRecursively()
-            tmp.copyRecursively(ota, overwrite = true)
-            tmp.deleteRecursively()
             versionFile(filesDir).parentFile?.mkdirs()
             versionFile(filesDir).writeText(
                 JSONObject()
@@ -118,19 +115,21 @@ object GithubUpdate {
                     .toString(2),
                 StandardCharsets.UTF_8,
             )
-            applyStoredOverlay(filesDir)
-            onProgress(1.0, "Mise à jour installée (${display(remote)}).")
+            onProgress(1.0, "Installation Android…")
             mapOf(
                 "ok" to true,
-                "restart" to true,
+                "restart" to false,
+                "install" to true,
                 "available" to false,
+                "apkPath" to apk.absolutePath,
                 "remote" to display(remote),
-                "message" to "Mise à jour installée (${display(remote)}). Redémarrage…",
+                "message" to "Confirme l’installation ${display(remote)} sur l’écran Android.",
             )
         } catch (e: Exception) {
             mapOf(
                 "ok" to false,
                 "restart" to false,
+                "install" to false,
                 "message" to githubError(e),
             )
         }
@@ -176,6 +175,61 @@ object GithubUpdate {
         val title = titles.drop(1).firstOrNull().orEmpty()
         if (title.isNotBlank()) return title
         throw RuntimeException("Aucune release GitHub trouvée.")
+    }
+
+    private fun fetchApkUrl(tag: String): String {
+        val encoded = java.net.URLEncoder.encode(tag, "UTF-8").replace("+", "%20")
+        val pages = listOf(
+            "https://github.com/$OWNER/$REPO/releases/expanded_assets/$encoded",
+            "https://github.com/$OWNER/$REPO/releases/tag/$encoded",
+        )
+        for (page in pages) {
+            try {
+                val html = String(httpGet(page), StandardCharsets.UTF_8)
+                val rel = Regex("""(/[^"'\\s]+/releases/download/[^"'\\s]+\.apk)""")
+                    .find(html)
+                    ?.groupValues
+                    ?.get(1)
+                    .orEmpty()
+                if (rel.isNotBlank()) {
+                    return if (rel.startsWith("http")) rel else "https://github.com$rel"
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return "https://github.com/$OWNER/$REPO/releases/download/$tag/GamelleChat-${key(tag)}.apk"
+    }
+
+    private fun downloadToFile(
+        url: String,
+        dest: File,
+        onProgress: (Double, String) -> Unit,
+    ) {
+        val conn = open(url, readTimeoutMs = 600_000)
+        try {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val err = conn.errorStream?.readBytes() ?: ByteArray(0)
+                throw RuntimeException("HTTP $code ${String(err, StandardCharsets.UTF_8).take(240)}")
+            }
+            val length = conn.contentLengthLong
+            val buf = ByteArray(64 * 1024)
+            var got = 0L
+            conn.inputStream.use { input ->
+                dest.outputStream().use { out ->
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        got += n
+                        val frac = if (length > 0L) (got.toDouble() / length).coerceIn(0.0, 1.0) else 0.45
+                        onProgress(0.08 + 0.90 * frac, "Téléchargement de l’APK…")
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun peekLocation(url: String): String {
@@ -273,12 +327,12 @@ object GithubUpdate {
         }
     }
 
-    private fun open(startUrl: String): HttpURLConnection {
+    private fun open(startUrl: String, readTimeoutMs: Int = 120000): HttpURLConnection {
         var current = startUrl
         repeat(8) {
             val conn = URL(current).openConnection() as HttpURLConnection
             conn.connectTimeout = 20000
-            conn.readTimeout = 120000
+            conn.readTimeout = readTimeoutMs
             conn.instanceFollowRedirects = false
             conn.setRequestProperty("User-Agent", "GamelleChat")
             conn.setRequestProperty("Accept", "*/*")

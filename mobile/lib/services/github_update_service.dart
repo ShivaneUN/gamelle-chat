@@ -6,11 +6,13 @@ class GithubUpdateStatus {
     required this.available,
     required this.message,
     this.restart = false,
+    this.install = false,
   });
 
   final bool ok;
   final bool available;
   final bool restart;
+  final bool install;
   final String message;
 
   factory GithubUpdateStatus.from(dynamic raw) {
@@ -19,6 +21,7 @@ class GithubUpdateStatus {
       ok: map['ok'] == true,
       available: map['available'] == true,
       restart: map['restart'] == true,
+      install: map['install'] == true,
       message: '${map['message'] ?? ''}',
     );
   }

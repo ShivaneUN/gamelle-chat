@@ -103,6 +103,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _updateText = s.message;
         if (s.ok) _updatePct = 1;
       });
+      if (s.ok && s.install) {
+        setState(() => _updateText = s.message);
+        return;
+      }
       if (s.ok && s.restart) {
         setState(() => _updateText = 'Redémarrage de l’app…');
         await Future<void>.delayed(const Duration(milliseconds: 400));
