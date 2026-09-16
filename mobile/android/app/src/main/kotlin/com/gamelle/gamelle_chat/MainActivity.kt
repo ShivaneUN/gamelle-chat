@@ -37,6 +37,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var tunnel: java.lang.Process? = null
+    private var eventSink: EventChannel.EventSink? = null
     private var githubProgressSink: EventChannel.EventSink? = null
     private var webEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
