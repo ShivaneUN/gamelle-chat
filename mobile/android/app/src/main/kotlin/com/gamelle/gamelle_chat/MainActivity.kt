@@ -113,12 +113,17 @@ class MainActivity : FlutterActivity() {
         MethodChannel(messenger, "gamelle/github").setMethodCallHandler { call, result ->
             when (call.method) {
                 "status", "apply" -> {
+                    val installed = try {
+                        packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+                    } catch (_: Exception) {
+                        ""
+                    }
                     Thread {
                         val map = try {
                             if (call.method == "status") {
-                                GithubUpdate.status(filesDir)
+                                GithubUpdate.status(filesDir, installed)
                             } else {
-                                GithubUpdate.apply(filesDir)
+                                GithubUpdate.apply(filesDir, installed)
                             }
                         } catch (e: Exception) {
                             mapOf(

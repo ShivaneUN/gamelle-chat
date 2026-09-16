@@ -24,7 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   bool _updateBusy = false;
   bool _updateAvailable = false;
-  String _updateText = 'Vérifie GitHub pour les pages et le serveur.';
+  String _updateText = 'Vérifie les releases GitHub.';
 
   @override
   void initState() {

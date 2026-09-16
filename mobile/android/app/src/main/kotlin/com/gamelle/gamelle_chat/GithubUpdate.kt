@@ -9,13 +9,12 @@ import java.nio.charset.StandardCharsets
 import java.util.zip.ZipInputStream
 
 /**
- * Met à jour server.js + public/ depuis le dépôt public, sans jeton ni api.github.com
- * (l’API anonyme tombe en 403 après 60 appels/heure).
+ * Met à jour server.js + public/ depuis la dernière **release** GitHub,
+ * sans jeton ni api.github.com.
  */
 object GithubUpdate {
     const val OWNER = "ShivaneUN"
     const val REPO = "gamelle-chat"
-    const val BRANCH = "main"
 
     private fun tokenFile(filesDir: File) = File(filesDir, "gamelle-persist/github-token.txt")
     fun versionFile(filesDir: File) = File(filesDir, "gamelle-persist/ota/version.json")
@@ -27,14 +26,16 @@ object GithubUpdate {
         if (f.exists()) f.delete()
     }
 
-    fun localSha(filesDir: File): String {
+    fun localTag(filesDir: File, installedVersion: String): String {
         val f = versionFile(filesDir)
-        if (!f.exists()) return ""
-        return try {
-            JSONObject(f.readText(StandardCharsets.UTF_8)).optString("sha")
-        } catch (_: Exception) {
-            ""
+        if (f.exists()) {
+            try {
+                val stored = JSONObject(f.readText(StandardCharsets.UTF_8)).optString("tag")
+                if (stored.isNotBlank()) return stored
+            } catch (_: Exception) {
+            }
         }
+        return installedVersion
     }
 
     fun applyStoredOverlay(filesDir: File) {
@@ -43,66 +44,69 @@ object GithubUpdate {
         copyWanted(ota, nodeDir(filesDir))
     }
 
-    fun status(filesDir: File): Map<String, Any?> {
+    fun status(filesDir: File, installedVersion: String): Map<String, Any?> {
         forgetStoredToken(filesDir)
-        val local = localSha(filesDir)
+        val local = localTag(filesDir, installedVersion)
         return try {
-            val head = fetchHead()
-            val sha = head.sha
-            val available = sha.isNotBlank() && sha != local
+            val remote = fetchLatestTag()
+            val available = isNewer(remote, local)
             mapOf(
                 "ok" to true,
                 "git" to true,
                 "available" to available,
-                "local" to short(local),
-                "remote" to short(sha),
-                "remoteSha" to sha,
+                "local" to display(local),
+                "remote" to display(remote),
                 "message" to when {
-                    sha.isBlank() -> "Impossible de lire GitHub."
-                    local.isBlank() -> "Mise à jour GitHub prête (${short(sha)})."
-                    available -> "Une mise à jour est disponible (${short(local)} → ${short(sha)})."
-                    else -> "Déjà à jour (${short(sha)})."
+                    remote.isBlank() -> "Impossible de lire les releases GitHub."
+                    local.isBlank() -> "Mise à jour GitHub prête (${display(remote)})."
+                    available -> "Une mise à jour est disponible (${display(local)} → ${display(remote)})."
+                    else -> "Déjà à jour (${display(remote)})."
                 },
-                "detail" to head.title,
             )
         } catch (e: Exception) {
             mapOf(
                 "ok" to false,
                 "git" to true,
                 "available" to false,
-                "local" to short(local),
+                "local" to display(local),
                 "message" to githubError(e),
             )
         }
     }
 
-    fun apply(filesDir: File): Map<String, Any?> {
+    fun apply(filesDir: File, installedVersion: String): Map<String, Any?> {
         forgetStoredToken(filesDir)
         return try {
-            val head = fetchHead()
-            val sha = head.sha
-            if (sha.isBlank()) {
-                return mapOf("ok" to false, "restart" to false, "message" to "Commit GitHub introuvable.")
+            val remote = fetchLatestTag()
+            if (remote.isBlank()) {
+                return mapOf("ok" to false, "restart" to false, "message" to "Release GitHub introuvable.")
             }
-            if (sha == localSha(filesDir)) {
+            val local = localTag(filesDir, installedVersion)
+            if (!isNewer(remote, local)) {
                 applyStoredOverlay(filesDir)
-                return mapOf("ok" to true, "restart" to false, "message" to "Déjà à jour.", "available" to false)
+                return mapOf(
+                    "ok" to true,
+                    "restart" to false,
+                    "message" to "Déjà à jour (${display(remote)}).",
+                    "available" to false,
+                )
             }
             val tmp = File(filesDir, "gamelle-persist/ota-tmp")
             if (tmp.exists()) tmp.deleteRecursively()
             tmp.mkdirs()
-            val count = downloadZipWanted(tmp)
+            val count = downloadZipWanted(tmp, remote)
             if (count == 0) {
                 tmp.deleteRecursively()
-                return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server à tirer.")
+                return mapOf("ok" to false, "restart" to false, "message" to "Aucun fichier public/server dans ${display(remote)}.")
             }
             val ota = otaDir(filesDir)
             if (ota.exists()) ota.deleteRecursively()
             tmp.copyRecursively(ota, overwrite = true)
             tmp.deleteRecursively()
+            versionFile(filesDir).parentFile?.mkdirs()
             versionFile(filesDir).writeText(
                 JSONObject()
-                    .put("sha", sha)
+                    .put("tag", remote)
                     .put("at", System.currentTimeMillis())
                     .toString(2),
                 StandardCharsets.UTF_8,
@@ -112,8 +116,8 @@ object GithubUpdate {
                 "ok" to true,
                 "restart" to true,
                 "available" to false,
-                "remote" to short(sha),
-                "message" to "Mise à jour installée (${short(sha)}). Redémarrage du serveur…",
+                "remote" to display(remote),
+                "message" to "Mise à jour installée (${display(remote)}). Redémarrage du serveur…",
             )
         } catch (e: Exception) {
             mapOf(
@@ -123,8 +127,6 @@ object GithubUpdate {
             )
         }
     }
-
-    private data class Head(val sha: String, val title: String)
 
     private fun wanted(path: String): Boolean {
         if (path.contains("..")) return false
@@ -145,29 +147,47 @@ object GithubUpdate {
         }
     }
 
-    private fun fetchHead(): Head {
+    private fun fetchLatestTag(): String {
+        val loc = peekLocation("https://github.com/$OWNER/$REPO/releases/latest")
+        val fromLoc = loc.substringAfter("/releases/tag/", "").substringBefore("/").substringBefore("?")
+        if (fromLoc.isNotBlank()) return fromLoc.trim()
         val xml = String(
-            httpGet("https://github.com/$OWNER/$REPO/commits/$BRANCH.atom"),
+            httpGet("https://github.com/$OWNER/$REPO/releases.atom"),
             StandardCharsets.UTF_8,
         )
-        val sha = Regex("""Commit/([0-9a-f]{40})""", RegexOption.IGNORE_CASE)
+        val fromId = Regex("""/releases/tag/([^<"\s]+)""")
             .find(xml)
             ?.groupValues
             ?.get(1)
             .orEmpty()
-        if (sha.isBlank()) {
-            throw RuntimeException("Commit introuvable dans le flux GitHub.")
-        }
+        if (fromId.isNotBlank()) return fromId.trim()
         val titles = Regex("""<title>\s*(?:<!\[CDATA\[)?(.*?)(?:]]>)?\s*</title>""", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml)
             .map { it.groupValues[1].trim() }
             .toList()
         val title = titles.drop(1).firstOrNull().orEmpty()
-        return Head(sha, title)
+        if (title.isNotBlank()) return title
+        throw RuntimeException("Aucune release GitHub trouvée.")
     }
 
-    private fun downloadZipWanted(destRoot: File): Int {
-        val url = "https://codeload.github.com/$OWNER/$REPO/zip/refs/heads/$BRANCH"
+    private fun peekLocation(url: String): String {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 20000
+        conn.readTimeout = 20000
+        conn.instanceFollowRedirects = false
+        conn.setRequestProperty("User-Agent", "GamelleChat")
+        conn.setRequestProperty("Accept", "*/*")
+        try {
+            conn.responseCode
+            return conn.getHeaderField("Location").orEmpty()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun downloadZipWanted(destRoot: File, tag: String): Int {
+        val encoded = java.net.URLEncoder.encode(tag, "UTF-8").replace("+", "%20")
+        val url = "https://codeload.github.com/$OWNER/$REPO/zip/refs/tags/$encoded"
         var count = 0
         val conn = open(url)
         try {
@@ -244,7 +264,35 @@ object GithubUpdate {
         throw RuntimeException("Trop de redirections GitHub")
     }
 
-    private fun short(sha: String) = sha.take(7)
+    private fun key(tag: String) = tag.trim().removePrefix("v").removePrefix("V")
+
+    private fun display(tag: String): String {
+        val t = tag.trim()
+        if (t.isEmpty()) return t
+        return if (t.startsWith("v", ignoreCase = true)) t else "v$t"
+    }
+
+    private fun isNewer(remote: String, local: String): Boolean {
+        if (remote.isBlank()) return false
+        if (local.isBlank()) return true
+        val r = semver(key(remote))
+        val l = semver(key(local))
+        if (r == null || l == null) return key(remote) != key(local)
+        for (i in 0..2) {
+            if (r[i] != l[i]) return r[i] > l[i]
+        }
+        return false
+    }
+
+    private fun semver(version: String): IntArray? {
+        val parts = version.split(Regex("[.+\\-]"))
+        if (parts.isEmpty() || parts[0].toIntOrNull() == null) return null
+        return intArrayOf(
+            parts.getOrNull(0)?.toIntOrNull() ?: 0,
+            parts.getOrNull(1)?.toIntOrNull() ?: 0,
+            parts.getOrNull(2)?.toIntOrNull() ?: 0,
+        )
+    }
 
     private fun githubError(e: Exception): String {
         val raw = (e.message ?: e.toString()).take(280)
@@ -254,7 +302,7 @@ object GithubUpdate {
             raw.contains("HTTP 401") || raw.contains("HTTP 403") ->
                 "GitHub a refusé la requête. $raw"
             raw.contains("HTTP 404") ->
-                "Dépôt introuvable. Vérifie ShivaneUN/gamelle-chat."
+                "Release introuvable. Vérifie ShivaneUN/gamelle-chat."
             else -> "Impossible de joindre GitHub. $raw"
         }
     }
