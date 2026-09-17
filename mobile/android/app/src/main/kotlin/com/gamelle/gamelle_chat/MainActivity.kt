@@ -106,6 +106,8 @@ class MainActivity : FlutterActivity() {
                     eventSink = events
                     lastPublicUrl?.let { url ->
                         events?.success(mapOf("type" to "url", "value" to url))
+                    } ?: lastTunnelError?.let { err ->
+                        events?.success(mapOf("type" to "error", "value" to err))
                     }
                 }
 
@@ -131,10 +133,22 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "start" -> {
                     try {
+                        val bin = File(applicationInfo.nativeLibraryDir, "libcloudflared.so")
+                        if (!bin.exists()) {
+                            val msg = "cloudflared introuvable — réinstalle l’APK (Mises à jour)."
+                            lastTunnelError = msg
+                            emit("error", msg)
+                            result.error("TUNNEL", msg, null)
+                            return@setMethodCallHandler
+                        }
+                        shuttingDown = false
                         startTunnel()
                         result.success(true)
                     } catch (e: Exception) {
-                        result.error("TUNNEL", e.message, null)
+                        val msg = e.message ?: "tunnel"
+                        lastTunnelError = msg
+                        emit("error", msg)
+                        result.error("TUNNEL", msg, null)
                     }
                 }
                 "stop" -> {
@@ -550,6 +564,7 @@ class MainActivity : FlutterActivity() {
     private var tunnelThread: Thread? = null
     @Volatile private var gotTunnelUrl = false
     @Volatile private var shuttingDown = false
+    @Volatile private var lastTunnelError: String? = null
 
     private fun isJavaProcessAlive(proc: java.lang.Process?): Boolean {
         if (proc == null) return false
@@ -571,7 +586,9 @@ class MainActivity : FlutterActivity() {
     private fun runTunnelLoop() {
         val bin = File(applicationInfo.nativeLibraryDir, "libcloudflared.so")
         if (!bin.exists()) {
-            emit("error", "cloudflared introuvable (${bin.absolutePath})")
+            val msg = "cloudflared introuvable (${bin.absolutePath})"
+            lastTunnelError = msg
+            emit("error", msg)
             return
         }
         try {
@@ -606,6 +623,7 @@ class MainActivity : FlutterActivity() {
             lastErr = runTunnelOnce(bin, home, logFile, protocol)
             if (shuttingDown) return
             if (!gotTunnelUrl) {
+                lastTunnelError = lastErr
                 emit("error", lastErr)
             }
             i++
@@ -697,6 +715,7 @@ class MainActivity : FlutterActivity() {
                         if (isQuickTunnelUrl(url)) {
                             gotTunnelUrl = true
                             lastPublicUrl = url
+                            lastTunnelError = null
                             persistPublicUrl(url)
                             emit("url", url)
                         }

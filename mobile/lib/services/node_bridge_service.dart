@@ -238,6 +238,8 @@ class NodeBridgeService {
       } else if (type == 'error') {
         if (publicUrl != null) return;
         tunnelError = value;
+        // Allow a later retry from settings / restart.
+        _tunnelStarted = false;
         _controller.add(NodeBridgeMessage(tag: 'tunnelError', message: value));
       }
     });
@@ -245,6 +247,7 @@ class NodeBridgeService {
       await CloudflareTunnel.start();
     } catch (e) {
       tunnelError = e.toString();
+      _tunnelStarted = false;
       _controller.add(NodeBridgeMessage(tag: 'tunnelError', message: tunnelError!));
     }
   }
