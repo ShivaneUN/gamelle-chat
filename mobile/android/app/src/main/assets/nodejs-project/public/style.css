@@ -1,5 +1,6 @@
 /* Gamelle Chat — mockup UI (Contrôleur / Récepteur) */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body, * {
   scrollbar-width: none;
   -ms-overflow-style: none;
