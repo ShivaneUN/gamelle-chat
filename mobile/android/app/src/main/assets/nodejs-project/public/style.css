@@ -11,7 +11,7 @@ html, body, * {
 body {
   margin: 0;
   font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-  background: #10131a;
+  background: #0b0d12;
   color: #eee;
 }
 .wrap { max-width: 480px; margin: 0 auto; padding: 20px; }
@@ -79,8 +79,8 @@ body {
 .pair-code .ghost { margin-top: 0; }
 .muted { color: #888; margin-top: 4px; }
 .card {
-  background: #1a1e29;
-  border-radius: 14px;
+  background: #151821;
+  border-radius: 22px;
   padding: 16px;
   margin: 14px 0;
   text-align: left;
@@ -90,6 +90,35 @@ body {
   align-items: center;
   gap: 10px;
   margin: 0 0 10px;
+}
+.live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.live-head .card-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+.chip-btn {
+  margin-top: 0 !important;
+  flex-shrink: 0;
+  min-height: 36px !important;
+  padding: 8px 12px !important;
+  border-radius: 12px !important;
+  font-size: 13px !important;
+  background: #1c2030;
+  color: #fff;
+}
+.chip-btn.toggle-on {
+  background: #ff7a45;
+  color: #111;
+}
+.stack-gap > * + * {
+  margin-top: 8px;
 }
 .cam-dot {
   width: 12px;
@@ -142,12 +171,12 @@ button {
   cursor: pointer;
   margin-top: 8px;
 }
-button.ghost { background: #2a2f3d; color: #fff; }
+button.ghost { background: #1c2030; color: #fff; }
 button.alt { background: #4a90e2; color: #fff; }
 button.danger { background: #e24a4a; color: #fff; }
-button.toggle-on { background: #1f4d2e; color: #7be08a; }
-button.toggle-off { background: #2a2f3d; color: #fff; }
-button.big { display: block; width: 100%; padding: 16px; font-size: 16px; }
+button.toggle-on { background: #ff7a45; color: #111; }
+button.toggle-off { background: #1c2030; color: #fff; }
+button.big { display: block; width: 100%; padding: 16px; font-size: 16px; margin-top: 8px; }
 .small { font-size: 12px; font-weight: 400; opacity: .8; }
 .hint { font-size: 12px; color: #777; margin-top: 6px; }
 .status { font-size: 13px; padding: 6px 10px; border-radius: 8px; display: inline-block; margin-bottom: 10px; }

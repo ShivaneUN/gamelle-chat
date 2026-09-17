@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Récepteur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=24">
+<link rel="stylesheet" href="/style.css?v=25">
 </head>
 <body>
 <div class="wrap">
   <div class="page-head">
-    <h1>🐱 Récepteur</h1>
+    <h1>Récepteur</h1>
   </div>
   <div class="pair-code">
     <span class="muted">Code de jumelage</span>
@@ -24,25 +24,31 @@
   <div id="status" class="status off">Connexion...</div>
 
   <div class="card">
-    <h3 class="card-title">🎥 Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+    <div class="live-head">
+      <h3 class="card-title">Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+      <button id="screenBtn" class="chip-btn toggle-on" type="button">Écran</button>
+    </div>
     <div class="live-wrap">
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <p id="camHint" class="hint">Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.</p>
-    <div class="action-panel">
-      <button id="camBtn" type="button">📷 Caméra</button>
-      <button id="unlockMicBtn" class="ghost" type="button">🎙️ Micro</button>
-      <button id="talkSoundBtn" class="toggle-on" type="button">✅ Voix</button>
-      <button id="alarmSoundBtn" class="toggle-on" type="button">✅ Alarme</button>
+    <div class="stack-gap">
+      <button id="unlockSoundBtn" class="big" type="button">Activer le son</button>
+      <div class="action-panel cols-3">
+        <button id="unlockMicBtn" class="toggle-off" type="button">Micro</button>
+        <button id="camBtn" class="toggle-off" type="button">Caméra</button>
+        <button id="alarmSoundBtn" class="toggle-on" type="button">Alarme</button>
+      </div>
+      <button id="bgBtn" class="ghost big" type="button">Arrière-plan</button>
     </div>
   </div>
 
   <div class="card panel-card">
     <div class="action-panel">
-      <button id="openAlbumBtn" class="ghost" type="button">🖼️ Album</button>
-      <button id="openLibraryBtn" class="ghost" type="button">💬 Bibliothèque</button>
-      <button id="openAlarmBtn" class="ghost" type="button">🔔 Alarme</button>
-      <button id="openSchedBtn" class="ghost" type="button">⏰ Horaires</button>
+      <button id="openAlbumBtn" class="ghost" type="button">Album</button>
+      <button id="openLibraryBtn" class="ghost" type="button">Bibliothèque</button>
+      <button id="openAlarmBtn" class="ghost" type="button">Alarme</button>
+      <button id="openSchedBtn" class="ghost" type="button">Horaires</button>
     </div>
   </div>
 </div>
@@ -51,7 +57,7 @@
   <div class="modal-backdrop" data-close="albumModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="albumTitle">
     <div class="modal-head">
-      <h2 id="albumTitle">🖼️ Album</h2>
+      <h2 id="albumTitle">Album</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="albumModal">Fermer</button>
@@ -66,7 +72,7 @@
   <div class="modal-backdrop" data-close="libraryModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="libraryTitle">
     <div class="modal-head">
-      <h2 id="libraryTitle">💬 Bibliothèque</h2>
+      <h2 id="libraryTitle">Bibliothèque</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="libraryModal">Fermer</button>
@@ -82,7 +88,7 @@
   <div class="modal-backdrop" data-close="alarmModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="alarmTitle">
     <div class="modal-head">
-      <h2 id="alarmTitle">🔔 Alarme</h2>
+      <h2 id="alarmTitle">Alarme</h2>
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
     <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
@@ -93,8 +99,8 @@
     <div class="row alarm-actions">
       <input id="manualAlarmDuration" type="number" min="5" max="120" value="30" style="width:72px;" title="Durée en secondes">
       <span class="hint" style="margin:0;">sec</span>
-      <button id="startAlarmBtn" type="button">🔔 Déclencher</button>
-      <button id="stopAlarmManualBtn" class="danger" type="button" disabled>⏹ Arrêter</button>
+      <button id="startAlarmBtn" type="button">Déclencher</button>
+      <button id="stopAlarmManualBtn" class="danger" type="button" disabled>Arrêter</button>
     </div>
   </div>
 </div>
@@ -103,7 +109,7 @@
   <div class="modal-backdrop" data-close="schedModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="schedTitle">
     <div class="modal-head">
-      <h2 id="schedTitle">⏰ Horaires</h2>
+      <h2 id="schedTitle">Horaires</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="schedModal">Fermer</button>
@@ -116,7 +122,7 @@
 </div>
 
 <div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2>🔔 C'est l'heure !</h2>
+  <h2>C'est l'heure !</h2>
   <p id="alarmMsg"></p>
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
@@ -129,6 +135,6 @@
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/qr.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/receiver.js?v=23"></script>
+<script src="/receiver.js?v=24"></script>
 </body>
 </html>
