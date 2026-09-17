@@ -103,6 +103,12 @@ body {
   flex: 1;
   min-width: 0;
 }
+.live-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
 .chip-btn {
   margin-top: 0 !important;
   flex-shrink: 0;
@@ -116,6 +122,18 @@ body {
 .chip-btn.toggle-on {
   background: #ff7a45;
   color: #111;
+}
+.battery-badge {
+  margin-left: 0;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 12px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  background: #0d1017;
+  color: #7be08a;
 }
 .stack-gap > * + * {
   margin-top: 8px;

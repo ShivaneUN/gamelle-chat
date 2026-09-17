@@ -133,13 +133,16 @@ function renderReceiverBattery(payload) {
   const el = document.getElementById('recvBattery');
   if (!el) return;
   if (!payload || payload.offline) {
-    el.hidden = true;
+    el.hidden = false;
+    el.className = 'battery-badge off';
+    el.textContent = '—%';
+    el.title = 'Récepteur hors ligne';
     return;
   }
   if (payload.unsupported || payload.level == null) {
     el.hidden = false;
     el.className = 'battery-badge off';
-    el.textContent = '?';
+    el.textContent = '—%';
     el.title = 'Batterie du Récepteur indisponible';
     return;
   }
