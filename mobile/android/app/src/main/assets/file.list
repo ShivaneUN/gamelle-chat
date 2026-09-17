@@ -1108,9 +1108,13 @@ nodejs-project/node_modules/ws/lib/websocket-server.js
 nodejs-project/node_modules/ws/lib/websocket.js
 nodejs-project/public/alarm-sounds.js
 nodejs-project/public/alarm-ui.js
+nodejs-project/public/apple-touch-icon.png
 nodejs-project/public/controller.html
 nodejs-project/public/controller.js
+nodejs-project/public/favicon-192.png
+nodejs-project/public/favicon-32.png
 nodejs-project/public/index.html
+nodejs-project/public/logo.png
 nodejs-project/public/message-library-ui.js
 nodejs-project/public/qr.js
 nodejs-project/public/receiver.html

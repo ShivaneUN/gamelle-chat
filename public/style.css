@@ -44,25 +44,37 @@ body.in-app .in-web-only { display: none !important; }
 .pair-qr-box {
   display: flex;
   justify-content: center;
-  margin: 10px 0 12px;
+  align-items: center;
+  margin: 10px auto 12px;
+  width: fit-content;
+  max-width: 100%;
   background: #ffffff !important;
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: 16px;
+  padding: 20px;
   color-scheme: only light;
   filter: none !important;
+  -webkit-filter: none !important;
+  forced-color-adjust: none;
 }
 .pair-qr-box[hidden] {
   display: none !important;
 }
 .pair-qr {
-  width: 260px;
-  height: 260px;
+  width: 280px;
+  height: 280px;
+  max-width: min(280px, 72vw);
+  max-height: min(280px, 72vw);
   background: #ffffff !important;
   padding: 0;
   border-radius: 0;
   display: block;
+  object-fit: contain;
   image-rendering: pixelated;
+  image-rendering: crisp-edges;
   filter: none !important;
+  -webkit-filter: none !important;
+  forced-color-adjust: none;
+  color-scheme: only light;
 }
 .pair-link {
   display: block;
