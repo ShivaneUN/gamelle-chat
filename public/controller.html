@@ -5,51 +5,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Contrôleur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=27">
+<link rel="stylesheet" href="/style.css?v=31">
 </head>
 <body>
 <div class="wrap">
   <div class="page-head">
     <h1>Contrôleur</h1>
+    <div id="status" class="status-pill off" title="">
+      <span class="dot"></span>
+      <span class="status-text">Connexion…</span>
+    </div>
   </div>
-  <div id="status" class="status off">Connexion...</div>
 
   <div class="card">
     <div class="live-head">
-      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+      <h3 class="live-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
       <div class="live-chips">
         <span id="recvBattery" class="battery-badge off" title="Batterie du Récepteur">—%</span>
-        <button id="facingBtn" class="chip-btn" type="button" hidden>Arrière</button>
+        <button id="facingBtn" class="chip-btn" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h4l2-2h4l2 2h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          <span id="facingLabel">Avant</span>
+        </button>
       </div>
     </div>
-    <select id="cameraSelect" style="display:none;"></select>
+    <select id="cameraSelect"></select>
     <div class="live-wrap">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
     </div>
     <p id="liveHint" class="hint">En attente de la caméra du récepteur…</p>
-    <div class="stack-gap">
-      <button id="talkBtn" class="big" type="button">Parler</button>
-      <div class="action-panel cols-3">
-        <button id="unlockMicBtn" class="toggle-off" type="button">Micro</button>
-        <button id="talkSoundBtn" class="toggle-on" type="button">Son</button>
-        <button id="alarmSoundBtn" class="toggle-off" type="button">Alarme</button>
-      </div>
-      <div class="action-panel">
-        <button id="photoBtn" class="ghost" type="button">Photo</button>
-        <button id="videoBtn" class="ghost" type="button">Vidéo (5s)</button>
+
+    <div class="stack">
+      <button id="talkBtn" class="cta" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+        Parler
+      </button>
+
+      <div class="tile-grid">
+        <button id="unlockMicBtn" class="tile toggle-off" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+          Micro
+        </button>
+        <button id="talkSoundBtn" class="tile toggle-on" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18 6a8 8 0 0 1 0 12"/></svg>
+          Son
+        </button>
+        <button id="alarmSoundBtn" class="tile toggle-off" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+          Alarme
+        </button>
+        <button id="photoBtn" class="tile" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h4l2-2h4l2 2h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          Photo
+        </button>
+        <button id="videoBtn" class="tile" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+          Vidéo 5s
+        </button>
       </div>
     </div>
   </div>
 
-  <div class="card panel-card">
-    <div class="action-panel">
-      <button id="openAlbumBtn" class="ghost" type="button">Album</button>
-      <button id="openLibraryBtn" class="ghost" type="button">Bibliothèque</button>
-      <button id="openAlarmBtn" class="ghost" type="button">Alarme</button>
-      <button id="openSchedBtn" class="ghost" type="button">Horaires</button>
-    </div>
-  </div>
+  <nav class="dock" aria-label="Navigation">
+    <button id="openAlbumBtn" class="dock-item" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="12" rx="2"/><path d="M7 9h14v10a2 2 0 0 1-2 2H7"/></svg>
+      Album
+    </button>
+    <button id="openLibraryBtn" class="dock-item" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h10a3 3 0 0 1 3 3v11H7a3 3 0 0 0-3 3V5z"/><path d="M17 5h3v14a3 3 0 0 1-3 3"/></svg>
+      Bibliothèque
+    </button>
+    <button id="openAlarmBtn" class="dock-item" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+      Alarme
+    </button>
+    <button id="openSchedBtn" class="dock-item" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      Horaires
+    </button>
+  </nav>
 </div>
 
 <div id="albumModal" class="modal" hidden>
@@ -98,7 +132,7 @@
     <div class="row alarm-actions">
       <input id="manualAlarmDuration" type="number" min="5" max="120" value="30" style="width:72px;" title="Durée en secondes">
       <span class="hint" style="margin:0;">sec</span>
-      <button id="startAlarmBtn" type="button">Déclencher</button>
+      <button id="startAlarmBtn" type="button" class="cta" style="width:auto;padding:10px 14px;font-size:14px;">Déclencher</button>
       <button id="stopAlarmManualBtn" class="danger" type="button" disabled>Arrêter</button>
     </div>
   </div>
@@ -133,6 +167,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=17"></script>
+<script src="/controller.js?v=20"></script>
 </body>
 </html>

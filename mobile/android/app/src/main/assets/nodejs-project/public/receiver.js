@@ -50,6 +50,9 @@ const statusEl = document.getElementById('status');
 const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
+const pairCodeEl = document.getElementById('pairCode');
+if (pairCodeEl && code) pairCodeEl.textContent = code;
+
 function controllerUrl(origin) {
   return String(origin || '').replace(/\/$/, '') + '/c/' + encodeURIComponent(code);
 }
@@ -101,9 +104,10 @@ socket.on('connect', () => {
 });
 socket.on('peers', ({ controllers }) => {
   if (controllers > 0) {
-    setStatus(true, controllers === 1 ? '1 contrôleur connecté' : `${controllers} contrôleurs connectés`);
+    const detail = controllers === 1 ? '1 contrôleur connecté' : `${controllers} contrôleurs connectés`;
+    setStatus(true, 'Local OK', detail);
   } else {
-    setStatus(false, 'En attente d\'un contrôleur');
+    setStatus(false, 'Connexion…', 'En attente d\'un contrôleur');
   }
 });
 socket.on('room-state', (state) => {
@@ -113,11 +117,14 @@ socket.on('room-state', (state) => {
   if (alarmControls.applySync) alarmControls.applySync(state.manualAlarm);
 });
 
-function setStatus(on, text) {
-  statusEl.className = 'status ' + (on ? 'on' : 'off');
-  statusEl.textContent = text;
+function setStatus(on, text, detail) {
+  statusEl.classList.toggle('on', !!on);
+  statusEl.classList.toggle('off', !on);
+  const label = statusEl.querySelector('.status-text');
+  if (label) label.textContent = text;
+  statusEl.title = detail || text || '';
 }
-setStatus(false, 'En attente du contrôleur...');
+setStatus(false, 'Connexion…', 'En attente du contrôleur…');
 
 // --- Bibliothèque de messages personnalisés ---
 const msgLibrary = createMessageLibrary({
@@ -179,14 +186,16 @@ document.querySelectorAll('[data-close]').forEach((el) => {
 
 const unlockMicBtn = document.getElementById('unlockMicBtn');
 
+function setToggle(btn, on, baseClass) {
+  if (!btn) return;
+  const base = baseClass || 'tile';
+  btn.classList.add(base);
+  btn.classList.toggle('toggle-on', !!on);
+  btn.classList.toggle('toggle-off', !on);
+}
+
 function renderMicStatus(state) {
-  if (micOn) {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-on';
-    return;
-  }
-  unlockMicBtn.textContent = 'Micro';
-  unlockMicBtn.className = 'toggle-off';
+  setToggle(unlockMicBtn, micOn);
 }
 
 async function refreshMicStatus() {
@@ -264,21 +273,21 @@ function unlockSoundEngine() {
 function renderUnlockSoundBtn() {
   const btn = document.getElementById('unlockSoundBtn');
   if (!btn) return;
-  btn.textContent = talkSoundOn ? 'Son' : 'Activer le son';
-  btn.className = talkSoundOn ? 'big toggle-on' : 'big';
+  btn.classList.toggle('on', !!talkSoundOn);
 }
 
 function renderAlarmSoundBtn() {
-  const btn = document.getElementById('alarmSoundBtn');
-  if (!btn) return;
-  btn.textContent = 'Alarme';
-  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
+  setToggle(document.getElementById('alarmSoundBtn'), alarmSoundOn);
 }
 
 function renderCamBtn() {
-  if (!camBtn) return;
-  camBtn.textContent = 'Caméra';
-  camBtn.className = camOn ? 'toggle-on' : 'toggle-off';
+  setToggle(camBtn, camOn);
+}
+
+function setCamLiveBadge(on) {
+  const badge = document.getElementById('camLiveBadge');
+  if (!badge) return;
+  badge.classList.toggle('show', !!on);
 }
 
 const unlockSoundBtn = document.getElementById('unlockSoundBtn');
@@ -322,8 +331,9 @@ let screenOn = true;
 function renderScreenBtn() {
   const btn = document.getElementById('screenBtn');
   if (!btn) return;
-  btn.textContent = 'Écran';
-  btn.className = screenOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off';
+  btn.classList.add('chip-btn');
+  btn.classList.toggle('toggle-on', !!screenOn);
+  btn.classList.toggle('toggle-off', !screenOn);
 }
 const screenBtn = document.getElementById('screenBtn');
 if (screenBtn) {
@@ -406,17 +416,17 @@ async function enableCamera() {
     localVideo.classList.add('on');
     localVideo.style.display = 'block';
     const camHint = document.getElementById('camHint');
-    if (camHint) camHint.textContent = 'Caméra allumée — le Contrôleur peut voir le direct.';
+    if (camHint) camHint.hidden = true;
     await localVideo.play().catch(() => {});
     await new Promise((resolve) => {
       if (localVideo.videoWidth) return resolve();
       localVideo.onloadedmetadata = () => resolve();
       setTimeout(resolve, 2500);
     });
-    camBtn.textContent = 'Caméra';
-    camBtn.className = 'toggle-on';
     camOn = true;
+    renderCamBtn();
     setCamDot(true);
+    setCamLiveBadge(true);
     if (localStream.getAudioTracks && localStream.getAudioTracks().length) {
       micOn = true;
       renderMicStatus('granted');
@@ -475,11 +485,14 @@ function disableCamera() {
   localVideo.classList.remove('on');
   localVideo.style.display = 'none';
   const camHint = document.getElementById('camHint');
-  if (camHint) camHint.textContent = 'Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.';
-  camBtn.textContent = 'Caméra';
-  camBtn.className = 'toggle-off';
+  if (camHint) {
+    camHint.hidden = false;
+    camHint.textContent = 'Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.';
+  }
   camOn = false;
+  renderCamBtn();
   setCamDot(false);
+  setCamLiveBadge(false);
   socket.emit('cam-status', { on: false });
   if (keepTalking) {
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((s) => {
@@ -662,12 +675,27 @@ function emitBattery(payload) {
 function startBatteryWatch() {
   if (lastBattery) emitBattery(lastBattery);
   if (batteryWatchStarted) return;
-  if (!navigator.getBattery) {
-    batteryWatchStarted = true;
-    emitBattery({ level: null, charging: false, unsupported: true });
-    return;
-  }
   batteryWatchStarted = true;
+
+  // Bridge natif Android (WebView n'expose souvent pas navigator.getBattery).
+  window.applyNativeBattery = (payload) => {
+    if (!payload) return;
+    if (payload.unsupported || payload.level == null) {
+      if (!lastBattery || lastBattery.unsupported) {
+        emitBattery({ level: null, charging: false, unsupported: true });
+      }
+      return;
+    }
+    emitBattery({
+      level: Math.max(0, Math.min(100, Math.round(Number(payload.level)))),
+      charging: !!payload.charging,
+    });
+  };
+  if (window.__GAMELLE_NATIVE_BATTERY__) {
+    window.applyNativeBattery(window.__GAMELLE_NATIVE_BATTERY__);
+  }
+
+  if (!navigator.getBattery) return;
   navigator.getBattery().then((bat) => {
     const send = () => emitBattery({
       level: Math.round((bat.level || 0) * 100),
@@ -678,7 +706,7 @@ function startBatteryWatch() {
     bat.addEventListener('chargingchange', send);
     setInterval(send, 60000);
   }).catch(() => {
-    emitBattery({ level: null, charging: false, unsupported: true });
+    if (!lastBattery) emitBattery({ level: null, charging: false, unsupported: true });
   });
 }
 

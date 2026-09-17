@@ -37,9 +37,9 @@ socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
 socket.on('peers', ({ receiver, controllers }) => {
   if (receiver) {
     const extra = controllers > 1 ? ` · ${controllers} contrôleurs` : '';
-    setStatus(true, 'Récepteur connecté' + extra);
+    setStatus(true, 'En ligne', 'Récepteur connecté' + extra);
   } else {
-    setStatus(false, 'En attente du récepteur...');
+    setStatus(false, 'Connexion…', 'En attente du récepteur…');
     renderReceiverBattery({ offline: true });
   }
 });
@@ -52,7 +52,7 @@ function showRelayLive() {
   }
   remoteRelay.classList.add('on');
   remoteRelay.style.display = 'block';
-  liveHint.textContent = 'Vue live';
+  if (liveHint) liveHint.hidden = true;
 }
 
 function applyFrame(b64) {
@@ -94,7 +94,10 @@ socket.on('cam-status', ({ on }) => {
     cameraList = [];
     renderFacingBtn();
   } else {
-    liveHint.textContent = 'Caméra allumée, réception de l\'image…';
+    if (liveHint) {
+      liveHint.hidden = false;
+      liveHint.textContent = 'Caméra allumée, réception de l\'image…';
+    }
     startLivePoll();
   }
 });
@@ -113,14 +116,20 @@ function clearLiveView() {
   remoteRelay.removeAttribute('src');
   remoteRelay.classList.remove('on');
   remoteRelay.style.display = 'none';
-  liveHint.textContent = 'En attente de la caméra du récepteur…';
+  if (liveHint) {
+    liveHint.hidden = false;
+    liveHint.textContent = 'En attente de la caméra du récepteur…';
+  }
 }
 
-function setStatus(on, text) {
-  statusEl.className = 'status ' + (on ? 'on' : 'off');
-  statusEl.textContent = text;
+function setStatus(on, text, detail) {
+  statusEl.classList.toggle('on', !!on);
+  statusEl.classList.toggle('off', !on);
+  const label = statusEl.querySelector('.status-text');
+  if (label) label.textContent = text;
+  statusEl.title = detail || text || '';
 }
-setStatus(false, 'En attente du récepteur...');
+setStatus(false, 'Connexion…', 'En attente du récepteur…');
 
 function setCamDot(on) {
   const dot = document.getElementById('camDot');
@@ -132,22 +141,20 @@ function setCamDot(on) {
 function renderReceiverBattery(payload) {
   const el = document.getElementById('recvBattery');
   if (!el) return;
+  el.hidden = false;
   if (!payload || payload.offline) {
-    el.hidden = false;
     el.className = 'battery-badge off';
     el.textContent = '—%';
     el.title = 'Récepteur hors ligne';
     return;
   }
   if (payload.unsupported || payload.level == null) {
-    el.hidden = false;
     el.className = 'battery-badge off';
     el.textContent = '—%';
     el.title = 'Batterie du Récepteur indisponible';
     return;
   }
   const pct = payload.level;
-  el.hidden = false;
   el.className = 'battery-badge' + (pct <= 20 ? ' low' : pct <= 50 ? ' mid' : '');
   el.textContent = pct + '%' + (payload.charging ? ' ⚡' : '');
   el.title = payload.charging ? 'Récepteur en charge' : 'Batterie du Récepteur';
@@ -160,28 +167,23 @@ let talking = false;
 let talkSoundOn = true;
 let alarmSoundOn = false;
 
+function setToggle(btn, on, baseClass) {
+  if (!btn) return;
+  const base = baseClass || 'tile';
+  btn.classList.add(base);
+  btn.classList.toggle('toggle-on', !!on);
+  btn.classList.toggle('toggle-off', !on);
+}
+
 function renderMicStatus(state) {
-  if (talking) {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-on';
-    renderTalkBtn();
-    return;
-  }
-  if (state === 'denied') {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-off';
-  } else {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-off';
-  }
+  setToggle(unlockMicBtn, talking);
   renderTalkBtn();
 }
 
 function renderTalkBtn() {
   const btn = document.getElementById('talkBtn');
   if (!btn) return;
-  btn.textContent = 'Parler';
-  btn.className = talking ? 'big toggle-on' : 'big';
+  btn.classList.toggle('on', !!talking);
 }
 
 async function refreshMicStatus() {
@@ -214,17 +216,11 @@ function unlockSoundEngine() {
 }
 
 function renderTalkSoundBtn() {
-  const btn = document.getElementById('talkSoundBtn');
-  if (!btn) return;
-  btn.textContent = 'Son';
-  btn.className = talkSoundOn ? 'toggle-on' : 'toggle-off';
+  setToggle(document.getElementById('talkSoundBtn'), talkSoundOn);
 }
 
 function renderAlarmSoundBtn() {
-  const btn = document.getElementById('alarmSoundBtn');
-  if (!btn) return;
-  btn.textContent = 'Alarme';
-  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
+  setToggle(document.getElementById('alarmSoundBtn'), alarmSoundOn);
 }
 
 document.getElementById('talkSoundBtn').onclick = () => {
@@ -330,12 +326,10 @@ function currentFacingLabel() {
 
 function renderFacingBtn() {
   if (!facingBtn) return;
-  if (!cameraList.length) {
-    facingBtn.hidden = true;
-    return;
-  }
-  facingBtn.hidden = cameraList.length < 2;
-  facingBtn.textContent = currentFacingLabel();
+  facingBtn.hidden = false;
+  facingBtn.disabled = cameraList.length < 2;
+  const label = document.getElementById('facingLabel');
+  if (label) label.textContent = currentFacingLabel();
 }
 
 socket.on('camera-list', (cams) => {
@@ -372,6 +366,8 @@ cameraSelect.onchange = () => {
   socket.emit('switch-camera', { deviceId: id });
   renderFacingBtn();
 };
+renderFacingBtn();
+renderReceiverBattery({ offline: true });
 
 // --- WebRTC : réception de la caméra du récepteur ---
 function ensureCamPeer() {
