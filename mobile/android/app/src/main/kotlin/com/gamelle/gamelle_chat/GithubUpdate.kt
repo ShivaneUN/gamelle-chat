@@ -100,7 +100,7 @@ object GithubUpdate {
                 )
             }
 
-            // 1) Overlay server.js + public/ (pas de conflit de signature).
+            // Mise à jour en place : overlay server.js + public/, sans installer un autre APK.
             onProgress(0.08, "Téléchargement des fichiers ${display(remote)}…")
             val ota = otaDir(filesDir)
             if (ota.exists()) ota.deleteRecursively()
@@ -124,34 +124,6 @@ object GithubUpdate {
                     .toString(2),
                 StandardCharsets.UTF_8,
             )
-
-            // 2) APK optionnel pour le shell Flutter (peut échouer si autre signature).
-            onProgress(0.92, "Téléchargement de l’APK ${display(remote)}…")
-            val apk = apkFile(filesDir)
-            apk.parentFile?.mkdirs()
-            if (apk.exists()) apk.delete()
-            var apkOk = false
-            try {
-                downloadToFile(fetchApkUrl(remote), apk) { pct, label ->
-                    onProgress(0.92 + 0.07 * pct, label)
-                }
-                apkOk = apk.exists() && apk.length() > 1000
-            } catch (_: Exception) {
-                apkOk = false
-            }
-
-            if (apkOk) {
-                onProgress(1.0, "Installation Android…")
-                return mapOf(
-                    "ok" to true,
-                    "restart" to true,
-                    "install" to true,
-                    "available" to false,
-                    "apkPath" to apk.absolutePath,
-                    "remote" to display(remote),
-                    "message" to "Fichiers appliqués. Si l’APK est refusé (conflit), désinstalle puis réinstalle ${display(remote)}.",
-                )
-            }
 
             onProgress(1.0, "Mise à jour appliquée (${display(remote)}).")
             mapOf(

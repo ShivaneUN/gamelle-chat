@@ -139,22 +139,12 @@ class MainActivity : FlutterActivity() {
                             if (call.method == "status") {
                                 GithubUpdate.status(filesDir, installed)
                             } else {
-                                if (!canInstallPackages()) {
-                                    requestInstallPermission()
-                                    mapOf(
-                                        "ok" to false,
-                                        "available" to true,
-                                        "install" to false,
-                                        "restart" to false,
-                                        "message" to "Autorise l’installation d’apps pour Gamelle Chat, puis réessaie.",
-                                    )
-                                } else {
-                                    GithubUpdate.apply(filesDir, installed) { pct, label ->
-                                        mainHandler.post {
-                                            githubProgressSink?.success(
-                                                mapOf("pct" to pct, "label" to label),
-                                            )
-                                        }
+                                // Overlay in-place — no APK install permission required.
+                                GithubUpdate.apply(filesDir, installed) { pct, label ->
+                                    mainHandler.post {
+                                        githubProgressSink?.success(
+                                            mapOf("pct" to pct, "label" to label),
+                                        )
                                     }
                                 }
                             }
