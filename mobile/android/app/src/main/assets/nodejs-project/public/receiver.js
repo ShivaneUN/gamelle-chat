@@ -675,12 +675,27 @@ function emitBattery(payload) {
 function startBatteryWatch() {
   if (lastBattery) emitBattery(lastBattery);
   if (batteryWatchStarted) return;
-  if (!navigator.getBattery) {
-    batteryWatchStarted = true;
-    emitBattery({ level: null, charging: false, unsupported: true });
-    return;
-  }
   batteryWatchStarted = true;
+
+  // Bridge natif Android (WebView n'expose souvent pas navigator.getBattery).
+  window.applyNativeBattery = (payload) => {
+    if (!payload) return;
+    if (payload.unsupported || payload.level == null) {
+      if (!lastBattery || lastBattery.unsupported) {
+        emitBattery({ level: null, charging: false, unsupported: true });
+      }
+      return;
+    }
+    emitBattery({
+      level: Math.max(0, Math.min(100, Math.round(Number(payload.level)))),
+      charging: !!payload.charging,
+    });
+  };
+  if (window.__GAMELLE_NATIVE_BATTERY__) {
+    window.applyNativeBattery(window.__GAMELLE_NATIVE_BATTERY__);
+  }
+
+  if (!navigator.getBattery) return;
   navigator.getBattery().then((bat) => {
     const send = () => emitBattery({
       level: Math.round((bat.level || 0) * 100),
@@ -691,7 +706,7 @@ function startBatteryWatch() {
     bat.addEventListener('chargingchange', send);
     setInterval(send, 60000);
   }).catch(() => {
-    emitBattery({ level: null, charging: false, unsupported: true });
+    if (!lastBattery) emitBattery({ level: null, charging: false, unsupported: true });
   });
 }
 

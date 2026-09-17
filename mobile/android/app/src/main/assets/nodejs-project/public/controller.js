@@ -141,22 +141,20 @@ function setCamDot(on) {
 function renderReceiverBattery(payload) {
   const el = document.getElementById('recvBattery');
   if (!el) return;
+  el.hidden = false;
   if (!payload || payload.offline) {
-    el.hidden = true;
     el.className = 'battery-badge off';
     el.textContent = '—%';
     el.title = 'Récepteur hors ligne';
     return;
   }
   if (payload.unsupported || payload.level == null) {
-    el.hidden = true;
     el.className = 'battery-badge off';
     el.textContent = '—%';
     el.title = 'Batterie du Récepteur indisponible';
     return;
   }
   const pct = payload.level;
-  el.hidden = false;
   el.className = 'battery-badge' + (pct <= 20 ? ' low' : pct <= 50 ? ' mid' : '');
   el.textContent = pct + '%' + (payload.charging ? ' ⚡' : '');
   el.title = payload.charging ? 'Récepteur en charge' : 'Batterie du Récepteur';
@@ -328,11 +326,8 @@ function currentFacingLabel() {
 
 function renderFacingBtn() {
   if (!facingBtn) return;
-  if (!cameraList.length) {
-    facingBtn.hidden = true;
-    return;
-  }
-  facingBtn.hidden = cameraList.length < 2;
+  facingBtn.hidden = false;
+  facingBtn.disabled = cameraList.length < 2;
   const label = document.getElementById('facingLabel');
   if (label) label.textContent = currentFacingLabel();
 }
@@ -371,6 +366,8 @@ cameraSelect.onchange = () => {
   socket.emit('switch-camera', { deviceId: id });
   renderFacingBtn();
 };
+renderFacingBtn();
+renderReceiverBattery({ offline: true });
 
 // --- WebRTC : réception de la caméra du récepteur ---
 function ensureCamPeer() {
