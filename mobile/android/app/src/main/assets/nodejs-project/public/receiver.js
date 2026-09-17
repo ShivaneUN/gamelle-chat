@@ -236,7 +236,12 @@ function openControllerLinkModal() {
   })();
 }
 const qrBtn = document.getElementById('qrBtn');
-if (qrBtn) qrBtn.onclick = openControllerLinkModal;
+if (qrBtn) {
+  qrBtn.onclick = () => {
+    if (window.GamelleHost) nativeHost('qr');
+    else openControllerLinkModal();
+  };
+}
 if (window.GamelleHost) {
   document.body.classList.add('in-app');
 }

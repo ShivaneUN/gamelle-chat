@@ -6,6 +6,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../services/node_bridge_service.dart';
+import '../widgets/scan_qr.dart';
 
 const _bg = Color(0xFF0B0D12);
 const _card = Color(0xFF151821);
@@ -92,6 +93,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           final m = message.message.trim();
           if (m == 'home') {
             if (context.mounted) Navigator.of(context).maybePop();
+            return;
+          }
+          if (m == 'qr') {
+            _showScanQr();
             return;
           }
           if (m == 'background') {
@@ -205,6 +210,58 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         }
       ''');
     } catch (_) {}
+  }
+
+  void _showScanQr() {
+    final url = NodeBridgeService.instance.scannableQrUrl;
+    if (!mounted) return;
+    if (url == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tunnel Cloudflare pas encore prêt…')),
+      );
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return Theme(
+          data: ThemeData.light(),
+          child: AlertDialog(
+            backgroundColor: const Color(0xFFFFFFFF),
+            contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFFFF),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: ScanQr(data: url, size: 280),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Connecter votre appareil',
+                  style: TextStyle(color: Color(0xFF444444), fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  url,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFFF7A45), fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Fermer'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override

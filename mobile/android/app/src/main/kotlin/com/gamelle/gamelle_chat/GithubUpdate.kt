@@ -59,7 +59,7 @@ object GithubUpdate {
                 "message" to when {
                     remote.isBlank() -> "Impossible de lire les releases GitHub."
                     local.isBlank() -> "Mise à jour GitHub prête (${display(remote)})."
-                    available -> "Une mise à jour est disponible (${display(local)} → ${display(remote)})."
+                    available -> "Mise à jour disponible (${display(local)} → ${display(remote)}). Installation APK."
                     else -> "Déjà à jour (${display(remote)})."
                 },
             )
@@ -100,22 +100,23 @@ object GithubUpdate {
                 )
             }
 
-            // Mise à jour en place : overlay server.js + public/, sans installer un autre APK.
-            onProgress(0.08, "Téléchargement des fichiers ${display(remote)}…")
-            val ota = otaDir(filesDir)
-            if (ota.exists()) ota.deleteRecursively()
-            ota.mkdirs()
-            val count = downloadZipWanted(ota, remote, onProgress)
-            if (count <= 0) {
+            // Gros changements : télécharge l’APK de la release et remplace l’app
+            // (même applicationId → pas une 2ᵉ app). Les données restent dans gamelle-persist/.
+            onProgress(0.08, "Téléchargement de l’APK ${display(remote)}…")
+            val apk = apkFile(filesDir)
+            if (apk.exists()) apk.delete()
+            apk.parentFile?.mkdirs()
+            val apkUrl = fetchApkUrl(remote)
+            downloadToFile(apkUrl, apk, onProgress)
+            if (!apk.exists() || apk.length() < 1_000_000L) {
                 return mapOf(
                     "ok" to false,
                     "restart" to false,
                     "install" to false,
-                    "message" to "Aucun fichier utile dans la release GitHub.",
+                    "message" to "APK introuvable ou incomplet dans la release GitHub.",
                 )
             }
-            onProgress(0.88, "Application de la mise à jour…")
-            copyWanted(ota, nodeDir(filesDir))
+
             versionFile(filesDir).parentFile?.mkdirs()
             versionFile(filesDir).writeText(
                 JSONObject()
@@ -125,14 +126,15 @@ object GithubUpdate {
                 StandardCharsets.UTF_8,
             )
 
-            onProgress(1.0, "Mise à jour appliquée (${display(remote)}).")
+            onProgress(1.0, "Installation de la mise à jour…")
             mapOf(
                 "ok" to true,
-                "restart" to true,
-                "install" to false,
+                "restart" to false,
+                "install" to true,
+                "apkPath" to apk.absolutePath,
                 "available" to false,
                 "remote" to display(remote),
-                "message" to "Mise à jour appliquée (${display(remote)}). Redémarrage…",
+                "message" to "Installation de ${display(remote)}… Confirme sur l’écran suivant.",
             )
         } catch (e: Exception) {
             mapOf(

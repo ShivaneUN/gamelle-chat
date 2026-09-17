@@ -168,7 +168,7 @@ class MainActivity : FlutterActivity() {
                             if (call.method == "status") {
                                 GithubUpdate.status(filesDir, installed)
                             } else {
-                                // Overlay in-place — no APK install permission required.
+                                // Télécharge l’APK de la release et remplace l’app (même package id).
                                 GithubUpdate.apply(filesDir, installed) { pct, label ->
                                     mainHandler.post {
                                         githubProgressSink?.success(
@@ -764,7 +764,17 @@ class MainActivity : FlutterActivity() {
         val file = File(path)
         if (!file.exists()) return
         if (!canInstallPackages()) {
+            // Demande l’autorisation puis relance l’install au retour si possible.
             requestInstallPermission()
+            mainHandler.postDelayed({
+                if (canInstallPackages() && file.exists()) {
+                    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                    val intent = Intent(Intent.ACTION_VIEW)
+                    intent.setDataAndType(uri, "application/vnd.android.package-archive")
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                }
+            }, 1500)
             return
         }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)

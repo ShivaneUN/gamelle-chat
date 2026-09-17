@@ -123,7 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (s.ok) _updatePct = 1;
       });
       if (s.ok && s.install) {
-        setState(() => _updateText = s.message);
+        setState(() => _updateText = s.message.isNotEmpty
+            ? s.message
+            : 'Confirme l’installation Android (remplace l’app, garde horaires et sons).');
         return;
       }
       if (s.ok && s.restart) {
