@@ -238,8 +238,16 @@ function openControllerLinkModal() {
 const qrBtn = document.getElementById('qrBtn');
 if (qrBtn) {
   qrBtn.onclick = () => {
-    if (window.GamelleHost) nativeHost('qr');
-    else openControllerLinkModal();
+    const share =
+      window.__GAMELLE_CONTROLLER_URL__ ||
+      (window.__GAMELLE_PUBLIC_URL__
+        ? String(window.__GAMELLE_PUBLIC_URL__).replace(/\/$/, '') + '/controller.html'
+        : '');
+    if (window.GamelleHost) {
+      nativeHost(share ? ('qr|' + share) : 'qr');
+    } else {
+      openControllerLinkModal();
+    }
   };
 }
 if (window.GamelleHost) {

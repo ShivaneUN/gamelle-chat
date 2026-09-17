@@ -27,15 +27,35 @@ object GithubUpdate {
     }
 
     fun localTag(filesDir: File, installedVersion: String): String {
+        // Source de vérité = version installée de l’APK. version.json est un cache,
+        // jamais plus “avancé” que le package (évite un faux “déjà à jour”).
+        val installed = installedVersion.trim()
         val f = versionFile(filesDir)
         if (f.exists()) {
             try {
                 val stored = JSONObject(f.readText(StandardCharsets.UTF_8)).optString("tag")
-                if (stored.isNotBlank()) return stored
+                if (stored.isNotBlank()) {
+                    if (installed.isBlank()) return stored
+                    // Si le fichier OTA dit plus récent que le package → install ratée : on ignore.
+                    if (isNewer(stored, installed)) return installed
+                    return stored
+                }
             } catch (_: Exception) {
             }
         }
-        return installedVersion
+        return installed
+    }
+
+    fun markInstalled(filesDir: File, tag: String) {
+        if (tag.isBlank()) return
+        versionFile(filesDir).parentFile?.mkdirs()
+        versionFile(filesDir).writeText(
+            JSONObject()
+                .put("tag", tag)
+                .put("at", System.currentTimeMillis())
+                .toString(2),
+            StandardCharsets.UTF_8,
+        )
     }
 
     fun applyStoredOverlay(filesDir: File) {
@@ -60,7 +80,9 @@ object GithubUpdate {
                     remote.isBlank() -> "Impossible de lire les releases GitHub."
                     local.isBlank() -> "Mise à jour GitHub prête (${display(remote)})."
                     available -> "Mise à jour disponible (${display(local)} → ${display(remote)}). Installation APK."
-                    else -> "Déjà à jour (${display(remote)})."
+                    isNewer(local, remote) ->
+                        "Installé ${display(local)} (plus récent que GitHub ${display(remote)})."
+                    else -> "Déjà à jour — installé ${display(local)}."
                 },
             )
         } catch (e: Exception) {
@@ -102,6 +124,7 @@ object GithubUpdate {
 
             // Gros changements : télécharge l’APK de la release et remplace l’app
             // (même applicationId → pas une 2ᵉ app). Les données restent dans gamelle-persist/.
+            // Ne pas écrire version.json avant l’install réussie (sinon “déjà à jour” alors que l’APK n’est pas installé).
             onProgress(0.08, "Téléchargement de l’APK ${display(remote)}…")
             val apk = apkFile(filesDir)
             if (apk.exists()) apk.delete()
@@ -117,21 +140,13 @@ object GithubUpdate {
                 )
             }
 
-            versionFile(filesDir).parentFile?.mkdirs()
-            versionFile(filesDir).writeText(
-                JSONObject()
-                    .put("tag", remote)
-                    .put("at", System.currentTimeMillis())
-                    .toString(2),
-                StandardCharsets.UTF_8,
-            )
-
             onProgress(1.0, "Installation de la mise à jour…")
             mapOf(
                 "ok" to true,
                 "restart" to false,
                 "install" to true,
                 "apkPath" to apk.absolutePath,
+                "tag" to remote,
                 "available" to false,
                 "remote" to display(remote),
                 "message" to "Installation de ${display(remote)}… Confirme sur l’écran suivant.",

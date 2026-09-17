@@ -50,7 +50,9 @@ class NodeBridgeService {
     }
     if (host == 'api.trycloudflare.com') return null;
     if (!host.endsWith('.trycloudflare.com')) return null;
-    return raw.replaceAll(RegExp(r'/$'), '');
+    final base = raw.replaceAll(RegExp(r'/$'), '');
+    // Même URL que le QR HTML : ouvre directement le contrôleur.
+    return '$base/controller.html';
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();

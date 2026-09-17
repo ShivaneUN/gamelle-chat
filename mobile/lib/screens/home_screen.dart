@@ -275,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _pairingPanel({required bool expand}) {
-    final remote = _bridge.publicUrl;
+    final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
     final qrSize = expand ? 260.0 : 220.0;
     final Widget qr;
     if (!_bridge.tunnelEnabled) {

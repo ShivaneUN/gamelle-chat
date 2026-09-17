@@ -47,6 +47,8 @@ class MainActivity : FlutterActivity() {
     private var webEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val urlPattern = Pattern.compile("https://(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com", Pattern.CASE_INSENSITIVE)
+    private var pendingApkPath: String? = null
+    private var pendingApkTag: String? = null
 
     private val protectWebViews = object : Runnable {
         override fun run() {
@@ -164,16 +166,26 @@ class MainActivity : FlutterActivity() {
                         ""
                     }
                     Thread {
-                        val map = try {
+                        val map: Map<String, Any?> = try {
                             if (call.method == "status") {
                                 GithubUpdate.status(filesDir, installed)
                             } else {
-                                // Télécharge l’APK de la release et remplace l’app (même package id).
-                                GithubUpdate.apply(filesDir, installed) { pct, label ->
-                                    mainHandler.post {
-                                        githubProgressSink?.success(
-                                            mapOf("pct" to pct, "label" to label),
-                                        )
+                                if (!canInstallPackages()) {
+                                    mainHandler.post { requestInstallPermission() }
+                                    mapOf(
+                                        "ok" to false,
+                                        "available" to true,
+                                        "restart" to false,
+                                        "install" to false,
+                                        "message" to "Autorise « Installer des apps inconnues » pour Gamelle Chat, puis réessaie.",
+                                    )
+                                } else {
+                                    GithubUpdate.apply(filesDir, installed) { pct, label ->
+                                        mainHandler.post {
+                                            githubProgressSink?.success(
+                                                mapOf("pct" to pct, "label" to label),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -182,15 +194,26 @@ class MainActivity : FlutterActivity() {
                                 "ok" to false,
                                 "available" to false,
                                 "restart" to false,
+                                "install" to false,
                                 "message" to (e.message ?: "Erreur GitHub"),
                             )
                         }
                         mainHandler.post {
+                            var out = map
                             val path = map["apkPath"] as? String
+                            val tag = (map["tag"] as? String).orEmpty()
                             if (map["install"] == true && !path.isNullOrBlank()) {
-                                installApk(path)
+                                try {
+                                    launchApkInstall(path, tag)
+                                } catch (e: Exception) {
+                                    out = map + mapOf(
+                                        "ok" to false,
+                                        "install" to false,
+                                        "message" to ("Install APK échouée: " + (e.message ?: e.toString())),
+                                    )
+                                }
                             }
-                            result.success(map)
+                            result.success(out)
                         }
                     }.start()
                 }
@@ -323,6 +346,13 @@ class MainActivity : FlutterActivity() {
         userRequestedBackground = false
         keepWebViewsAlive()
         if (screenForcedOff) applyScreen(false)
+        val pending = pendingApkPath
+        if (!pending.isNullOrBlank() && canInstallPackages()) {
+            try {
+                launchApkInstall(pending, pendingApkTag.orEmpty())
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun applyScreen(on: Boolean) {
@@ -760,28 +790,51 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    private fun installApk(path: String) {
+    private fun launchApkInstall(path: String, tag: String = "") {
         val file = File(path)
-        if (!file.exists()) return
+        if (!file.exists() || file.length() < 1_000_000L) {
+            throw IllegalStateException("Fichier APK manquant")
+        }
+        pendingApkPath = path
+        if (tag.isNotBlank()) pendingApkTag = tag
         if (!canInstallPackages()) {
-            // Demande l’autorisation puis relance l’install au retour si possible.
             requestInstallPermission()
-            mainHandler.postDelayed({
-                if (canInstallPackages() && file.exists()) {
-                    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-                    val intent = Intent(Intent.ACTION_VIEW)
-                    intent.setDataAndType(uri, "application/vnd.android.package-archive")
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
-                }
-            }, 1500)
             return
         }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-        val intent = Intent(Intent.ACTION_VIEW)
-        intent.setDataAndType(uri, "application/vnd.android.package-archive")
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+            putExtra(Intent.EXTRA_RETURN_RESULT, true)
+        }
+        // Donne la lecture URI au package installer système (Xiaomi / Android 8+).
+        try {
+            grantUriPermission(
+                "com.android.packageinstaller",
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Exception) {
+        }
+        try {
+            grantUriPermission(
+                "com.google.android.packageinstaller",
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        } catch (_: Exception) {
+        }
         startActivity(intent)
+        if (tag.isNotBlank()) {
+            GithubUpdate.markInstalled(filesDir, tag)
+        }
+        pendingApkPath = null
+        pendingApkTag = null
     }
 
     private fun relaunchApp() {
