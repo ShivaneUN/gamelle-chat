@@ -256,7 +256,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _pairingPanel({required bool expand}) {
     final remote = _bridge.publicUrl;
-    final pair = _bridge.pairCode;
     final qrSize = expand ? 260.0 : 220.0;
     final Widget qr;
     if (!_bridge.tunnelEnabled) {
@@ -298,8 +297,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 16),
         if (expand) Expanded(child: Center(child: qr)) else Center(child: qr),
-        const SizedBox(height: 16),
-        _PairDigits(code: pair),
         const SizedBox(height: 14),
         Wrap(
           alignment: WrapAlignment.center,
@@ -442,41 +439,6 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(22),
       ),
       child: list,
-    );
-  }
-}
-
-class _PairDigits extends StatelessWidget {
-  const _PairDigits({required this.code});
-
-  final String? code;
-
-  @override
-  Widget build(BuildContext context) {
-    final raw = (code != null && code!.length >= 4) ? code! : '------';
-    final padded = raw.padRight(6, '-').substring(0, 6);
-    final chars = padded.split('');
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        for (var i = 0; i < chars.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Container(
-            width: 42,
-            height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F121A),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF2A3142)),
-            ),
-            child: Text(
-              chars[i],
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
-      ],
     );
   }
 }
