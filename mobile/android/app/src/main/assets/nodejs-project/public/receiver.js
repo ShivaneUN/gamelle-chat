@@ -208,17 +208,12 @@ const unlockMicBtn = document.getElementById('unlockMicBtn');
 
 function renderMicStatus(state) {
   if (micOn) {
-    unlockMicBtn.textContent = '✅ Micro';
+    unlockMicBtn.textContent = 'Micro';
     unlockMicBtn.className = 'toggle-on';
     return;
   }
-  if (state === 'denied') {
-    unlockMicBtn.textContent = '⛔ Micro';
-    unlockMicBtn.className = 'toggle-off';
-  } else {
-    unlockMicBtn.textContent = '🎙️ Micro';
-    unlockMicBtn.className = 'toggle-off';
-  }
+  unlockMicBtn.textContent = 'Micro';
+  unlockMicBtn.className = 'toggle-off';
 }
 
 async function refreshMicStatus() {
@@ -293,35 +288,34 @@ function unlockSoundEngine() {
   }
 }
 
-function renderTalkSoundBtn() {
-  const btn = document.getElementById('talkSoundBtn');
+function renderUnlockSoundBtn() {
+  const btn = document.getElementById('unlockSoundBtn');
   if (!btn) return;
-  if (talkSoundOn) {
-    btn.textContent = '✅ Voix';
-    btn.className = 'toggle-on';
-  } else {
-    btn.textContent = '🔇 Voix';
-    btn.className = 'toggle-off';
-  }
+  btn.textContent = talkSoundOn ? 'Son' : 'Activer le son';
+  btn.className = talkSoundOn ? 'big toggle-on' : 'big';
 }
 
 function renderAlarmSoundBtn() {
   const btn = document.getElementById('alarmSoundBtn');
   if (!btn) return;
-  if (alarmSoundOn) {
-    btn.textContent = '✅ Alarme';
-    btn.className = 'toggle-on';
-  } else {
-    btn.textContent = '🔇 Alarme';
-    btn.className = 'toggle-off';
-  }
+  btn.textContent = 'Alarme';
+  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
 }
 
-document.getElementById('talkSoundBtn').onclick = () => {
-  talkSoundOn = !talkSoundOn;
-  if (talkSoundOn) unlockSoundEngine();
-  renderTalkSoundBtn();
-};
+function renderCamBtn() {
+  if (!camBtn) return;
+  camBtn.textContent = 'Caméra';
+  camBtn.className = camOn ? 'toggle-on' : 'toggle-off';
+}
+
+const unlockSoundBtn = document.getElementById('unlockSoundBtn');
+if (unlockSoundBtn) {
+  unlockSoundBtn.onclick = () => {
+    talkSoundOn = !talkSoundOn;
+    if (talkSoundOn) unlockSoundEngine();
+    renderUnlockSoundBtn();
+  };
+}
 
 document.getElementById('alarmSoundBtn').onclick = () => {
   alarmSoundOn = !alarmSoundOn;
@@ -330,7 +324,7 @@ document.getElementById('alarmSoundBtn').onclick = () => {
   renderAlarmSoundBtn();
 };
 unlockSoundEngine();
-renderTalkSoundBtn();
+renderUnlockSoundBtn();
 renderAlarmSoundBtn();
 document.addEventListener('pointerdown', unlockSoundEngine);
 document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
@@ -343,15 +337,48 @@ setInterval(() => {
   if (camOn) keepCameraAlive();
 }, 2000);
 
-function nativeScreen(cmd) {
+function nativeHost(cmd) {
   try {
     if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
       GamelleHost.postMessage(cmd);
     }
   } catch (e) {}
 }
-socket.on('screen-on', () => nativeScreen('on'));
-socket.on('screen-off', () => nativeScreen('off'));
+
+let screenOn = true;
+function renderScreenBtn() {
+  const btn = document.getElementById('screenBtn');
+  if (!btn) return;
+  btn.textContent = 'Écran';
+  btn.className = screenOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off';
+}
+const screenBtn = document.getElementById('screenBtn');
+if (screenBtn) {
+  screenBtn.onclick = () => {
+    screenOn = !screenOn;
+    nativeHost(screenOn ? 'on' : 'off');
+    renderScreenBtn();
+  };
+}
+renderScreenBtn();
+
+const bgBtn = document.getElementById('bgBtn');
+if (bgBtn) {
+  bgBtn.onclick = () => {
+    nativeHost('background');
+  };
+}
+
+socket.on('screen-on', () => {
+  screenOn = true;
+  nativeHost('on');
+  renderScreenBtn();
+});
+socket.on('screen-off', () => {
+  screenOn = false;
+  nativeHost('off');
+  renderScreenBtn();
+});
 
 let talkCapture = null;
 let talkSendStream = null;
@@ -413,7 +440,7 @@ async function enableCamera() {
       localVideo.onloadedmetadata = () => resolve();
       setTimeout(resolve, 2500);
     });
-    camBtn.textContent = '🔴 Caméra';
+    camBtn.textContent = 'Caméra';
     camBtn.className = 'toggle-on';
     camOn = true;
     setCamDot(true);
@@ -476,8 +503,8 @@ function disableCamera() {
   localVideo.style.display = 'none';
   const camHint = document.getElementById('camHint');
   if (camHint) camHint.textContent = 'Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.';
-  camBtn.textContent = '📷 Caméra';
-  camBtn.className = '';
+  camBtn.textContent = 'Caméra';
+  camBtn.className = 'toggle-off';
   camOn = false;
   setCamDot(false);
   socket.emit('cam-status', { on: false });

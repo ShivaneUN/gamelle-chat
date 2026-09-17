@@ -87,8 +87,19 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
       ..addJavaScriptChannel(
         'GamelleHost',
         onMessageReceived: (JavaScriptMessage message) {
-          final cmd = message.message == 'off' ? 'screenOff' : 'screenOn';
-          unawaited(_life.invokeMethod<void>(cmd));
+          final m = message.message.trim();
+          if (m == 'background') {
+            unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
+            unawaited(_life.invokeMethod<void>('background'));
+            return;
+          }
+          if (m == 'off') {
+            unawaited(_life.invokeMethod<void>('screenOff'));
+            return;
+          }
+          if (m == 'on') {
+            unawaited(_life.invokeMethod<void>('screenOn'));
+          }
         },
       )
       ..setBackgroundColor(_bg)
@@ -258,16 +269,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
                     child: const Text('QR'),
                   ),
                   const Spacer(),
-                  FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: _accent),
-                    onPressed: () async {
-                      try {
-                        await _life.invokeMethod<void>('keepAlive', {'camera': true});
-                        await _life.invokeMethod<void>('background');
-                      } catch (_) {}
-                    },
-                    child: const Text('Arrière-plan'),
-                  ),
                 ],
               ),
             ),
