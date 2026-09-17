@@ -3,7 +3,9 @@ package com.gamelle.gamelle_chat
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.BatteryManager
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import android.media.AudioAttributes
@@ -220,6 +222,9 @@ class MainActivity : FlutterActivity() {
                     moveTaskToBack(true)
                     result.success(true)
                 }
+                "battery" -> {
+                    result.success(readBattery())
+                }
                 "restartApp" -> {
                     result.success(true)
                     mainHandler.postDelayed({ relaunchApp() }, 350)
@@ -286,6 +291,23 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         keepWebViewsAlive()
         if (screenForcedOff) applyScreen(false)
+    }
+
+    private fun readBattery(): Map<String, Any?> {
+        return try {
+            val bm = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val status = sticky?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+            mapOf(
+                "level" to level.coerceIn(0, 100),
+                "charging" to charging,
+            )
+        } catch (_: Exception) {
+            mapOf("level" to null, "charging" to false, "unsupported" to true)
+        }
     }
 
     private fun applyScreen(on: Boolean) {

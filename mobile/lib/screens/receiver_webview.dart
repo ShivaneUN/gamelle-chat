@@ -35,6 +35,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   WebViewController? _web;
   StreamSubscription<NodeBridgeMessage>? _urlSub;
   StreamSubscription<dynamic>? _rendererSub;
+  Timer? _batteryTimer;
   int? _webId;
   int _generation = 0;
   double _progress = 0;
@@ -62,6 +63,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
       }
     });
     _createController();
+    _batteryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_injectBattery());
+    });
+    unawaited(_injectBattery());
   }
 
   void _createController() {
@@ -112,6 +117,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           onPageFinished: (_) {
             _injectPublicUrl(NodeBridgeService.instance.publicUrl);
             _unlockWebAudio();
+            unawaited(_injectBattery());
             unawaited(_native.invokeMethod<void>('audioFocus'));
           },
           onWebResourceError: (error) {
@@ -219,6 +225,30 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     );
   }
 
+  Future<void> _injectBattery() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      final raw = await _life.invokeMethod<dynamic>('battery');
+      if (raw is! Map) return;
+      final map = Map<String, dynamic>.from(raw);
+      final level = map['level'];
+      final charging = map['charging'] == true;
+      final unsupported = map['unsupported'] == true || level == null;
+      final levelJs = unsupported ? 'null' : '${(level as num).round()}';
+      await web.runJavaScript('''
+        window.__GAMELLE_NATIVE_BATTERY__ = {
+          level: $levelJs,
+          charging: ${charging ? 'true' : 'false'},
+          unsupported: ${unsupported ? 'true' : 'false'}
+        };
+        if (typeof applyNativeBattery === 'function') {
+          applyNativeBattery(window.__GAMELLE_NATIVE_BATTERY__);
+        }
+      ''');
+    } catch (_) {}
+  }
+
   Future<void> _injectPublicUrl(String? url) async {
     final web = _web;
     if (web == null || url == null || !url.startsWith('http')) return;
@@ -238,6 +268,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
 
   @override
   void dispose() {
+    _batteryTimer?.cancel();
     _urlSub?.cancel();
     _rendererSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
