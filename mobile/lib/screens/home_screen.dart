@@ -9,6 +9,7 @@ import '../services/github_update_service.dart';
 import '../services/node_bridge_service.dart';
 import '../widgets/scan_qr.dart';
 import 'receiver_webview.dart';
+import 'settings_screen.dart';
 
 const _bg = Color(0xFF0B0D12);
 const _card = Color(0xFF151821);
@@ -183,50 +184,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const SettingsScreen(),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
   Future<void> _copy(String value, {String done = 'Lien copié'}) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(done)),
-    );
-  }
-
-  Future<void> _showLocalWifi() async {
-    final url = _bridge.localUrl;
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: _card,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: const Row(
-            children: [
-              Icon(Icons.wifi_rounded, color: _accent),
-              SizedBox(width: 10),
-              Text('Wi-Fi local'),
-            ],
-          ),
-          content: SelectableText(
-            url,
-            style: const TextStyle(color: _accent, fontSize: 16, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Fermer', style: TextStyle(color: _muted)),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: _accent),
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                _copy(url, done: 'Lien local copié');
-              },
-              child: const Text('Copier'),
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -275,13 +246,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                 ),
-                TextButton(
-                  onPressed: _applying ? null : _quit,
-                  child: const Text(
-                    'Quitter',
-                    style: TextStyle(color: _accent, fontWeight: FontWeight.w600),
-                  ),
-                ),
               ],
             ),
           ),
@@ -294,42 +258,37 @@ class _HomeScreenState extends State<HomeScreen> {
     final remote = _bridge.publicUrl;
     final pair = _bridge.pairCode;
     final qrSize = expand ? 260.0 : 220.0;
-    final qrFace = remote == null
-        ? SizedBox(
-            width: qrSize,
-            height: qrSize,
-            child: const Center(child: CircularProgressIndicator(color: _accent)),
-          )
-        : GestureDetector(
-            onTap: () => _copy(remote),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: ScanQr(data: remote, size: qrSize),
-            ),
-          );
-    final qr = Stack(
-      clipBehavior: Clip.none,
-      children: [
-        qrFace,
-        Positioned(
-          right: 8,
-          top: 8,
-          child: Material(
-            color: _card,
-            shape: const CircleBorder(),
-            elevation: 2,
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: _applying ? null : _showLocalWifi,
-              child: const Padding(
-                padding: EdgeInsets.all(8),
-                child: Icon(Icons.wifi_rounded, color: _accent, size: 22),
-              ),
+    final Widget qr;
+    if (!_bridge.tunnelEnabled) {
+      qr = SizedBox(
+        width: qrSize,
+        height: qrSize,
+        child: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'Cloudflare désactivé.\nAccès local via Réglages.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _muted, height: 1.4),
             ),
           ),
         ),
-      ],
-    );
+      );
+    } else if (remote == null) {
+      qr = SizedBox(
+        width: qrSize,
+        height: qrSize,
+        child: const Center(child: CircularProgressIndicator(color: _accent)),
+      );
+    } else {
+      qr = GestureDetector(
+        onTap: () => _copy(remote),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: ScanQr(data: remote, size: qrSize),
+        ),
+      );
+    }
 
     final body = Column(
       children: [
@@ -349,9 +308,11 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _StatusPill(label: _localOk ? 'Local OK' : 'Local…', ok: _localOk),
             _StatusPill(
-              label: _cloudflareOk
-                  ? 'Cloudflare OK'
-                  : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare'),
+              label: !_bridge.tunnelEnabled
+                  ? 'Cloudflare off'
+                  : (_cloudflareOk
+                      ? 'Cloudflare OK'
+                      : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare')),
               ok: _cloudflareOk,
             ),
           ],
@@ -387,6 +348,12 @@ class _HomeScreenState extends State<HomeScreen> {
           highlighted: true,
           onTap: _applying ? null : _openReceiver,
         ),
+      _ActionTile(
+        icon: Icons.settings_rounded,
+        title: 'Réglages',
+        subtitle: 'Wi-Fi, serveur, Cloudflare, notifications',
+        onTap: _applying ? null : _openSettings,
+      ),
       _ActionTile(
         icon: Icons.system_update_alt_rounded,
         title: 'Mises à jour',
@@ -441,6 +408,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
         ),
+      ),
+      _ActionTile(
+        icon: Icons.power_settings_new_rounded,
+        title: 'Quitter',
+        subtitle: 'Arrêter le serveur et fermer l’app',
+        onTap: _applying ? null : _quit,
       ),
     ];
 
