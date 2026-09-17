@@ -68,13 +68,16 @@ function paintControllerLink(origin) {
   const hint = document.getElementById('ctrlLinkHint');
   const img = document.getElementById('ctrlQrImg');
   const box = document.getElementById('ctrlQrBox');
-  if (urlEl) urlEl.textContent = scannable ? url : '';
+  if (urlEl) {
+    urlEl.textContent = scannable ? url : '';
+    urlEl.hidden = !scannable;
+  }
   if (!scannable) {
     if (box) box.hidden = true;
     if (hint) hint.textContent = 'En attente du tunnel Cloudflare…';
     return true;
   }
-  if (hint) hint.textContent = 'Scanne avec ton appareil';
+  if (hint) hint.textContent = 'Connecter votre appareil';
   if (img && typeof makeQrDataUrl === 'function') {
     try {
       img.src = makeQrDataUrl(url, 10);
