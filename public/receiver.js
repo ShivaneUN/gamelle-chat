@@ -1,3 +1,11 @@
+function setBtnLabel(btn, label, className) {
+  if (!btn) return;
+  if (className) btn.className = className;
+  const lbl = btn.querySelector('.lbl');
+  if (lbl) lbl.textContent = label;
+  else btn.textContent = label;
+}
+
 const PAIR_KEY = 'gamellePairCode';
 
 function genPairCode() {
@@ -54,48 +62,54 @@ const camBtn = document.getElementById('camBtn');
 
 function paintControllerLink(origin) {
   const url = String(origin || '').replace(/\/$/, '');
-  window.__GAMELLE_CONTROLLER_URL__ = url;
+  const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(url) : false;
+  window.__GAMELLE_CONTROLLER_URL__ = scannable ? url : '';
   const urlEl = document.getElementById('ctrlLinkUrl');
+  const hint = document.getElementById('ctrlLinkHint');
   const img = document.getElementById('ctrlQrImg');
   const box = document.getElementById('ctrlQrBox');
-  if (urlEl) urlEl.textContent = url || 'Lien indisponible';
-  if (img && url && typeof makeQrDataUrl === 'function') {
+  if (urlEl) urlEl.textContent = scannable ? url : '';
+  if (!scannable) {
+    if (box) box.hidden = true;
+    if (hint) hint.textContent = 'En attente du tunnel Cloudflare…';
+    return true;
+  }
+  if (hint) hint.textContent = 'Scanne avec ton appareil';
+  if (img && typeof makeQrDataUrl === 'function') {
     try {
-      img.src = makeQrDataUrl(url);
+      img.src = makeQrDataUrl(url, 10);
       if (box) box.hidden = false;
     } catch (e) {
       if (box) box.hidden = true;
     }
-  } else if (box && !url) {
-    box.hidden = true;
   }
+  return true;
 }
 
 function applyRemoteOrigin(origin) {
   if (!origin) return false;
-  paintControllerLink(String(origin).replace(/\/$/, ''));
+  const url = String(origin).replace(/\/$/, '');
+  if (typeof isScannableQrUrl === 'function' && !isScannableQrUrl(url)) return false;
+  paintControllerLink(url);
   return true;
 }
 
 function refreshControllerLink() {
-  const origin = window.__GAMELLE_PUBLIC_URL__ || location.origin;
-  applyRemoteOrigin(origin);
+  applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__ || '');
 }
 
 paintControllerLink('');
 
 (async function waitPublicControllerUrl() {
   for (;;) {
-    if (window.__GAMELLE_PUBLIC_URL__) applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
+    if (applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__)) return;
     try {
       const info = await fetch('/api/info').then((r) => r.json());
       if (info && info.publicUrl) {
         window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
-        applyRemoteOrigin(info.publicUrl);
-        return;
+        if (applyRemoteOrigin(info.publicUrl)) return;
       }
     } catch (e) {}
-    if (code) applyRemoteOrigin(location.origin);
     await new Promise((r) => setTimeout(r, 1500));
   }
 })();
@@ -118,10 +132,13 @@ socket.on('connect', () => {
   });
 });
 socket.on('peers', ({ controllers }) => {
-  if (controllers > 0) {
-    setStatus(true, controllers === 1 ? 'En ligne' : `En ligne · ${controllers} contrôleurs`);
+  const n = Number(controllers) || 0;
+  if (n <= 0) {
+    setStatus(false, 'Pas de contrôleur en ligne');
+  } else if (n === 1) {
+    setStatus(true, '1 contrôleur en ligne');
   } else {
-    setStatus(false, 'Hors ligne');
+    setStatus(true, `${n} contrôleurs en ligne`);
   }
 });
 socket.on('room-state', (state) => {
@@ -135,7 +152,7 @@ function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
 }
-setStatus(false, 'Hors ligne');
+setStatus(false, 'Pas de contrôleur en ligne');
 
 // --- Bibliothèque de messages personnalisés ---
 const msgLibrary = createMessageLibrary({
@@ -199,43 +216,22 @@ function openControllerLinkModal() {
   openModal('ctrlLinkModal');
 }
 const qrBtn = document.getElementById('qrBtn');
-const ctrlLinkBtn = document.getElementById('ctrlLinkBtn');
 if (qrBtn) qrBtn.onclick = openControllerLinkModal;
-if (ctrlLinkBtn) ctrlLinkBtn.onclick = openControllerLinkModal;
-const ctrlLinkCopy = document.getElementById('ctrlLinkCopy');
-if (ctrlLinkCopy) {
-  ctrlLinkCopy.onclick = async () => {
-    const url = window.__GAMELLE_CONTROLLER_URL__ || '';
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      ctrlLinkCopy.textContent = 'Copié';
-      setTimeout(() => { ctrlLinkCopy.textContent = 'Copier le lien'; }, 1500);
-    } catch (e) {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        ctrlLinkCopy.textContent = 'Copié';
-        setTimeout(() => { ctrlLinkCopy.textContent = 'Copier le lien'; }, 1500);
-      } catch (err) {}
-    }
+if (window.GamelleHost) {
+  document.body.classList.add('in-app');
+}
+const homeBtn = document.getElementById('homeBtn');
+if (homeBtn) {
+  homeBtn.onclick = () => {
+    if (window.GamelleHost) nativeHost('home');
+    else location.href = '/';
   };
 }
 
 const unlockMicBtn = document.getElementById('unlockMicBtn');
 
 function renderMicStatus(state) {
-  if (micOn) {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-on';
-    return;
-  }
-  unlockMicBtn.textContent = 'Micro';
-  unlockMicBtn.className = 'toggle-off';
+  setBtnLabel(unlockMicBtn, 'Micro', micOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 
 async function refreshMicStatus() {
@@ -313,21 +309,18 @@ function unlockSoundEngine() {
 function renderUnlockSoundBtn() {
   const btn = document.getElementById('unlockSoundBtn');
   if (!btn) return;
-  btn.textContent = talkSoundOn ? 'Son' : 'Activer le son';
-  btn.className = talkSoundOn ? 'big toggle-on' : 'big';
+  setBtnLabel(btn, talkSoundOn ? 'Son' : 'Activer le son', talkSoundOn ? 'cta toggle-on' : 'cta');
 }
 
 function renderAlarmSoundBtn() {
   const btn = document.getElementById('alarmSoundBtn');
   if (!btn) return;
-  btn.textContent = 'Alarme';
-  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
+  setBtnLabel(btn, 'Alarme', alarmSoundOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 
 function renderCamBtn() {
   if (!camBtn) return;
-  camBtn.textContent = 'Caméra';
-  camBtn.className = camOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off';
+  setBtnLabel(camBtn, 'Caméra', camOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off');
 }
 
 const unlockSoundBtn = document.getElementById('unlockSoundBtn');
@@ -419,7 +412,19 @@ function setCamDot(on) {
   dot.classList.toggle('on', !!on);
   dot.title = on ? 'Caméra allumée' : 'Caméra éteinte';
 }
-camBtn.onclick = async () => { camOn ? disableCamera() : await enableCamera(); };
+camBtn.onclick = async () => {
+  if (camOn) {
+    disableCamera();
+    return;
+  }
+  renderCamBtnPending(true);
+  await enableCamera();
+};
+
+function renderCamBtnPending(on) {
+  if (!camBtn) return;
+  setBtnLabel(camBtn, 'Caméra', on ? 'chip-btn toggle-on' : 'chip-btn toggle-off');
+}
 
 async function enableCamera() {
   try {
@@ -457,6 +462,7 @@ async function enableCamera() {
     socket.emit('cam-status', { on: true });
     sendCameraList();
   } catch (e) {
+    renderCamBtn();
     alert('Impossible d\'accéder à la caméra: ' + e.name + ' — ' + e.message + '\n\nClique le 🔒 à gauche de l\'adresse → Caméra → Autoriser.');
   }
 }
@@ -475,10 +481,15 @@ async function sendCameraList() {
 }
 
 // --- Changement de caméra demandé par le contrôleur, sans couper le direct ---
-socket.on('switch-camera', async ({ deviceId }) => {
+socket.on('switch-camera', async (payload) => {
   if (!camOn) return;
+  const deviceId = payload && payload.deviceId;
+  const facingMode = payload && payload.facingMode;
+  const video = deviceId
+    ? { deviceId: { exact: deviceId } }
+    : { facingMode: { ideal: facingMode || 'environment' } };
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: micOn ? MIC_AUDIO : false });
+    const newStream = await navigator.mediaDevices.getUserMedia({ video, audio: micOn ? MIC_AUDIO : false });
     const newVideoTrack = newStream.getVideoTracks()[0];
     const newAudioTrack = newStream.getAudioTracks()[0];
     if (pcCam) {
@@ -491,6 +502,7 @@ socket.on('switch-camera', async ({ deviceId }) => {
     localStream = newStream;
     localVideo.srcObject = localStream;
     if (micOn) await startMicTalk(localStream, false);
+    sendCameraList();
   } catch (e) {
     console.warn('Changement de caméra impossible:', e.message);
   }

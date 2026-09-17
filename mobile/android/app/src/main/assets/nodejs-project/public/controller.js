@@ -1,3 +1,11 @@
+function setBtnLabel(btn, label, className) {
+  if (!btn) return;
+  if (className) btn.className = className;
+  const lbl = btn.querySelector('.lbl');
+  if (lbl) lbl.textContent = label;
+  else btn.textContent = label;
+}
+
 function readControllerCode() {
   const params = new URLSearchParams(location.search);
   let next = (params.get('code') || '').trim();
@@ -185,26 +193,18 @@ let alarmSoundOn = false;
 
 function renderMicStatus(state) {
   if (talking) {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-on';
+    setBtnLabel(unlockMicBtn, 'Micro', 'tile-btn toggle-on');
     renderTalkBtn();
     return;
   }
-  if (state === 'denied') {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-off';
-  } else {
-    unlockMicBtn.textContent = 'Micro';
-    unlockMicBtn.className = 'toggle-off';
-  }
+  setBtnLabel(unlockMicBtn, 'Micro', 'tile-btn toggle-off');
   renderTalkBtn();
 }
 
 function renderTalkBtn() {
   const btn = document.getElementById('talkBtn');
   if (!btn) return;
-  btn.textContent = 'Parler';
-  btn.className = talking ? 'big toggle-on' : 'big';
+  setBtnLabel(btn, 'Parler', talking ? 'cta toggle-on' : 'cta');
 }
 
 async function refreshMicStatus() {
@@ -239,15 +239,13 @@ function unlockSoundEngine() {
 function renderTalkSoundBtn() {
   const btn = document.getElementById('talkSoundBtn');
   if (!btn) return;
-  btn.textContent = 'Son';
-  btn.className = talkSoundOn ? 'toggle-on' : 'toggle-off';
+  setBtnLabel(btn, 'Son', talkSoundOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 
 function renderAlarmSoundBtn() {
   const btn = document.getElementById('alarmSoundBtn');
   if (!btn) return;
-  btn.textContent = 'Alarme';
-  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
+  setBtnLabel(btn, 'Alarme', alarmSoundOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 
 document.getElementById('talkSoundBtn').onclick = () => {
@@ -270,8 +268,7 @@ let recvScreenOn = true;
 function renderScreenBtn() {
   const btn = document.getElementById('screenBtn');
   if (!btn) return;
-  btn.textContent = 'Écran';
-  btn.className = recvScreenOn ? 'toggle-on' : 'toggle-off';
+  setBtnLabel(btn, 'Écran', recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 const screenBtn = document.getElementById('screenBtn');
 if (screenBtn) {
@@ -362,6 +359,7 @@ document.querySelectorAll('[data-close]').forEach((el) => {
 // --- Choix de la caméra du récepteur (Avant / Arrière) ---
 let cameraList = [];
 let currentCamIndex = 0;
+let preferredFacing = 'Arrière';
 const facingBtn = document.getElementById('facingBtn');
 
 function classifyCamLabel(label) {
@@ -373,17 +371,13 @@ function classifyCamLabel(label) {
 
 function currentFacingLabel() {
   const cam = cameraList[currentCamIndex];
-  if (!cam) return 'Arrière';
-  return classifyCamLabel(cam.label) || (currentCamIndex === 0 ? 'Arrière' : 'Avant');
+  if (cam) return classifyCamLabel(cam.label) || (currentCamIndex === 0 ? 'Arrière' : 'Avant');
+  return preferredFacing;
 }
 
 function renderFacingBtn() {
   if (!facingBtn) return;
-  if (!cameraList.length) {
-    facingBtn.hidden = true;
-    return;
-  }
-  facingBtn.hidden = cameraList.length < 2;
+  facingBtn.hidden = false;
   facingBtn.textContent = currentFacingLabel();
 }
 
@@ -393,24 +387,32 @@ socket.on('camera-list', (cams) => {
     .map((c) => `<option value="${c.deviceId}">${c.label}</option>`)
     .join('');
   if (!cameraList.length) {
-    currentCamIndex = 0;
     renderFacingBtn();
     return;
   }
   const backIdx = cameraList.findIndex((c) => classifyCamLabel(c.label) === 'Arrière');
   currentCamIndex = backIdx >= 0 ? backIdx : 0;
   cameraSelect.value = cameraList[currentCamIndex].deviceId;
+  preferredFacing = currentFacingLabel();
   renderFacingBtn();
 });
 
 if (facingBtn) {
   facingBtn.onclick = () => {
-    if (cameraList.length < 2) return;
-    currentCamIndex = (currentCamIndex + 1) % cameraList.length;
-    const cam = cameraList[currentCamIndex];
-    if (!cam) return;
-    cameraSelect.value = cam.deviceId;
-    socket.emit('switch-camera', { deviceId: cam.deviceId });
+    if (cameraList.length >= 2) {
+      currentCamIndex = (currentCamIndex + 1) % cameraList.length;
+      const cam = cameraList[currentCamIndex];
+      if (!cam) return;
+      cameraSelect.value = cam.deviceId;
+      preferredFacing = currentFacingLabel();
+      socket.emit('switch-camera', { deviceId: cam.deviceId });
+    } else {
+      preferredFacing = currentFacingLabel() === 'Avant' ? 'Arrière' : 'Avant';
+      currentCamIndex = preferredFacing === 'Avant' ? 1 : 0;
+      socket.emit('switch-camera', {
+        facingMode: preferredFacing === 'Avant' ? 'user' : 'environment'
+      });
+    }
     renderFacingBtn();
   };
 }

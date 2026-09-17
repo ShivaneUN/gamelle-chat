@@ -36,10 +36,21 @@ class NodeBridgeService {
     return base.replaceAll(RegExp(r'/$'), '');
   }
 
-  String? get controllerShareUrl {
-    final base = publicUrl ?? localUrl;
-    if (base.isEmpty) return null;
-    return base.replaceAll(RegExp(r'/$'), '');
+  String? get controllerShareUrl => scannableQrUrl;
+
+  String? get scannableQrUrl {
+    final raw = publicUrl;
+    if (raw == null || raw.isEmpty) return null;
+    final uri = Uri.tryParse(raw);
+    if (uri == null) return null;
+    if (uri.scheme != 'https' && uri.scheme != 'http') return null;
+    final host = uri.host;
+    if (host.isEmpty || host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+      return null;
+    }
+    if (host == 'api.trycloudflare.com') return null;
+    if (!host.endsWith('.trycloudflare.com')) return null;
+    return raw.replaceAll(RegExp(r'/$'), '');
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();

@@ -1,25 +1,25 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="live-root">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Contrôleur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=29">
+<link rel="stylesheet" href="/style.css?v=39">
 </head>
-<body>
-<div class="wrap">
+<body class="live-page">
+<div class="wrap screen-fit">
   <div class="page-head">
     <h1>Contrôleur</h1>
+    <div id="status" class="status off">Hors ligne</div>
   </div>
-  <div id="status" class="status off">Hors ligne</div>
 
-  <div class="card">
+  <div class="card live-card">
     <div class="live-head">
       <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
       <div class="live-chips">
+        <button id="facingBtn" class="chip-btn" type="button">Arrière</button>
         <span id="recvBattery" class="battery-badge off" title="Batterie du Récepteur">—%</span>
-        <button id="facingBtn" class="chip-btn" type="button" hidden>Arrière</button>
       </div>
     </div>
     <select id="cameraSelect" style="display:none;"></select>
@@ -29,28 +29,59 @@
     </div>
     <p id="liveHint" class="hint">En attente de la caméra du récepteur…</p>
     <div class="stack-gap">
-      <button id="talkBtn" class="big" type="button">Parler</button>
-      <div class="action-panel cols-4">
-        <button id="unlockMicBtn" class="toggle-off" type="button">Micro</button>
-        <button id="talkSoundBtn" class="toggle-on" type="button">Son</button>
-        <button id="alarmSoundBtn" class="toggle-off" type="button">Alarme</button>
-        <button id="screenBtn" class="toggle-on" type="button">Écran</button>
+      <button id="talkBtn" class="cta" type="button">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+        <span class="lbl">Parler</span>
+      </button>
+      <div class="tile-row cols-3">
+        <button id="unlockMicBtn" class="tile-btn toggle-off" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+          <span class="lbl">Micro</span>
+        </button>
+        <button id="talkSoundBtn" class="tile-btn toggle-on" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
+          <span class="lbl">Son</span>
+        </button>
+        <button id="alarmSoundBtn" class="tile-btn toggle-off" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="lbl">Alarme</span>
+        </button>
       </div>
-      <div class="action-panel">
-        <button id="photoBtn" class="ghost" type="button">Photo</button>
-        <button id="videoBtn" class="ghost" type="button">Vidéo (5s)</button>
+      <div class="tile-row cols-3">
+        <button id="photoBtn" class="tile-btn" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span class="lbl">Photo</span>
+        </button>
+        <button id="videoBtn" class="tile-btn" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3z"/></svg>
+          <span class="lbl">Vidéo 5s</span>
+        </button>
+        <button id="screenBtn" class="tile-btn toggle-on" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span class="lbl">Écran</span>
+        </button>
       </div>
     </div>
   </div>
 
-  <div class="card panel-card">
-    <div class="action-panel">
-      <button id="openAlbumBtn" class="ghost" type="button">Album</button>
-      <button id="openLibraryBtn" class="ghost" type="button">Bibliothèque</button>
-      <button id="openAlarmBtn" class="ghost" type="button">Alarme</button>
-      <button id="openSchedBtn" class="ghost" type="button">Horaires</button>
-    </div>
-  </div>
+  <nav class="dock">
+    <button id="openAlbumBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+      <span class="lbl">Album</span>
+    </button>
+    <button id="openLibraryBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span class="lbl">Bibliothèque</span>
+    </button>
+    <button id="openAlarmBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span class="lbl">Alarme</span>
+    </button>
+    <button id="openSchedBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <span class="lbl">Horaires</span>
+    </button>
+  </nav>
 </div>
 
 <div id="albumModal" class="modal" hidden>
@@ -134,6 +165,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=19"></script>
+<script src="/controller.js?v=21"></script>
 </body>
 </html>
