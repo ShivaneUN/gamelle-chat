@@ -405,6 +405,13 @@ function stopMicTalk() {
 }
 
 // --- Caméra locale : activer / désactiver ---
+function setLivePlaceholder(show) {
+  const el = document.getElementById('livePlaceholder');
+  if (!el) return;
+  el.classList.toggle('on', !!show);
+  el.style.display = show ? 'block' : 'none';
+}
+
 let camOn = false;
 function setCamDot(on) {
   const dot = document.getElementById('camDot');
@@ -442,6 +449,7 @@ async function enableCamera() {
     localVideo.playsInline = true;
     localVideo.classList.add('on');
     localVideo.style.display = 'block';
+    setLivePlaceholder(false);
     const camHint = document.getElementById('camHint');
     if (camHint) camHint.textContent = 'Caméra allumée — le Contrôleur peut voir le direct.';
     await localVideo.play().catch(() => {});
@@ -517,6 +525,7 @@ function disableCamera() {
   localVideo.srcObject = null;
   localVideo.classList.remove('on');
   localVideo.style.display = 'none';
+  setLivePlaceholder(true);
   const camHint = document.getElementById('camHint');
   if (camHint) camHint.textContent = 'Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.';
   camOn = false;

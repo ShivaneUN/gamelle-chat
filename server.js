@@ -143,6 +143,23 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self)');
   next();
 });
+
+function htmlWithAbsoluteLogo(html, req) {
+  const base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
+  return String(html || '')
+    .replace(/content="\/logo\.png"/g, `content="${base}/logo.png"`)
+    .replace(/href="\/(favicon-[^"]+|apple-touch-icon\.png)"/g, `href="${base}/$1"`);
+}
+
+app.get(['/', '/index.html', '/controller.html', '/receiver.html'], (req, res, next) => {
+  const file = req.path === '/' ? 'index.html' : path.basename(req.path);
+  const full = path.join(__dirname, 'public', file);
+  fs.readFile(full, 'utf8', (err, html) => {
+    if (err) return next();
+    res.type('html').send(htmlWithAbsoluteLogo(html, req));
+  });
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media/receiver', express.static(RECEIVER_DIR));
 app.use('/media/controller', express.static(CONTROLLER_DIR));

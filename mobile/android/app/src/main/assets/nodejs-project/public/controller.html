@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Contrôleur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=39">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Gamelle Chat — Contrôleur">
+<meta property="og:description" content="Pilote la caméra et l’alarme de la gamelle.">
+<meta property="og:image" content="/logo.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="/logo.png">
+<link rel="stylesheet" href="/style.css?v=40">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -24,6 +32,7 @@
     </div>
     <select id="cameraSelect" style="display:none;"></select>
     <div class="live-wrap">
+      <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
     </div>
@@ -165,6 +174,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=21"></script>
+<script src="/controller.js?v=22"></script>
 </body>
 </html>

@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Récepteur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=39">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Gamelle Chat — Récepteur">
+<meta property="og:description" content="Caméra et micro de la tablette gamelle.">
+<meta property="og:image" content="/logo.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="/logo.png">
+<link rel="stylesheet" href="/style.css?v=40">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -20,6 +28,7 @@
       <button id="camBtn" class="chip-btn toggle-off" type="button"><span class="lbl">Caméra</span></button>
     </div>
     <div class="live-wrap">
+      <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="localVideo" autoplay playsinline muted></video>
     </div>
     <p id="camHint" class="hint">Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.</p>
@@ -172,6 +181,6 @@
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/qr.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/receiver.js?v=34"></script>
+<script src="/receiver.js?v=35"></script>
 </body>
 </html>
