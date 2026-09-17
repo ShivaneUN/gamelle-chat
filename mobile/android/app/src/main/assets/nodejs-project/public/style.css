@@ -135,6 +135,12 @@ body {
   background: #0d1017;
   color: #7be08a;
 }
+.battery-badge.mid { color: #ffb347; }
+.battery-badge.low {
+  color: #e08a8a;
+  background: #4d1f1f;
+}
+.battery-badge.off { color: #888; }
 .stack-gap > * + * {
   margin-top: 8px;
 }
@@ -150,21 +156,6 @@ body {
   background: #3dcc6a;
   box-shadow: 0 0 10px rgba(61, 204, 106, 0.85);
 }
-.battery-badge {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: #0d1017;
-  color: #7be08a;
-}
-.battery-badge.mid { color: #ffb347; }
-.battery-badge.low {
-  color: #e08a8a;
-  background: #4d1f1f;
-}
-.battery-badge.off { color: #888; }
 label { font-size: 13px; color: #aaa; }
 input, select, textarea {
   width: 100%;
