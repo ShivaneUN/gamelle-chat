@@ -46,7 +46,7 @@ object GithubUpdate {
 
     fun status(filesDir: File, installedVersion: String): Map<String, Any?> {
         forgetStoredToken(filesDir)
-        val local = installedVersion
+        val local = localTag(filesDir, installedVersion)
         return try {
             val remote = fetchLatestTag()
             val available = isNewer(remote, local)
@@ -88,7 +88,7 @@ object GithubUpdate {
             if (remote.isBlank()) {
                 return mapOf("ok" to false, "restart" to false, "install" to false, "message" to "Release GitHub introuvable.")
             }
-            val local = installedVersion
+            val local = localTag(filesDir, installedVersion)
             if (!isNewer(remote, local)) {
                 onProgress(1.0, "Déjà à jour (${display(remote)}).")
                 return mapOf(
@@ -99,14 +99,23 @@ object GithubUpdate {
                     "available" to false,
                 )
             }
-            onProgress(0.08, "Téléchargement de l’APK ${display(remote)}…")
-            val apk = apkFile(filesDir)
-            apk.parentFile?.mkdirs()
-            if (apk.exists()) apk.delete()
-            downloadToFile(fetchApkUrl(remote), apk, onProgress)
-            if (!apk.exists() || apk.length() < 1000) {
-                return mapOf("ok" to false, "restart" to false, "install" to false, "message" to "APK GitHub introuvable ou trop petit.")
+
+            // 1) Overlay server.js + public/ (pas de conflit de signature).
+            onProgress(0.08, "Téléchargement des fichiers ${display(remote)}…")
+            val ota = otaDir(filesDir)
+            if (ota.exists()) ota.deleteRecursively()
+            ota.mkdirs()
+            val count = downloadZipWanted(ota, remote, onProgress)
+            if (count <= 0) {
+                return mapOf(
+                    "ok" to false,
+                    "restart" to false,
+                    "install" to false,
+                    "message" to "Aucun fichier utile dans la release GitHub.",
+                )
             }
+            onProgress(0.88, "Application de la mise à jour…")
+            copyWanted(ota, nodeDir(filesDir))
             versionFile(filesDir).parentFile?.mkdirs()
             versionFile(filesDir).writeText(
                 JSONObject()
@@ -115,15 +124,43 @@ object GithubUpdate {
                     .toString(2),
                 StandardCharsets.UTF_8,
             )
-            onProgress(1.0, "Installation Android…")
+
+            // 2) APK optionnel pour le shell Flutter (peut échouer si autre signature).
+            onProgress(0.92, "Téléchargement de l’APK ${display(remote)}…")
+            val apk = apkFile(filesDir)
+            apk.parentFile?.mkdirs()
+            if (apk.exists()) apk.delete()
+            var apkOk = false
+            try {
+                downloadToFile(fetchApkUrl(remote), apk) { pct, label ->
+                    onProgress(0.92 + 0.07 * pct, label)
+                }
+                apkOk = apk.exists() && apk.length() > 1000
+            } catch (_: Exception) {
+                apkOk = false
+            }
+
+            if (apkOk) {
+                onProgress(1.0, "Installation Android…")
+                return mapOf(
+                    "ok" to true,
+                    "restart" to true,
+                    "install" to true,
+                    "available" to false,
+                    "apkPath" to apk.absolutePath,
+                    "remote" to display(remote),
+                    "message" to "Fichiers appliqués. Si l’APK est refusé (conflit), désinstalle puis réinstalle ${display(remote)}.",
+                )
+            }
+
+            onProgress(1.0, "Mise à jour appliquée (${display(remote)}).")
             mapOf(
                 "ok" to true,
-                "restart" to false,
-                "install" to true,
+                "restart" to true,
+                "install" to false,
                 "available" to false,
-                "apkPath" to apk.absolutePath,
                 "remote" to display(remote),
-                "message" to "Confirme l’installation ${display(remote)} sur l’écran Android.",
+                "message" to "Mise à jour appliquée (${display(remote)}). Redémarrage…",
             )
         } catch (e: Exception) {
             mapOf(
