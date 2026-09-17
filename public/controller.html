@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Contrôleur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=25">
+<link rel="stylesheet" href="/style.css?v=26">
 </head>
 <body>
 <div class="wrap">
@@ -16,8 +16,11 @@
 
   <div class="card">
     <div class="live-head">
-      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span> <span id="recvBattery" class="battery-badge" hidden></span></h3>
-      <button id="facingBtn" class="chip-btn" type="button" hidden>Arrière</button>
+      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+      <div class="live-chips">
+        <span id="recvBattery" class="battery-badge off" title="Batterie du Récepteur">—%</span>
+        <button id="facingBtn" class="chip-btn" type="button" hidden>Arrière</button>
+      </div>
     </div>
     <select id="cameraSelect" style="display:none;"></select>
     <div class="live-wrap">
@@ -130,6 +133,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=16"></script>
+<script src="/controller.js?v=17"></script>
 </body>
 </html>
