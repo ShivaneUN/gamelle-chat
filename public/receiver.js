@@ -24,8 +24,6 @@ function commitPairCode(next) {
     url.searchParams.set('code', codeVal);
     history.replaceState(null, '', url.pathname + url.search);
   } catch (e) {}
-  const el = document.getElementById('pairCode');
-  if (el) el.textContent = codeVal;
   return codeVal;
 }
 
@@ -60,41 +58,19 @@ function controllerUrl(origin) {
 }
 
 function paintControllerLink(url) {
-  const a = document.getElementById('controllerLink');
-  const btn = document.getElementById('copyControllerLink');
-  const qrBox = document.getElementById('controllerQr');
-  if (!a || !url) return;
-  a.href = url;
-  a.textContent = url;
-  if (qrBox) qrBox.innerHTML = '';
-  if (btn) {
-    btn.onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(url);
-        btn.textContent = 'Copié ✅';
-        setTimeout(() => { btn.textContent = 'Copier le lien'; }, 1600);
-      } catch (e) {
-        prompt('Copie cette adresse :', url);
-      }
-    };
-  }
+  // Lien Contrôleur exposé via la barre Flutter (QR / Lien Contrôleur).
+  window.__GAMELLE_CONTROLLER_URL__ = url || '';
 }
 
 function applyRemoteOrigin(origin) {
   if (!origin) return false;
   if (typeof isQuickTunnelOrigin === 'function' && !isQuickTunnelOrigin(origin)) return false;
-  paintControllerLink(String(origin).replace(/\/$/, ''));
+  paintControllerLink(controllerUrl(String(origin).replace(/\/$/, '')));
   return true;
 }
 
 function showWaitingCloudLink() {
-  const a = document.getElementById('controllerLink');
-  const qrBox = document.getElementById('controllerQr');
-  if (a) {
-    a.removeAttribute('href');
-    a.textContent = 'En attente du lien cloud…';
-  }
-  if (qrBox) qrBox.innerHTML = '';
+  paintControllerLink('');
 }
 
 showWaitingCloudLink();
