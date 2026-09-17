@@ -1,9 +1,30 @@
 function readControllerCode() {
   const params = new URLSearchParams(location.search);
   let next = (params.get('code') || '').trim();
-  if (next.length >= 4) return next;
+  if (next.length >= 4) {
+    try { sessionStorage.setItem('gamellePairCode', next); } catch (e) {}
+    try { localStorage.setItem('gamellePairCode', next); } catch (e) {}
+    try {
+      const url = new URL(location.href);
+      url.searchParams.delete('code');
+      history.replaceState(null, '', '/controller.html');
+    } catch (e) {}
+    return next;
+  }
   const m = String(location.pathname || '').match(/\/c\/([^/]+)\/?$/);
-  if (m && m[1]) return decodeURIComponent(m[1]).trim();
+  if (m && m[1]) {
+    next = decodeURIComponent(m[1]).trim();
+    if (next.length >= 4) {
+      try { sessionStorage.setItem('gamellePairCode', next); } catch (e) {}
+      try { localStorage.setItem('gamellePairCode', next); } catch (e) {}
+      location.replace('/controller.html');
+      throw new Error('code-redirect');
+    }
+  }
+  try {
+    const saved = sessionStorage.getItem('gamellePairCode') || localStorage.getItem('gamellePairCode');
+    if (saved && String(saved).trim().length >= 4) return String(saved).trim();
+  } catch (e) {}
   return '';
 }
 const code = readControllerCode();
@@ -18,7 +39,9 @@ if (!code) {
   fetch('/api/active-code').then((r) => r.json()).then((j) => {
     const c = String((j && j.code) || '').trim();
     if (c.length >= 4) {
-      location.replace('/controller.html?code=' + encodeURIComponent(c));
+      try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
+      try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
+      location.replace('/controller.html');
       return;
     }
     setTimeout(() => location.reload(), 800);
@@ -37,9 +60,9 @@ socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
 socket.on('peers', ({ receiver, controllers }) => {
   if (receiver) {
     const extra = controllers > 1 ? ` · ${controllers} contrôleurs` : '';
-    setStatus(true, 'Récepteur connecté' + extra);
+    setStatus(true, 'En ligne' + extra);
   } else {
-    setStatus(false, 'En attente du récepteur...');
+    setStatus(false, 'Hors ligne');
     renderReceiverBattery({ offline: true });
   }
 });
@@ -120,7 +143,7 @@ function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
 }
-setStatus(false, 'En attente du récepteur...');
+setStatus(false, 'Hors ligne');
 
 function setCamDot(on) {
   const dot = document.getElementById('camDot');
@@ -242,6 +265,32 @@ document.getElementById('alarmSoundBtn').onclick = () => {
 unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
+
+let recvScreenOn = true;
+function renderScreenBtn() {
+  const btn = document.getElementById('screenBtn');
+  if (!btn) return;
+  btn.textContent = 'Écran';
+  btn.className = recvScreenOn ? 'toggle-on' : 'toggle-off';
+}
+const screenBtn = document.getElementById('screenBtn');
+if (screenBtn) {
+  screenBtn.onclick = () => {
+    recvScreenOn = !recvScreenOn;
+    socket.emit(recvScreenOn ? 'screen-on' : 'screen-off');
+    renderScreenBtn();
+  };
+}
+renderScreenBtn();
+socket.on('screen-on', () => {
+  recvScreenOn = true;
+  renderScreenBtn();
+});
+socket.on('screen-off', () => {
+  recvScreenOn = false;
+  renderScreenBtn();
+});
+
 document.addEventListener('pointerdown', unlockSoundEngine);
 document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
 document.addEventListener('click', unlockSoundEngine);

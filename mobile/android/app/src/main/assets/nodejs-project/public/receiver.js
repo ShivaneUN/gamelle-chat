@@ -21,8 +21,10 @@ function commitPairCode(next) {
   try { localStorage.setItem(PAIR_KEY, codeVal); } catch (e) {}
   try {
     const url = new URL(location.href);
-    url.searchParams.set('code', codeVal);
-    history.replaceState(null, '', url.pathname + url.search);
+    if (url.searchParams.has('code')) {
+      url.searchParams.delete('code');
+      history.replaceState(null, '', url.pathname);
+    }
   } catch (e) {}
   return codeVal;
 }
@@ -50,35 +52,50 @@ const statusEl = document.getElementById('status');
 const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
-function controllerUrl(origin) {
-  return String(origin || '').replace(/\/$/, '') + '/c/' + encodeURIComponent(code);
-}
-
-function paintControllerLink(url) {
-  // Lien Contrôleur exposé via la barre Flutter (QR / Lien Contrôleur).
-  window.__GAMELLE_CONTROLLER_URL__ = url || '';
+function paintControllerLink(origin) {
+  const url = String(origin || '').replace(/\/$/, '');
+  window.__GAMELLE_CONTROLLER_URL__ = url;
+  const urlEl = document.getElementById('ctrlLinkUrl');
+  const img = document.getElementById('ctrlQrImg');
+  const box = document.getElementById('ctrlQrBox');
+  if (urlEl) urlEl.textContent = url || 'Lien indisponible';
+  if (img && url && typeof makeQrDataUrl === 'function') {
+    try {
+      img.src = makeQrDataUrl(url);
+      if (box) box.hidden = false;
+    } catch (e) {
+      if (box) box.hidden = true;
+    }
+  } else if (box && !url) {
+    box.hidden = true;
+  }
 }
 
 function applyRemoteOrigin(origin) {
   if (!origin) return false;
-  if (typeof isQuickTunnelOrigin === 'function' && !isQuickTunnelOrigin(origin)) return false;
-  paintControllerLink(controllerUrl(String(origin).replace(/\/$/, '')));
+  paintControllerLink(String(origin).replace(/\/$/, ''));
   return true;
 }
 
-function showWaitingCloudLink() {
-  paintControllerLink('');
+function refreshControllerLink() {
+  const origin = window.__GAMELLE_PUBLIC_URL__ || location.origin;
+  applyRemoteOrigin(origin);
 }
 
-showWaitingCloudLink();
+paintControllerLink('');
 
 (async function waitPublicControllerUrl() {
   for (;;) {
-    if (applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__)) return;
+    if (window.__GAMELLE_PUBLIC_URL__) applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
     try {
       const info = await fetch('/api/info').then((r) => r.json());
-      if (info.publicUrl && applyRemoteOrigin(info.publicUrl)) return;
+      if (info && info.publicUrl) {
+        window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
+        applyRemoteOrigin(info.publicUrl);
+        return;
+      }
     } catch (e) {}
+    if (code) applyRemoteOrigin(location.origin);
     await new Promise((r) => setTimeout(r, 1500));
   }
 })();
@@ -96,14 +113,15 @@ const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainCont
 socket.on('connect', () => {
   resolvePairCode().then((c) => {
     socket.emit('join', { code: c, role: 'receiver' });
+    refreshControllerLink();
     startBatteryWatch();
   });
 });
 socket.on('peers', ({ controllers }) => {
   if (controllers > 0) {
-    setStatus(true, controllers === 1 ? '1 contrôleur connecté' : `${controllers} contrôleurs connectés`);
+    setStatus(true, controllers === 1 ? 'En ligne' : `En ligne · ${controllers} contrôleurs`);
   } else {
-    setStatus(false, 'En attente d\'un contrôleur');
+    setStatus(false, 'Hors ligne');
   }
 });
 socket.on('room-state', (state) => {
@@ -117,7 +135,7 @@ function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
 }
-setStatus(false, 'En attente du contrôleur...');
+setStatus(false, 'Hors ligne');
 
 // --- Bibliothèque de messages personnalisés ---
 const msgLibrary = createMessageLibrary({
@@ -176,6 +194,37 @@ document.getElementById('openSchedBtn').onclick = () => {
 document.querySelectorAll('[data-close]').forEach((el) => {
   el.onclick = () => closeModal(el.getAttribute('data-close'));
 });
+function openControllerLinkModal() {
+  refreshControllerLink();
+  openModal('ctrlLinkModal');
+}
+const qrBtn = document.getElementById('qrBtn');
+const ctrlLinkBtn = document.getElementById('ctrlLinkBtn');
+if (qrBtn) qrBtn.onclick = openControllerLinkModal;
+if (ctrlLinkBtn) ctrlLinkBtn.onclick = openControllerLinkModal;
+const ctrlLinkCopy = document.getElementById('ctrlLinkCopy');
+if (ctrlLinkCopy) {
+  ctrlLinkCopy.onclick = async () => {
+    const url = window.__GAMELLE_CONTROLLER_URL__ || '';
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      ctrlLinkCopy.textContent = 'Copié';
+      setTimeout(() => { ctrlLinkCopy.textContent = 'Copier le lien'; }, 1500);
+    } catch (e) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        ctrlLinkCopy.textContent = 'Copié';
+        setTimeout(() => { ctrlLinkCopy.textContent = 'Copier le lien'; }, 1500);
+      } catch (err) {}
+    }
+  };
+}
 
 const unlockMicBtn = document.getElementById('unlockMicBtn');
 
@@ -278,7 +327,7 @@ function renderAlarmSoundBtn() {
 function renderCamBtn() {
   if (!camBtn) return;
   camBtn.textContent = 'Caméra';
-  camBtn.className = camOn ? 'toggle-on' : 'toggle-off';
+  camBtn.className = camOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off';
 }
 
 const unlockSoundBtn = document.getElementById('unlockSoundBtn');
@@ -319,21 +368,6 @@ function nativeHost(cmd) {
 }
 
 let screenOn = true;
-function renderScreenBtn() {
-  const btn = document.getElementById('screenBtn');
-  if (!btn) return;
-  btn.textContent = 'Écran';
-  btn.className = screenOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off';
-}
-const screenBtn = document.getElementById('screenBtn');
-if (screenBtn) {
-  screenBtn.onclick = () => {
-    screenOn = !screenOn;
-    nativeHost(screenOn ? 'on' : 'off');
-    renderScreenBtn();
-  };
-}
-renderScreenBtn();
 
 const bgBtn = document.getElementById('bgBtn');
 if (bgBtn) {
@@ -345,12 +379,10 @@ if (bgBtn) {
 socket.on('screen-on', () => {
   screenOn = true;
   nativeHost('on');
-  renderScreenBtn();
 });
 socket.on('screen-off', () => {
   screenOn = false;
   nativeHost('off');
-  renderScreenBtn();
 });
 
 let talkCapture = null;
@@ -413,9 +445,8 @@ async function enableCamera() {
       localVideo.onloadedmetadata = () => resolve();
       setTimeout(resolve, 2500);
     });
-    camBtn.textContent = 'Caméra';
-    camBtn.className = 'toggle-on';
     camOn = true;
+    renderCamBtn();
     setCamDot(true);
     if (localStream.getAudioTracks && localStream.getAudioTracks().length) {
       micOn = true;
@@ -476,9 +507,8 @@ function disableCamera() {
   localVideo.style.display = 'none';
   const camHint = document.getElementById('camHint');
   if (camHint) camHint.textContent = 'Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.';
-  camBtn.textContent = 'Caméra';
-  camBtn.className = 'toggle-off';
   camOn = false;
+  renderCamBtn();
   setCamDot(false);
   socket.emit('cam-status', { on: false });
   if (keepTalking) {

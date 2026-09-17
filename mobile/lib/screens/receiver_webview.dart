@@ -60,6 +60,9 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         _injectPublicUrl(msg.message);
         if (mounted) setState(() {});
       }
+      if (msg.tag == 'pairCode' || msg.tag == 'localUrl') {
+        if (mounted) setState(() {});
+      }
     });
     _createController();
   }
@@ -186,7 +189,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   }
 
   void _showScanQr() {
-    final url = NodeBridgeService.instance.publicUrl;
+    final url = NodeBridgeService.instance.controllerShareUrl;
     if (url == null) return;
     showDialog<void>(
       context: context,
@@ -202,7 +205,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
                 ScanQr(data: url),
                 const SizedBox(height: 10),
                 const Text(
-                  'Scanne avec l’iPhone',
+                  'Scanne avec ton appareil',
                   style: TextStyle(color: Color(0xFF444444), fontSize: 13),
                 ),
               ],
@@ -226,11 +229,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     try {
       await web.runJavaScript('''
         window.__GAMELLE_PUBLIC_URL__ = '$escaped';
-        if (typeof paintControllerLink === 'function') {
-          paintControllerLink(window.__GAMELLE_PUBLIC_URL__);
-        }
-        if (typeof showPublicUrl === 'function') {
-          showPublicUrl(window.__GAMELLE_PUBLIC_URL__);
+        if (typeof refreshControllerLink === 'function') {
+          refreshControllerLink();
+        } else if (typeof applyRemoteOrigin === 'function') {
+          applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
         }
       ''');
     } catch (_) {}
@@ -245,24 +247,46 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     super.dispose();
   }
 
-  Future<void> _copyControllerLink() async {
-    final url = NodeBridgeService.instance.publicUrl;
-    final code = NodeBridgeService.instance.pairCode;
+  Future<void> _showControllerLink() async {
+    final url = NodeBridgeService.instance.controllerShareUrl;
     if (url == null) return;
-    final link = (code != null && code.length >= 4)
-        ? '${url.replaceAll(RegExp(r'/$'), '')}/c/$code'
-        : url;
-    await Clipboard.setData(ClipboardData(text: link));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Lien Contrôleur copié')),
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Lien du contrôleur'),
+          content: SelectableText(
+            url,
+            style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: url));
+                if (ctx.mounted) Navigator.of(ctx).pop();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Lien copié')),
+                );
+              },
+              child: const Text('Copier'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Fermer'),
+            ),
+          ],
+        );
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final web = _web;
-    final hasPublic = NodeBridgeService.instance.publicUrl != null;
+    final hasShare = NodeBridgeService.instance.controllerShareUrl != null;
     return PopScope(
       canPop: true,
       child: Scaffold(
@@ -272,24 +296,24 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Row(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   _TopBtn(
                     label: 'Retour',
                     onPressed: () => Navigator.of(context).pop(),
                   ),
-                  const SizedBox(width: 8),
                   _TopBtn(
                     label: 'QR',
-                    onPressed: hasPublic ? _showScanQr : null,
+                    onPressed: hasShare ? _showScanQr : null,
                   ),
-                  const SizedBox(width: 8),
                   _TopBtn(
-                    label: 'Lien Contrôleur',
+                    label: 'Lien',
                     accent: true,
-                    onPressed: hasPublic ? _copyControllerLink : null,
+                    onPressed: hasShare ? _showControllerLink : null,
                   ),
-                  const Spacer(),
                 ],
               ),
             ),

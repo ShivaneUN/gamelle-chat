@@ -2,22 +2,26 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Récepteur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=27">
+<link rel="stylesheet" href="/style.css?v=29">
 </head>
 <body>
 <div class="wrap">
   <div class="page-head">
     <h1>Récepteur</h1>
+    <div id="recvShareChips" class="live-chips">
+      <button id="qrBtn" class="chip-btn ghost" type="button">QR</button>
+      <button id="ctrlLinkBtn" class="chip-btn" type="button">Lien</button>
+    </div>
   </div>
-  <div id="status" class="status off">Connexion...</div>
+  <div id="status" class="status off">Hors ligne</div>
 
   <div class="card">
     <div class="live-head">
       <h3 class="card-title">Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
-      <button id="screenBtn" class="chip-btn toggle-on" type="button">Écran</button>
+      <button id="camBtn" class="chip-btn toggle-off" type="button">Caméra</button>
     </div>
     <div class="live-wrap">
       <video id="localVideo" autoplay playsinline muted></video>
@@ -25,9 +29,8 @@
     <p id="camHint" class="hint">Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.</p>
     <div class="stack-gap">
       <button id="unlockSoundBtn" class="big" type="button">Activer le son</button>
-      <div class="action-panel cols-3">
+      <div class="action-panel">
         <button id="unlockMicBtn" class="toggle-off" type="button">Micro</button>
-        <button id="camBtn" class="toggle-off" type="button">Caméra</button>
         <button id="alarmSoundBtn" class="toggle-on" type="button">Alarme</button>
       </div>
       <button id="bgBtn" class="ghost big" type="button">Arrière-plan</button>
@@ -112,6 +115,23 @@
   </div>
 </div>
 
+<div id="ctrlLinkModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="ctrlLinkModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="ctrlLinkTitle">
+    <div class="modal-head">
+      <h2 id="ctrlLinkTitle">Lien du contrôleur</h2>
+      <div class="modal-head-actions">
+        <button type="button" class="ghost modal-close" data-close="ctrlLinkModal">Fermer</button>
+      </div>
+    </div>
+    <div class="pair-qr-box" id="ctrlQrBox">
+      <img id="ctrlQrImg" class="pair-qr" alt="QR du contrôleur">
+    </div>
+    <p id="ctrlLinkUrl" class="pair-link">En attente du lien…</p>
+    <button id="ctrlLinkCopy" type="button">Copier le lien</button>
+  </div>
+</div>
+
 <div id="alarmBanner" class="alarm-banner" style="display:none;">
   <h2>C'est l'heure !</h2>
   <p id="alarmMsg"></p>
@@ -126,6 +146,6 @@
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/qr.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/receiver.js?v=25"></script>
+<script src="/receiver.js?v=27"></script>
 </body>
 </html>
