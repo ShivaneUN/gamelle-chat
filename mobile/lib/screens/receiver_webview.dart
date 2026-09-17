@@ -8,8 +8,8 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../services/node_bridge_service.dart';
 import '../widgets/scan_qr.dart';
 
-const _bg = Color(0xFF10131A);
-const _card = Color(0xFF1A1E29);
+const _bg = Color(0xFF0B0D12);
+const _card = Color(0xFF151821);
 const _accent = Color(0xFFFF7A45);
 
 class ReceiverWebView extends StatefulWidget {
@@ -245,28 +245,49 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     super.dispose();
   }
 
+  Future<void> _copyControllerLink() async {
+    final url = NodeBridgeService.instance.publicUrl;
+    final code = NodeBridgeService.instance.pairCode;
+    if (url == null) return;
+    final link = (code != null && code.length >= 4)
+        ? '${url.replaceAll(RegExp(r'/$'), '')}/c/$code'
+        : url;
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Lien Contrôleur copié')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final web = _web;
+    final hasPublic = NodeBridgeService.instance.publicUrl != null;
     return PopScope(
       canPop: true,
       child: Scaffold(
+      backgroundColor: _bg,
       body: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Row(
                 children: [
-                  TextButton(
+                  _TopBtn(
+                    label: 'Retour',
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Retour'),
                   ),
-                  TextButton(
-                    onPressed: NodeBridgeService.instance.publicUrl == null
-                        ? null
-                        : () => _showScanQr(),
-                    child: const Text('QR'),
+                  const SizedBox(width: 8),
+                  _TopBtn(
+                    label: 'QR',
+                    onPressed: hasPublic ? _showScanQr : null,
+                  ),
+                  const SizedBox(width: 8),
+                  _TopBtn(
+                    label: 'Lien Contrôleur',
+                    accent: true,
+                    onPressed: hasPublic ? _copyControllerLink : null,
                   ),
                   const Spacer(),
                 ],
@@ -274,7 +295,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             ),
             if (_statusHint.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
                   _statusHint,
                   textAlign: TextAlign.center,
@@ -309,6 +330,45 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           ],
         ),
       ),
+      ),
+    );
+  }
+}
+
+class _TopBtn extends StatelessWidget {
+  const _TopBtn({
+    required this.label,
+    this.onPressed,
+    this.accent = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return Material(
+      color: accent ? _accent : const Color(0xFF1C2030),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Opacity(
+          opacity: enabled ? 1 : 0.45,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: accent ? const Color(0xFF111111) : Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
