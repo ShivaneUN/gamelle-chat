@@ -5,44 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Contrôleur - Gamelle Chat</title>
-<link rel="stylesheet" href="/style.css?v=24">
+<link rel="stylesheet" href="/style.css?v=25">
 </head>
 <body>
 <div class="wrap">
   <div class="page-head">
-    <h1>📱 Contrôleur</h1>
+    <h1>Contrôleur</h1>
   </div>
   <div id="status" class="status off">Connexion...</div>
 
   <div class="card">
-    <h3 class="card-title">🎥 Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span> <span id="recvBattery" class="battery-badge" hidden>🔋 …</span></h3>
-    <select id="cameraSelect" style="display:none; margin-bottom:8px;"></select>
+    <div class="live-head">
+      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span> <span id="recvBattery" class="battery-badge" hidden></span></h3>
+      <button id="facingBtn" class="chip-btn" type="button" hidden>Arrière</button>
+    </div>
+    <select id="cameraSelect" style="display:none;"></select>
     <div class="live-wrap">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
     </div>
     <p id="liveHint" class="hint">En attente de la caméra du récepteur…</p>
-    <div class="row" style="margin-top:8px;">
-      <button id="photoBtn">📸 Photo</button>
-      <button id="videoBtn">⏺️ Vidéo (5s)</button>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <button id="screenOnBtn" type="button">💡 Allumer l’écran</button>
-      <button id="screenOffBtn" type="button">🌑 Éteindre l’écran</button>
-    </div>
-    <div class="action-panel cols-3" style="margin-top:8px;">
-      <button id="unlockMicBtn" class="toggle-off" type="button">🎙️ Micro</button>
-      <button id="talkSoundBtn" class="toggle-on" type="button">✅ Voix</button>
-      <button id="alarmSoundBtn" class="toggle-off" type="button">🔇 Alarme</button>
+    <div class="stack-gap">
+      <button id="talkBtn" class="big" type="button">Parler</button>
+      <div class="action-panel cols-3">
+        <button id="unlockMicBtn" class="toggle-off" type="button">Micro</button>
+        <button id="talkSoundBtn" class="toggle-on" type="button">Son</button>
+        <button id="alarmSoundBtn" class="toggle-off" type="button">Alarme</button>
+      </div>
+      <div class="action-panel">
+        <button id="photoBtn" class="ghost" type="button">Photo</button>
+        <button id="videoBtn" class="ghost" type="button">Vidéo (5s)</button>
+      </div>
     </div>
   </div>
 
   <div class="card panel-card">
     <div class="action-panel">
-      <button id="openAlbumBtn" class="ghost" type="button">🖼️ Album</button>
-      <button id="openLibraryBtn" class="ghost" type="button">💬 Bibliothèque</button>
-      <button id="openAlarmBtn" class="ghost" type="button">🔔 Alarme</button>
-      <button id="openSchedBtn" class="ghost" type="button">⏰ Horaires</button>
+      <button id="openAlbumBtn" class="ghost" type="button">Album</button>
+      <button id="openLibraryBtn" class="ghost" type="button">Bibliothèque</button>
+      <button id="openAlarmBtn" class="ghost" type="button">Alarme</button>
+      <button id="openSchedBtn" class="ghost" type="button">Horaires</button>
     </div>
   </div>
 </div>
@@ -51,7 +53,7 @@
   <div class="modal-backdrop" data-close="albumModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="albumTitle">
     <div class="modal-head">
-      <h2 id="albumTitle">🖼️ Album</h2>
+      <h2 id="albumTitle">Album</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="albumModal">Fermer</button>
@@ -66,7 +68,7 @@
   <div class="modal-backdrop" data-close="libraryModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="libraryTitle">
     <div class="modal-head">
-      <h2 id="libraryTitle">💬 Bibliothèque</h2>
+      <h2 id="libraryTitle">Bibliothèque</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="libraryModal">Fermer</button>
@@ -82,7 +84,7 @@
   <div class="modal-backdrop" data-close="alarmModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="alarmTitle">
     <div class="modal-head">
-      <h2 id="alarmTitle">🔔 Alarme</h2>
+      <h2 id="alarmTitle">Alarme</h2>
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
     <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
@@ -93,8 +95,8 @@
     <div class="row alarm-actions">
       <input id="manualAlarmDuration" type="number" min="5" max="120" value="30" style="width:72px;" title="Durée en secondes">
       <span class="hint" style="margin:0;">sec</span>
-      <button id="startAlarmBtn" type="button">🔔 Déclencher</button>
-      <button id="stopAlarmManualBtn" class="danger" type="button" disabled>⏹ Arrêter</button>
+      <button id="startAlarmBtn" type="button">Déclencher</button>
+      <button id="stopAlarmManualBtn" class="danger" type="button" disabled>Arrêter</button>
     </div>
   </div>
 </div>
@@ -103,7 +105,7 @@
   <div class="modal-backdrop" data-close="schedModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="schedTitle">
     <div class="modal-head">
-      <h2 id="schedTitle">⏰ Horaires</h2>
+      <h2 id="schedTitle">Horaires</h2>
       <div class="modal-head-actions">
         <button type="button" class="ghost modal-expand" data-expand>Agrandir</button>
         <button type="button" class="ghost modal-close" data-close="schedModal">Fermer</button>
@@ -116,7 +118,7 @@
 </div>
 
 <div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2>🔔 Alarme en cours</h2>
+  <h2>Alarme en cours</h2>
   <p id="alarmMsg"></p>
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
@@ -128,6 +130,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=15"></script>
+<script src="/controller.js?v=16"></script>
 </body>
 </html>

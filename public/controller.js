@@ -91,6 +91,8 @@ socket.on('cam-status', ({ on }) => {
     clearLiveView();
     if (pcCam) { pcCam.close(); pcCam = null; }
     cameraSelect.style.display = 'none';
+    cameraList = [];
+    renderFacingBtn();
   } else {
     liveHint.textContent = 'Caméra allumée, réception de l\'image…';
     startLivePoll();
@@ -137,14 +139,14 @@ function renderReceiverBattery(payload) {
   if (payload.unsupported || payload.level == null) {
     el.hidden = false;
     el.className = 'battery-badge off';
-    el.textContent = '🔋 ?';
+    el.textContent = '?';
     el.title = 'Batterie du Récepteur indisponible';
     return;
   }
   const pct = payload.level;
   el.hidden = false;
   el.className = 'battery-badge' + (pct <= 20 ? ' low' : pct <= 50 ? ' mid' : '');
-  el.textContent = '🔋 ' + pct + '%' + (payload.charging ? ' ⚡' : '');
+  el.textContent = pct + '%' + (payload.charging ? ' ⚡' : '');
   el.title = payload.charging ? 'Récepteur en charge' : 'Batterie du Récepteur';
 }
 
@@ -157,17 +159,26 @@ let alarmSoundOn = false;
 
 function renderMicStatus(state) {
   if (talking) {
-    unlockMicBtn.textContent = '✅ Micro';
+    unlockMicBtn.textContent = 'Micro';
     unlockMicBtn.className = 'toggle-on';
+    renderTalkBtn();
     return;
   }
   if (state === 'denied') {
-    unlockMicBtn.textContent = '⛔ Micro';
+    unlockMicBtn.textContent = 'Micro';
     unlockMicBtn.className = 'toggle-off';
   } else {
-    unlockMicBtn.textContent = '🎙️ Micro';
+    unlockMicBtn.textContent = 'Micro';
     unlockMicBtn.className = 'toggle-off';
   }
+  renderTalkBtn();
+}
+
+function renderTalkBtn() {
+  const btn = document.getElementById('talkBtn');
+  if (!btn) return;
+  btn.textContent = 'Parler';
+  btn.className = talking ? 'big toggle-on' : 'big';
 }
 
 async function refreshMicStatus() {
@@ -202,25 +213,15 @@ function unlockSoundEngine() {
 function renderTalkSoundBtn() {
   const btn = document.getElementById('talkSoundBtn');
   if (!btn) return;
-  if (talkSoundOn) {
-    btn.textContent = '✅ Voix';
-    btn.className = 'toggle-on';
-  } else {
-    btn.textContent = '🔇 Voix';
-    btn.className = 'toggle-off';
-  }
+  btn.textContent = 'Son';
+  btn.className = talkSoundOn ? 'toggle-on' : 'toggle-off';
 }
 
 function renderAlarmSoundBtn() {
   const btn = document.getElementById('alarmSoundBtn');
   if (!btn) return;
-  if (alarmSoundOn) {
-    btn.textContent = '✅ Alarme';
-    btn.className = 'toggle-on';
-  } else {
-    btn.textContent = '🔇 Alarme';
-    btn.className = 'toggle-off';
-  }
+  btn.textContent = 'Alarme';
+  btn.className = alarmSoundOn ? 'toggle-on' : 'toggle-off';
 }
 
 document.getElementById('talkSoundBtn').onclick = () => {
@@ -243,6 +244,9 @@ document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
 document.addEventListener('click', unlockSoundEngine);
 
 unlockMicBtn.onclick = () => { talking ? stopTalk() : startTalk(); };
+const talkBtn = document.getElementById('talkBtn');
+if (talkBtn) talkBtn.onclick = () => { talking ? stopTalk() : startTalk(); };
+renderTalkBtn();
 
 // --- Bibliothèque de messages personnalisés ---
 const msgLibrary = createMessageLibrary({
@@ -303,12 +307,68 @@ document.querySelectorAll('[data-close]').forEach((el) => {
   el.onclick = () => closeModal(el.getAttribute('data-close'));
 });
 
-// --- Choix de la caméra du récepteur ---
+// --- Choix de la caméra du récepteur (Avant / Arrière) ---
+let cameraList = [];
+let currentCamIndex = 0;
+const facingBtn = document.getElementById('facingBtn');
+
+function classifyCamLabel(label) {
+  const l = String(label || '').toLowerCase();
+  if (/front|user|avant|face/.test(l)) return 'Avant';
+  if (/back|rear|environment|arrière|arriere|world/.test(l)) return 'Arrière';
+  return null;
+}
+
+function currentFacingLabel() {
+  const cam = cameraList[currentCamIndex];
+  if (!cam) return 'Arrière';
+  return classifyCamLabel(cam.label) || (currentCamIndex === 0 ? 'Arrière' : 'Avant');
+}
+
+function renderFacingBtn() {
+  if (!facingBtn) return;
+  if (!cameraList.length) {
+    facingBtn.hidden = true;
+    return;
+  }
+  facingBtn.hidden = cameraList.length < 2;
+  facingBtn.textContent = currentFacingLabel();
+}
+
 socket.on('camera-list', (cams) => {
-  cameraSelect.innerHTML = cams.map((c) => `<option value="${c.deviceId}">${c.label}</option>`).join('');
-  cameraSelect.style.display = cams.length > 1 ? 'block' : 'none';
+  cameraList = Array.isArray(cams) ? cams : [];
+  cameraSelect.innerHTML = cameraList
+    .map((c) => `<option value="${c.deviceId}">${c.label}</option>`)
+    .join('');
+  if (!cameraList.length) {
+    currentCamIndex = 0;
+    renderFacingBtn();
+    return;
+  }
+  const backIdx = cameraList.findIndex((c) => classifyCamLabel(c.label) === 'Arrière');
+  currentCamIndex = backIdx >= 0 ? backIdx : 0;
+  cameraSelect.value = cameraList[currentCamIndex].deviceId;
+  renderFacingBtn();
 });
-cameraSelect.onchange = () => socket.emit('switch-camera', { deviceId: cameraSelect.value });
+
+if (facingBtn) {
+  facingBtn.onclick = () => {
+    if (cameraList.length < 2) return;
+    currentCamIndex = (currentCamIndex + 1) % cameraList.length;
+    const cam = cameraList[currentCamIndex];
+    if (!cam) return;
+    cameraSelect.value = cam.deviceId;
+    socket.emit('switch-camera', { deviceId: cam.deviceId });
+    renderFacingBtn();
+  };
+}
+cameraSelect.onchange = () => {
+  const id = cameraSelect.value;
+  const idx = cameraList.findIndex((c) => c.deviceId === id);
+  if (idx >= 0) currentCamIndex = idx;
+  socket.emit('switch-camera', { deviceId: id });
+  renderFacingBtn();
+};
 
 // --- WebRTC : réception de la caméra du récepteur ---
 function ensureCamPeer() {
@@ -339,8 +399,6 @@ socket.on('signal', async (payload) => {
 
 // --- Capture photo / vidéo ---
 document.getElementById('photoBtn').onclick = () => socket.emit('take-photo');
-document.getElementById('screenOnBtn').onclick = () => socket.emit('screen-on');
-document.getElementById('screenOffBtn').onclick = () => socket.emit('screen-off');
 document.getElementById('videoBtn').onclick = () => {
   socket.emit('start-video');
   setTimeout(() => socket.emit('stop-video'), 5000);
