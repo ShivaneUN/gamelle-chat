@@ -91,6 +91,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         'GamelleHost',
         onMessageReceived: (JavaScriptMessage message) {
           final m = message.message.trim();
+          if (m == 'home') {
+            if (context.mounted) Navigator.of(context).maybePop();
+            return;
+          }
           if (m == 'background') {
             unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
             unawaited(_life.invokeMethod<void>('background'));
@@ -189,7 +193,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   }
 
   void _showScanQr() {
-    final url = NodeBridgeService.instance.controllerShareUrl;
+    final url = NodeBridgeService.instance.scannableQrUrl;
     if (url == null) return;
     showDialog<void>(
       context: context,
@@ -198,12 +202,12 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           data: ThemeData.light(),
           child: AlertDialog(
             backgroundColor: const Color(0xFFFFFFFF),
-            contentPadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+            contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ScanQr(data: url),
-                const SizedBox(height: 10),
+                ScanQr(data: url, size: 280),
+                const SizedBox(height: 12),
                 const Text(
                   'Scanne avec ton appareil',
                   style: TextStyle(color: Color(0xFF444444), fontSize: 13),
@@ -247,109 +251,64 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     super.dispose();
   }
 
-  Future<void> _showControllerLink() async {
-    final url = NodeBridgeService.instance.controllerShareUrl;
-    if (url == null) return;
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: _card,
-          title: const Text('Lien du contrôleur'),
-          content: SelectableText(
-            url,
-            style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: url));
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Lien copié')),
-                );
-              },
-              child: const Text('Copier'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Fermer'),
-            ),
-          ],
-        );
-      },
-    );
+  void _goHome() {
+    Navigator.of(context).maybePop();
   }
 
   @override
   Widget build(BuildContext context) {
     final web = _web;
-    final hasShare = NodeBridgeService.instance.controllerShareUrl != null;
+    final hasQr = NodeBridgeService.instance.scannableQrUrl != null;
     return PopScope(
       canPop: true,
       child: Scaffold(
       backgroundColor: _bg,
       body: SafeArea(
-        child: Column(
+        child: Row(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
+            _ReceiverSideBar(
+              onHome: _goHome,
+              onQr: hasQr ? _showScanQr : null,
+            ),
+            Expanded(
+              child: Column(
                 children: [
-                  _TopBtn(
-                    label: 'Retour',
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  _TopBtn(
-                    label: 'QR',
-                    onPressed: hasShare ? _showScanQr : null,
-                  ),
-                  _TopBtn(
-                    label: 'Lien',
-                    accent: true,
-                    onPressed: hasShare ? _showControllerLink : null,
+                  if (_statusHint.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: Text(
+                        _statusHint,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+                      ),
+                    ),
+                  if (_progress > 0 && _progress < 1)
+                    LinearProgressIndicator(
+                      value: _progress,
+                      color: _accent,
+                      backgroundColor: _card,
+                      minHeight: 2,
+                    ),
+                  Expanded(
+                    child: _failed || web == null
+                        ? _ErrorPane(
+                            url: widget.url,
+                            onRetry: () {
+                              setState(() {
+                                _failed = false;
+                                _generation++;
+                                _createController();
+                              });
+                            },
+                            onChangeUrl: widget.onChangeUrl,
+                          )
+                        : WebViewWidget(
+                            key: ValueKey<int>(_generation),
+                            controller: web,
+                          ),
                   ),
                 ],
               ),
-            ),
-            if (_statusHint.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  _statusHint,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
-                ),
-              ),
-            if (_progress > 0 && _progress < 1)
-              LinearProgressIndicator(
-                value: _progress,
-                color: _accent,
-                backgroundColor: _card,
-                minHeight: 2,
-              ),
-            Expanded(
-              child: _failed || web == null
-                  ? _ErrorPane(
-                      url: widget.url,
-                      onRetry: () {
-                        setState(() {
-                          _failed = false;
-                          _generation++;
-                          _createController();
-                        });
-                      },
-                      onChangeUrl: widget.onChangeUrl,
-                    )
-                  : WebViewWidget(
-                      key: ValueKey<int>(_generation),
-                      controller: web,
-                    ),
             ),
           ],
         ),
@@ -359,13 +318,50 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   }
 }
 
-class _TopBtn extends StatelessWidget {
-  const _TopBtn({
+class _ReceiverSideBar extends StatelessWidget {
+  const _ReceiverSideBar({
+    required this.onHome,
+    this.onQr,
+  });
+
+  final VoidCallback onHome;
+  final VoidCallback? onQr;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 92,
+      color: _card,
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+      child: Column(
+        children: [
+          _SideBtn(
+            icon: Icons.home_rounded,
+            label: 'Accueil',
+            accent: true,
+            onPressed: onHome,
+          ),
+          const SizedBox(height: 10),
+          _SideBtn(
+            icon: Icons.qr_code_2_rounded,
+            label: 'QR',
+            onPressed: onQr,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SideBtn extends StatelessWidget {
+  const _SideBtn({
+    required this.icon,
     required this.label,
     this.onPressed,
     this.accent = false,
   });
 
+  final IconData icon;
   final String label;
   final VoidCallback? onPressed;
   final bool accent;
@@ -375,20 +371,34 @@ class _TopBtn extends StatelessWidget {
     final enabled = onPressed != null;
     return Material(
       color: accent ? _accent : const Color(0xFF1C2030),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: Opacity(
           opacity: enabled ? 1 : 0.45,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: accent ? const Color(0xFF111111) : Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
+          child: SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+              child: Column(
+                children: [
+                  Icon(
+                    icon,
+                    color: accent ? const Color(0xFF111111) : Colors.white,
+                    size: 26,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: accent ? const Color(0xFF111111) : Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

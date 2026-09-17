@@ -255,7 +255,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       }
                       return ListView(
-                        padding: const EdgeInsets.only(bottom: 96),
                         children: [
                           _pairingPanel(expand: false),
                           const SizedBox(height: 16),
@@ -301,8 +300,11 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       qr = GestureDetector(
         onTap: () => _copy(remote),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFFFF),
+            borderRadius: BorderRadius.circular(18),
+          ),
           child: ScanQr(data: remote, size: qrSize),
         ),
       );
@@ -433,13 +435,23 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    final children = <Widget>[
-      for (var i = 0; i < tiles.length; i++) ...[
-        if (i > 0) const SizedBox(height: 12),
-        tiles[i],
-      ],
-      const SizedBox(height: 28),
-    ];
+    final list = expand
+        ? Column(
+            children: [
+              for (var i = 0; i < tiles.length; i++) ...[
+                if (i > 0) const SizedBox(height: 12),
+                Expanded(child: tiles[i]),
+              ],
+            ],
+          )
+        : Column(
+            children: [
+              for (var i = 0; i < tiles.length; i++) ...[
+                if (i > 0) const SizedBox(height: 12),
+                tiles[i],
+              ],
+            ],
+          );
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -447,12 +459,7 @@ class _HomeScreenState extends State<HomeScreen> {
         color: _card,
         borderRadius: BorderRadius.circular(22),
       ),
-      child: expand
-          ? ListView(
-              padding: const EdgeInsets.only(bottom: 40),
-              children: children,
-            )
-          : Column(children: children),
+      child: list,
     );
   }
 }
@@ -505,48 +512,57 @@ class _ActionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final fg = Colors.white;
     final sub = highlighted ? Colors.white.withValues(alpha: 0.85) : _muted;
-    return Material(
-      color: highlighted ? _accent : _tile,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: extra == null ? MainAxisAlignment.center : MainAxisAlignment.start,
-            children: [
-              Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fill = constraints.hasBoundedHeight && constraints.maxHeight.isFinite;
+        return Material(
+          color: highlighted ? _accent : _tile,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+                mainAxisAlignment: extra == null ? MainAxisAlignment.center : MainAxisAlignment.start,
                 children: [
-                  Icon(icon, color: fg, size: 28),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(color: fg, fontSize: 17, fontWeight: FontWeight.w700),
+                  Row(
+                    children: [
+                      Icon(icon, color: fg, size: 28),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: TextStyle(color: fg, fontSize: 17, fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              subtitle,
+                              maxLines: extra == null ? 2 : 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: sub, fontSize: 13),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          maxLines: extra == null ? 2 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: sub, fontSize: 13),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
+                  if (extra != null)
+                    if (fill)
+                      Flexible(child: SingleChildScrollView(child: extra!))
+                    else
+                      extra!,
                 ],
               ),
-              ?extra,
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
