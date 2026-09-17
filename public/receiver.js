@@ -525,23 +525,76 @@ async function sendCameraList() {
 socket.on('switch-camera', async (payload) => {
   if (!camOn) return;
   const deviceId = payload && payload.deviceId;
-  const facingMode = payload && payload.facingMode;
-  const video = deviceId
-    ? { deviceId: { exact: deviceId } }
-    : { facingMode: { ideal: facingMode || 'environment' } };
+  const facingMode = (payload && payload.facingMode) || 'environment';
+  const oldStream = localStream;
+
+  // Libérer l'objectif actuel avant d'ouvrir l'autre (requis sur beaucoup d'Android).
+  if (oldStream) {
+    oldStream.getVideoTracks().forEach((t) => {
+      try { t.stop(); } catch (e) {}
+    });
+  }
+
+  const videoAttempts = [];
+  if (deviceId) {
+    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 } });
+    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 } });
+  }
+  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 } });
+  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 } });
+  videoAttempts.push({ width: { ideal: 640 } });
+
+  let newStream = null;
+  let lastErr = null;
+  for (const video of videoAttempts) {
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video,
+        audio: micOn ? MIC_AUDIO : false,
+      });
+      break;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (!newStream) {
+    console.warn('Changement de caméra impossible:', lastErr && (lastErr.name + ' ' + lastErr.message));
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 } },
+        audio: micOn ? MIC_AUDIO : false,
+      });
+      localVideo.srcObject = localStream;
+      if (pcCam) {
+        const vt = localStream.getVideoTracks()[0];
+        const videoSender = pcCam.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && vt) videoSender.replaceTrack(vt);
+      }
+      if (micOn) await startMicTalk(localStream, false);
+    } catch (e2) {
+      console.warn('Impossible de rétablir la caméra:', e2.message);
+    }
+    return;
+  }
+
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({ video, audio: micOn ? MIC_AUDIO : false });
     const newVideoTrack = newStream.getVideoTracks()[0];
     const newAudioTrack = newStream.getAudioTracks()[0];
     if (pcCam) {
       const videoSender = pcCam.getSenders().find((s) => s.track && s.track.kind === 'video');
-      if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack);
+      if (videoSender && newVideoTrack) await videoSender.replaceTrack(newVideoTrack);
       const audioSender = pcCam.getSenders().find((s) => s.track && s.track.kind === 'audio');
-      if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack);
+      if (audioSender && newAudioTrack) await audioSender.replaceTrack(newAudioTrack);
     }
-    if (localStream) localStream.getTracks().forEach((t) => t.stop());
+    if (oldStream) {
+      oldStream.getTracks().forEach((t) => {
+        try { t.stop(); } catch (e) {}
+      });
+    }
     localStream = newStream;
     localVideo.srcObject = localStream;
+    await localVideo.play().catch(() => {});
     if (micOn) await startMicTalk(localStream, false);
     sendCameraList();
   } catch (e) {
