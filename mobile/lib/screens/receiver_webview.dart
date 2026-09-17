@@ -95,8 +95,9 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             if (context.mounted) Navigator.of(context).maybePop();
             return;
           }
-          if (m == 'qr') {
-            _showScanQr();
+          if (m == 'qr' || m.startsWith('qr|')) {
+            final fromJs = m.startsWith('qr|') ? m.substring(3).trim() : '';
+            _showScanQr(fromJs.isEmpty ? null : fromJs);
             return;
           }
           if (m == 'background') {
@@ -212,10 +213,19 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     } catch (_) {}
   }
 
-  void _showScanQr() {
-    final url = NodeBridgeService.instance.scannableQrUrl;
+  void _showScanQr([String? preferredUrl]) {
+    final fromBridge = NodeBridgeService.instance.scannableQrUrl;
+    String? url = preferredUrl?.trim();
+    if (url != null && url.isNotEmpty) {
+      url = url.replaceAll(RegExp(r'/$'), '');
+      if (!url.contains('/controller.html')) {
+        url = '$url/controller.html';
+      }
+    } else {
+      url = fromBridge;
+    }
     if (!mounted) return;
-    if (url == null) {
+    if (url == null || url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Tunnel Cloudflare pas encore prêt…')),
       );
@@ -223,28 +233,34 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     }
     showDialog<void>(
       context: context,
+      barrierColor: const Color(0xEE000000),
       builder: (ctx) {
+        final side = (MediaQuery.sizeOf(ctx).shortestSide * 0.72).clamp(240.0, 340.0);
         return Theme(
           data: ThemeData.light(),
           child: AlertDialog(
             backgroundColor: const Color(0xFFFFFFFF),
-            contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            contentPadding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                const Text(
+                  'Connecter votre appareil',
+                  style: TextStyle(
+                    color: Color(0xFF222222),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFFFFF),
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  child: ScanQr(data: url, size: 280),
+                  child: ScanQr(data: url!, size: side),
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'Connecter votre appareil',
-                  style: TextStyle(color: Color(0xFF444444), fontSize: 13),
-                ),
-                const SizedBox(height: 8),
                 SelectableText(
                   url,
                   textAlign: TextAlign.center,
