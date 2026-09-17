@@ -76,6 +76,13 @@ socket.on('peers', ({ receiver, controllers }) => {
 });
 let livePollTimer = null;
 
+function setLivePlaceholder(show) {
+  const el = document.getElementById('livePlaceholder');
+  if (!el) return;
+  el.classList.toggle('on', !!show);
+  el.style.display = show ? 'block' : 'none';
+}
+
 function showRelayLive() {
   if (remoteVideo) {
     remoteVideo.classList.remove('on');
@@ -83,6 +90,20 @@ function showRelayLive() {
   }
   remoteRelay.classList.add('on');
   remoteRelay.style.display = 'block';
+  setLivePlaceholder(false);
+  liveHint.textContent = 'Vue live';
+}
+
+function showWebrtcLive() {
+  if (remoteRelay) {
+    remoteRelay.classList.remove('on');
+    remoteRelay.style.display = 'none';
+  }
+  if (remoteVideo) {
+    remoteVideo.classList.add('on');
+    remoteVideo.style.display = 'block';
+  }
+  setLivePlaceholder(false);
   liveHint.textContent = 'Vue live';
 }
 
@@ -144,6 +165,7 @@ function clearLiveView() {
   remoteRelay.removeAttribute('src');
   remoteRelay.classList.remove('on');
   remoteRelay.style.display = 'none';
+  setLivePlaceholder(true);
   liveHint.textContent = 'En attente de la caméra du récepteur…';
 }
 
