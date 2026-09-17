@@ -297,10 +297,10 @@
     return best;
   }
 
-  function makeQrDataUrl(text, scale) {
+  function makeQrDataUrl(text, scale, quietModules) {
     const mod = buildMatrix(String(text || ''));
-    const quiet = 4;
-    const s = scale || 8;
+    const quiet = Math.max(4, Number(quietModules) || 4);
+    const s = Math.max(4, Number(scale) || 8);
     const n = mod.length;
     const dim = (n + quiet * 2) * s;
     const canvas = document.createElement('canvas');
@@ -322,9 +322,9 @@
     img.alt = 'QR code';
     img.className = 'pair-qr';
     try {
-      img.src = makeQrDataUrl(text, 8);
+      img.src = makeQrDataUrl(text, 10, 6);
     } catch (e) {
-      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&ecc=M&margin=4&data='
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=320x320&ecc=M&margin=8&data='
         + encodeURIComponent(text);
     }
   }

@@ -61,26 +61,30 @@ const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
 function paintControllerLink(origin) {
-  const url = String(origin || '').replace(/\/$/, '');
-  const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(url) : false;
-  window.__GAMELLE_CONTROLLER_URL__ = scannable ? url : '';
+  const base = String(origin || '').replace(/\/$/, '');
+  const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(base) : false;
+  const share = scannable ? (base + '/controller.html') : '';
+  window.__GAMELLE_CONTROLLER_URL__ = share;
   const urlEl = document.getElementById('ctrlLinkUrl');
   const hint = document.getElementById('ctrlLinkHint');
   const img = document.getElementById('ctrlQrImg');
   const box = document.getElementById('ctrlQrBox');
   if (urlEl) {
-    urlEl.textContent = scannable ? url : '';
-    urlEl.hidden = !scannable;
+    urlEl.textContent = share;
+    urlEl.hidden = !share;
   }
-  if (!scannable) {
+  if (!scannable || !share) {
     if (box) box.hidden = true;
+    if (img) img.removeAttribute('src');
     if (hint) hint.textContent = 'En attente du tunnel Cloudflare…';
     return true;
   }
   if (hint) hint.textContent = 'Connecter votre appareil';
   if (img && typeof makeQrDataUrl === 'function') {
     try {
-      img.src = makeQrDataUrl(url, 10);
+      img.src = makeQrDataUrl(share, 12, 8);
+      img.width = 280;
+      img.height = 280;
       if (box) box.hidden = false;
     } catch (e) {
       if (box) box.hidden = true;
@@ -215,8 +219,21 @@ document.querySelectorAll('[data-close]').forEach((el) => {
   el.onclick = () => closeModal(el.getAttribute('data-close'));
 });
 function openControllerLinkModal() {
-  refreshControllerLink();
-  openModal('ctrlLinkModal');
+  (async () => {
+    try {
+      if (window.__GAMELLE_PUBLIC_URL__) {
+        applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
+      }
+      const info = await fetch('/api/info').then((r) => r.json());
+      if (info && info.publicUrl) {
+        window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
+        applyRemoteOrigin(info.publicUrl);
+      }
+    } catch (e) {
+      refreshControllerLink();
+    }
+    openModal('ctrlLinkModal');
+  })();
 }
 const qrBtn = document.getElementById('qrBtn');
 if (qrBtn) qrBtn.onclick = openControllerLinkModal;
