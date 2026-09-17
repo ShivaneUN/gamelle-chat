@@ -386,6 +386,7 @@ function getRoom(code) {
       controllerIds: new Set(),
       receiverId: null,
       camOn: false,
+      screenOn: true,
       cameras: [],
     };
   }
@@ -472,6 +473,7 @@ io.on('connection', (socket) => {
       if (room.camOn) socket.emit('cam-status', { on: true });
       if (room.cameras && room.cameras.length) socket.emit('camera-list', room.cameras);
       if (room.battery) socket.emit('battery-status', room.battery);
+      socket.emit(room.screenOn === false ? 'screen-off' : 'screen-on');
     }
   });
 
@@ -657,12 +659,18 @@ io.on('connection', (socket) => {
 
   socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
   socket.on('screen-on', () => {
+    if (!socket.data.code) return;
+    getRoom(socket.data.code).screenOn = true;
     notifyFlutter('screen', 'on');
     emitToRole(socket.data.code, 'receiver', 'screen-on');
+    emitToRole(socket.data.code, 'controller', 'screen-on');
   });
   socket.on('screen-off', () => {
+    if (!socket.data.code) return;
+    getRoom(socket.data.code).screenOn = false;
     notifyFlutter('screen', 'off');
     emitToRole(socket.data.code, 'receiver', 'screen-off');
+    emitToRole(socket.data.code, 'controller', 'screen-off');
   });
   socket.on('start-video', () => emitToRole(socket.data.code, 'receiver', 'start-video'));
   socket.on('stop-video', () => emitToRole(socket.data.code, 'receiver', 'stop-video'));
@@ -846,7 +854,7 @@ async function startPublicTunnel(origin) {
     tunnel.once('url', (url) => {
       publicUrl = url.replace(/\/$/, '');
       console.log(`Depuis n'importe où (4G / autre WiFi) : ${publicUrl}`);
-      console.log('Ouvre cette URL sur le Contrôleur, même code de jumelage.');
+      console.log('Scanne le QR ou ouvre cette URL sur le Contrôleur.');
       console.log('================================================\n');
     });
     tunnel.on('error', (err) => {

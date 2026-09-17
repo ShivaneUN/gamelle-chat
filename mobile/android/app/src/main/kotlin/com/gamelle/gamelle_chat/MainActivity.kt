@@ -1,8 +1,10 @@
 package com.gamelle.gamelle_chat
 
+import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.content.FileProvider
@@ -64,6 +66,33 @@ class MainActivity : FlutterActivity() {
     }
 
     private var screenForcedOff = false
+    private var userRequestedBackground = false
+
+    private fun canPostNotifications(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun startKeepAliveSafe(camera: Boolean = KeepAliveService.cameraWanted) {
+        if (!canPostNotifications()) return
+        KeepAliveService.start(this, camera)
+    }
+
+    private fun bringToFrontIfNeeded() {
+        if (userRequestedBackground || isFinishing) return
+        if (hasWindowFocus()) return
+        try {
+            val launch = Intent(this, MainActivity::class.java)
+            launch.addFlags(
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_NEW_TASK,
+            )
+            startActivity(launch)
+        } catch (_: Exception) {
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -193,7 +222,7 @@ class MainActivity : FlutterActivity() {
                         is Map<*, *> -> args["camera"] == true
                         else -> true
                     }
-                    KeepAliveService.start(this, cam)
+                    startKeepAliveSafe(cam)
                     keepWebViewsAlive()
                     result.success(true)
                 }
@@ -215,9 +244,14 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "background" -> {
-                    KeepAliveService.start(this, KeepAliveService.cameraWanted)
+                    userRequestedBackground = true
+                    startKeepAliveSafe(KeepAliveService.cameraWanted)
                     keepWebViewsAlive()
                     moveTaskToBack(true)
+                    result.success(true)
+                }
+                "bringToFront" -> {
+                    if (!userRequestedBackground) bringToFrontIfNeeded()
                     result.success(true)
                 }
                 "restartApp" -> {
@@ -259,7 +293,8 @@ class MainActivity : FlutterActivity() {
         if (intent?.getStringExtra("screen") == "on") applyScreen(true)
         if (intent?.getBooleanExtra("alarm", false) == true) applyScreen(true)
         if (intent?.getBooleanExtra("stayBackground", false) == true) {
-            KeepAliveService.start(this, true)
+            userRequestedBackground = true
+            startKeepAliveSafe(true)
             keepWebViewsAlive()
             moveTaskToBack(true)
         }
@@ -276,7 +311,8 @@ class MainActivity : FlutterActivity() {
         if (intent.getStringExtra("screen") == "off") applyScreen(false)
         if (intent.getBooleanExtra("alarm", false)) applyScreen(true)
         if (intent.getBooleanExtra("stayBackground", false) == true) {
-            KeepAliveService.start(this, true)
+            userRequestedBackground = true
+            startKeepAliveSafe(true)
             keepWebViewsAlive()
             moveTaskToBack(true)
         }
@@ -284,6 +320,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        userRequestedBackground = false
         keepWebViewsAlive()
         if (screenForcedOff) applyScreen(false)
     }
@@ -408,14 +445,14 @@ class MainActivity : FlutterActivity() {
 
     override fun onPause() {
         super.onPause()
-        KeepAliveService.start(this)
+        startKeepAliveSafe()
         keepWebViewsAlive()
         mainHandler.post { keepWebViewsAlive() }
     }
 
     override fun onStop() {
         super.onStop()
-        KeepAliveService.start(this)
+        startKeepAliveSafe()
         keepWebViewsAlive()
         mainHandler.post { keepWebViewsAlive() }
     }

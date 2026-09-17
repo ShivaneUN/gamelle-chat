@@ -32,9 +32,14 @@ class NodeBridgeService {
 
   String? get controllerPublicUrl {
     final base = publicUrl;
-    final code = pairCode;
-    if (base == null || code == null || code.length < 4) return null;
-    return '${base.replaceAll(RegExp(r'/$'), '')}/c/$code';
+    if (base == null || base.isEmpty) return null;
+    return base.replaceAll(RegExp(r'/$'), '');
+  }
+
+  String? get controllerShareUrl {
+    final base = publicUrl ?? localUrl;
+    if (base.isEmpty) return null;
+    return base.replaceAll(RegExp(r'/$'), '');
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();

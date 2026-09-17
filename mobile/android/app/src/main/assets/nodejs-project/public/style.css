@@ -14,7 +14,11 @@ body {
   background: #0b0d12;
   color: #eee;
 }
-.wrap { max-width: 480px; margin: 0 auto; padding: 20px; }
+.wrap {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 20px calc(140px + env(safe-area-inset-bottom, 0px));
+}
 .page-head {
   display: flex;
   align-items: center;
@@ -36,15 +40,6 @@ body {
   font-size: 15px;
 }
 .center { text-align: center; }
-.pair-code { text-align: center; margin: 12px 0 16px; }
-.pair-code-value {
-  font-size: 36px;
-  font-weight: 700;
-  letter-spacing: 0.28em;
-  margin: 6px 0 8px;
-  color: #ff7a45;
-  min-height: 44px;
-}
 .pair-qr-box {
   display: flex;
   justify-content: center;
@@ -76,7 +71,6 @@ body {
   font-size: 13px;
   line-height: 1.35;
 }
-.pair-code .ghost { margin-top: 0; }
 .muted { color: #888; margin-top: 4px; }
 .card {
   background: #151821;
@@ -213,9 +207,25 @@ button.big { display: block; width: 100%; padding: 16px; font-size: 16px; margin
 }
 .small { font-size: 12px; font-weight: 400; opacity: .8; }
 .hint { font-size: 12px; color: #777; margin-top: 6px; }
-.status { font-size: 13px; padding: 6px 10px; border-radius: 8px; display: inline-block; margin-bottom: 10px; }
-.status.on { background: #1f4d2e; color: #7be08a; }
-.status.off { background: #4d1f1f; color: #e08a8a; }
+.status {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 10px;
+  display: inline-block;
+  margin-bottom: 10px;
+  border: 1px solid transparent;
+}
+.status.on {
+  background: #063816;
+  color: #22c55e;
+  border-color: #22c55e;
+}
+.status.off {
+  background: #3f0a0a;
+  color: #ef4444;
+  border-color: #ef4444;
+}
 video { width: 100%; border-radius: 12px; background: #000; }
 .live-wrap { position: relative; background: #000; border-radius: 12px; min-height: 180px; overflow: hidden; }
 .live-wrap video, .live-wrap img { width: 100%; display: none; vertical-align: top; }
@@ -428,6 +438,14 @@ video { width: 100%; border-radius: 12px; background: #000; }
 }
 .action-panel.cols-3 {
   grid-template-columns: 1fr 1fr 1fr;
+}
+.action-panel.cols-4 {
+  grid-template-columns: 1fr 1fr;
+}
+@media (min-width: 420px) {
+  .action-panel.cols-4 {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
 }
 .action-panel button {
   margin-top: 0;

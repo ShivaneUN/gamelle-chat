@@ -31,9 +31,7 @@ class _GamelleAppState extends State<GamelleApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       try {
         const MethodChannel('gamelle/lifecycle').invokeMethod<void>('keepAlive', {
           'camera': true,

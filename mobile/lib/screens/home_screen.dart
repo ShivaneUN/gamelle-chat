@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _updateBusy = false;
   bool _applying = false;
   bool _updateAvailable = false;
+  bool _allowBackground = false;
   double _updatePct = 0;
   String _updateText = 'Vérifie les releases GitHub.';
 
@@ -45,6 +46,11 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     });
     _boot();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(seconds: 3), () {
+        if (mounted) _allowBackground = true;
+      });
+    });
   }
 
   @override
@@ -55,6 +61,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _boot() async {
     await WakelockPlus.enable();
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 250));
     if (!await Permission.notification.isGranted) {
       await Permission.notification.request();
     }
@@ -63,7 +71,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     if (mounted) setState(() {});
     await _startServer();
+    unawaited(_keepInForeground());
     await _checkUpdate();
+  }
+
+  Future<void> _keepInForeground() async {
+    for (final wait in <int>[0, 400, 1200]) {
+      if (wait > 0) await Future<void>.delayed(Duration(milliseconds: wait));
+      try {
+        await const MethodChannel('gamelle/lifecycle').invokeMethod<void>('bringToFront');
+      } catch (_) {}
+    }
   }
 
   Future<void> _checkUpdate() async {
@@ -206,14 +224,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
+        if (didPop || !_allowBackground) return;
         await _goBackground();
       },
       child: Scaffold(
         backgroundColor: _bg,
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
               children: [
                 const Text(
@@ -237,6 +255,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       }
                       return ListView(
+                        padding: const EdgeInsets.only(bottom: 96),
                         children: [
                           _pairingPanel(expand: false),
                           const SizedBox(height: 16),
@@ -414,23 +433,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    final list = expand
-        ? Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                Expanded(child: tiles[i]),
-              ],
-            ],
-          )
-        : Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                tiles[i],
-              ],
-            ],
-          );
+    final children = <Widget>[
+      for (var i = 0; i < tiles.length; i++) ...[
+        if (i > 0) const SizedBox(height: 12),
+        tiles[i],
+      ],
+      const SizedBox(height: 28),
+    ];
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -438,7 +447,12 @@ class _HomeScreenState extends State<HomeScreen> {
         color: _card,
         borderRadius: BorderRadius.circular(22),
       ),
-      child: list,
+      child: expand
+          ? ListView(
+              padding: const EdgeInsets.only(bottom: 40),
+              children: children,
+            )
+          : Column(children: children),
     );
   }
 }
@@ -501,6 +515,7 @@ class _ActionTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: extra == null ? MainAxisAlignment.center : MainAxisAlignment.start,
             children: [
               Row(
