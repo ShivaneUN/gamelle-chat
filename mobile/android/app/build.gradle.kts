@@ -25,8 +25,8 @@ android {
     }
 
     defaultConfig {
-        // New id so 0.0.9 installs beside old debug-signed builds (avoids signature conflict).
-        applicationId = "com.gamelle.chat"
+        // Keep the same id as previous tablet installs so OTA updates the existing app.
+        applicationId = "com.gamelle.gamelle_chat"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
