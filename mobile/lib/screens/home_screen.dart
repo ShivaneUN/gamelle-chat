@@ -409,22 +409,24 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
             if (!_applying) ...[
               const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: _updateBusy ? null : _checkUpdate,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Color(0x55FFFFFF)),
-                ),
-                child: Text(_updateBusy ? 'Vérification…' : 'Vérifier'),
-              ),
-              if (_updateAvailable) ...[
-                const SizedBox(height: 8),
+              if (_updateAvailable)
                 FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: _accent),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: _accent,
+                  ),
                   onPressed: _updateBusy ? null : _applyUpdate,
-                  child: const Text('Installer la mise à jour'),
+                  child: const Text('Installer'),
+                )
+              else
+                OutlinedButton(
+                  onPressed: _updateBusy ? null : _checkUpdate,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0x55FFFFFF)),
+                  ),
+                  child: Text(_updateBusy ? 'Vérification…' : 'Vérifier'),
                 ),
-              ],
             ],
           ],
         ),
