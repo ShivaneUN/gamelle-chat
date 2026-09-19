@@ -17,9 +17,12 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Process as AndroidProcess
+import android.graphics.Color
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.webkit.WebSettings
 import android.webkit.WebView
 import io.flutter.embedding.android.FlutterActivity
@@ -69,6 +72,7 @@ class MainActivity : FlutterActivity() {
 
     private var screenForcedOff = false
     private var userRequestedBackground = false
+    private var blackOverlay: View? = null
 
     private fun canPostNotifications(): Boolean {
         if (Build.VERSION.SDK_INT < 33) return true
@@ -369,6 +373,32 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** Vrai écran noir (style Android Hub) : overlay noir, caméra/serveur restent actifs. */
+    private fun ensureBlackOverlay(): View {
+        blackOverlay?.let { return it }
+        val overlay = View(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+            isFocusable = true
+            elevation = 100_000f
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    applyScreen(true)
+                }
+                true
+            }
+        }
+        val content = findViewById<ViewGroup>(android.R.id.content)
+        content.addView(overlay)
+        blackOverlay = overlay
+        return overlay
+    }
+
     private fun applyScreen(on: Boolean) {
         screenForcedOff = !on
         if (on) {
@@ -391,16 +421,28 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
         }
         try {
+            // Garde l’écran alimenté pour que la caméra / WebView restent vivants.
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             val lp = window.attributes
             lp.screenBrightness = if (on) {
                 WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
             } else {
-                0.01f
+                0f
             }
             window.attributes = lp
         } catch (_: Exception) {
         }
+        try {
+            val overlay = ensureBlackOverlay()
+            if (on) {
+                overlay.visibility = View.GONE
+            } else {
+                overlay.visibility = View.VISIBLE
+                overlay.bringToFront()
+            }
+        } catch (_: Exception) {
+        }
+        keepWebViewsAlive()
         if (!on) return
         try {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -413,7 +455,6 @@ class MainActivity : FlutterActivity() {
             wl.release()
         } catch (_: Exception) {
         }
-        keepWebViewsAlive()
     }
 
     private fun protectAllWebViews(root: View?) {

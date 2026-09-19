@@ -402,6 +402,15 @@ if (bgBtn) {
   };
 }
 
+// Turn screen off local (style Android Hub) — vrai noir natif, caméra reste active.
+const screenOffBtn = document.getElementById('screenOffBtn');
+if (screenOffBtn) {
+  screenOffBtn.onclick = () => {
+    screenOn = false;
+    nativeHost('off');
+  };
+}
+
 socket.on('screen-on', () => {
   screenOn = true;
   nativeHost('on');
