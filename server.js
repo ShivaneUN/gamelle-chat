@@ -365,6 +365,11 @@ app.post('/api/auth/register', (req, res) => {
   res.status(201).json({ ok: true, user: publicUser(user) });
 });
 
+function findSessionsForUser(userId) {
+  const sessions = readSessions();
+  return sessions.sessions.filter((s) => s && s.userId === userId);
+}
+
 app.post('/api/auth/login', (req, res) => {
   const username = String((req.body && req.body.username) || '').trim();
   const password = String((req.body && req.body.password) || '');
@@ -383,6 +388,23 @@ app.post('/api/auth/login', (req, res) => {
   if (!ok) {
     return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
   }
+
+  // Déjà connecté sur CET appareil (même cookie) → OK, pas de nouvelle session.
+  const current = getSessionUser(req);
+  if (current && current.id === user.id) {
+    return res.json({ ok: true, user: publicUser(user) });
+  }
+
+  // Une session existe déjà ailleurs → refuser (pas de déco auto).
+  const existing = findSessionsForUser(user.id);
+  if (existing.length > 0) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Ce compte est déjà connecté sur un autre appareil. Déconnecte-toi là-bas avant de te connecter ici.',
+      code: 'SESSION_ACTIVE',
+    });
+  }
+
   const token = createSession(user.id);
   setSessionCookie(res, token, req);
   res.json({ ok: true, user: publicUser(user) });
