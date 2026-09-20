@@ -32,7 +32,71 @@ object PersistRescue {
                 File(srcRoot, "data/sessions.json"),
                 File(dest, "data/sessions.json"),
             )
+            // Tunnel perso : sauver hors APK (les releases publiques n’embarquent plus les secrets).
+            rescueTunnelFile(File(srcRoot, "tunnel.config.json"), File(dest, "tunnel.config.json"), tunnelConfig = true)
+            rescueTunnelFile(File(srcRoot, "tunnel.token"), File(dest, "tunnel.token"), tunnelConfig = false)
         }
+    }
+
+    /** Copie token/config réels vers gamelle-persist ; n’écrase jamais un secret déjà présent. */
+    private fun rescueTunnelFile(src: File, dest: File, tunnelConfig: Boolean) {
+        if (!src.exists() || src.length() < 8L) return
+        val text = try {
+            src.readText()
+        } catch (_: Exception) {
+            return
+        }
+        if (tunnelConfig) {
+            if (isPlaceholderTunnelConfig(text)) return
+        } else if (isPlaceholderTunnelToken(text)) {
+            return
+        }
+        dest.parentFile?.mkdirs()
+        if (!dest.exists() || dest.length() < 8L) {
+            try {
+                src.copyTo(dest, overwrite = true)
+            } catch (_: Exception) {
+            }
+            return
+        }
+        val existing = try {
+            dest.readText()
+        } catch (_: Exception) {
+            ""
+        }
+        val destIsPlaceholder = if (tunnelConfig) {
+            isPlaceholderTunnelConfig(existing)
+        } else {
+            isPlaceholderTunnelToken(existing)
+        }
+        if (destIsPlaceholder) {
+            try {
+                src.copyTo(dest, overwrite = true)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun isPlaceholderTunnelConfig(text: String): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return true
+        if (t.contains("TON-SOUS-DOMAINE") || t.contains("TON-DOMAINE")) return true
+        return try {
+            val url = JSONObject(t).optString("publicUrl").trim()
+            url.isEmpty() || url.contains("TON-")
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun isPlaceholderTunnelToken(text: String): Boolean {
+        val line = text.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+        return line.isNullOrBlank() ||
+            line.contains("REMPLACE") ||
+            line.contains("TON-") ||
+            line.length < 40
     }
 
     private fun copyTreeMissing(src: File, dest: File) {
