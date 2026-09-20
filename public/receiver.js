@@ -138,15 +138,19 @@ socket.on('connect', () => {
     startBatteryWatch();
   });
 });
-socket.on('peers', ({ controllers }) => {
+socket.on('peers', ({ controllers, names }) => {
   const n = Number(controllers) || 0;
+  const list = Array.isArray(names) ? names.filter(Boolean) : [];
+  window.__GAMELLE_PEER_NAMES__ = list;
   if (n <= 0) {
     setStatus(false, 'Pas de contrôleur en ligne');
   } else if (n === 1) {
-    setStatus(true, '1 contrôleur en ligne');
+    const who = list[0] ? ` · ${list[0]}` : '';
+    setStatus(true, `1 contrôleur en ligne${who}`);
   } else {
     setStatus(true, `${n} contrôleurs en ligne`);
   }
+  renderPeersPop();
 });
 socket.on('room-state', (state) => {
   msgLibrary.setMessages(state.messages);
@@ -158,8 +162,57 @@ socket.on('room-state', (state) => {
 function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
+  statusEl.style.cursor = on ? 'pointer' : 'default';
+  statusEl.title = on ? 'Voir qui est en ligne' : '';
 }
 setStatus(false, 'Pas de contrôleur en ligne');
+
+function renderPeersPop() {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    pop.innerHTML = '';
+    return;
+  }
+  pop.innerHTML = '<div class="peers-pop-title">En ligne</div>' +
+    list.map((n) => `<div class="peers-pop-item">${escapeHtml(n)}</div>`).join('');
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function togglePeersPop(force) {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    return;
+  }
+  renderPeersPop();
+  if (typeof force === 'boolean') pop.hidden = !force;
+  else pop.hidden = !pop.hidden;
+}
+
+if (statusEl) {
+  statusEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const list = window.__GAMELLE_PEER_NAMES__ || [];
+    if (!list.length) return;
+    togglePeersPop();
+  });
+}
+document.addEventListener('click', () => {
+  const pop = document.getElementById('peersPop');
+  if (pop) pop.hidden = true;
+});
 
 // --- Bibliothèque de messages personnalisés ---
 const msgLibrary = createMessageLibrary({
@@ -747,30 +800,10 @@ function startLiveRelay() {
   liveGrabberTrack = null;
   let busy = false;
   let lastSent = 0;
-  // Relais JPEG (4G / tunnel) : viser ~12 fps sans saturer Socket.io.
+  // Relais JPEG (4G / tunnel) : viser ~12 fps.
   const INTERVAL_MS = 80;
   const WIDTH = 320;
-  const QUALITY = 0.52;
-
-  const sendJpeg = (blobOrB64) => {
-    if (!camOn) {
-      busy = false;
-      return;
-    }
-    if (typeof blobOrB64 === 'string') {
-      socket.emit('live-frame', blobOrB64);
-      busy = false;
-      return;
-    }
-    if (blobOrB64 && typeof blobOrB64.arrayBuffer === 'function') {
-      blobOrB64.arrayBuffer().then((buf) => {
-        if (camOn) socket.emit('live-frame', buf);
-        busy = false;
-      }).catch(() => { busy = false; });
-      return;
-    }
-    busy = false;
-  };
+  const QUALITY = 0.45;
 
   const tick = () => {
     if (!camOn || !localStream || !localVideo) return;
@@ -797,23 +830,24 @@ function startLiveRelay() {
     lastSent = now;
     if (typeof canvas.toBlob === 'function') {
       canvas.toBlob((blob) => {
-        if (!blob) {
+        if (!blob || !camOn) {
           busy = false;
           return;
         }
-        sendJpeg(blob);
+        // Émettre le Blob directement (plus rapide que arrayBuffer).
+        try { socket.emit('live-frame', blob); } catch (e) {}
+        busy = false;
       }, 'image/jpeg', QUALITY);
       return;
     }
     try {
       const data = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-      sendJpeg(data || '');
-    } catch (e) {
-      busy = false;
-    }
+      if (data) socket.emit('live-frame', data);
+    } catch (e) {}
+    busy = false;
   };
 
-  liveRelayTimer = setInterval(tick, 40);
+  liveRelayTimer = setInterval(tick, 33);
   tick();
 }
 function stopLiveRelay() {

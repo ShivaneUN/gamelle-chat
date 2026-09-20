@@ -83,9 +83,12 @@ if (logoutBtn) {
     location.replace('/');
   };
 }
-socket.on('peers', ({ receiver, controllers }) => {
+socket.on('peers', ({ receiver, controllers, names }) => {
   if (receiver) {
-    const extra = controllers > 1 ? ` · ${controllers} contrôleurs` : '';
+    const list = Array.isArray(names) ? names.filter(Boolean) : [];
+    const extra = controllers > 1
+      ? ` · ${controllers} contrôleurs`
+      : (list[0] ? ` · ${list[0]}` : '');
     setStatus(true, 'En ligne' + extra);
   } else {
     setStatus(false, 'Hors ligne');
@@ -126,9 +129,22 @@ function showWebrtcLive() {
 }
 
 let lastRelayObjectUrl = null;
+let relayShown = false;
+let relayDecoding = false;
+let pendingRelayFrame = null;
 
-function applyFrame(data) {
-  if (!data || !remoteRelay) return;
+function showRelayLiveOnce() {
+  if (relayShown) return;
+  relayShown = true;
+  showRelayLive();
+}
+
+function flushRelayFrame() {
+  if (relayDecoding || pendingRelayFrame == null || !remoteRelay) return;
+  const data = pendingRelayFrame;
+  pendingRelayFrame = null;
+  relayDecoding = true;
+
   let url = null;
   if (typeof data === 'string') {
     url = 'data:image/jpeg;base64,' + data;
@@ -136,16 +152,33 @@ function applyFrame(data) {
     try {
       const blob = data instanceof Blob ? data : new Blob([data], { type: 'image/jpeg' });
       url = URL.createObjectURL(blob);
-      if (lastRelayObjectUrl) {
-        try { URL.revokeObjectURL(lastRelayObjectUrl); } catch (e) {}
-      }
-      lastRelayObjectUrl = url;
     } catch (e) {
+      relayDecoding = false;
+      if (pendingRelayFrame != null) flushRelayFrame();
       return;
     }
   }
+
+  const prev = lastRelayObjectUrl;
+  const onDone = () => {
+    if (prev && prev !== url) {
+      try { URL.revokeObjectURL(prev); } catch (e) {}
+    }
+    if (url && url.indexOf('blob:') === 0) lastRelayObjectUrl = url;
+    relayDecoding = false;
+    if (pendingRelayFrame != null) flushRelayFrame();
+  };
+
+  remoteRelay.onload = onDone;
+  remoteRelay.onerror = onDone;
   remoteRelay.src = url;
-  showRelayLive();
+  showRelayLiveOnce();
+}
+
+function applyFrame(data) {
+  if (!data || !remoteRelay) return;
+  pendingRelayFrame = data;
+  flushRelayFrame();
 }
 
 socket.on('live-frame', (data) => {
