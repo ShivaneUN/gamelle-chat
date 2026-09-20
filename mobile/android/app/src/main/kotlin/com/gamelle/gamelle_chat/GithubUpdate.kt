@@ -27,23 +27,20 @@ object GithubUpdate {
     }
 
     fun localTag(filesDir: File, installedVersion: String): String {
-        // Source de vérité = version installée de l’APK. version.json est un cache,
-        // jamais plus “avancé” que le package (évite un faux “déjà à jour”).
+        // Source de vérité = versionName de l’APK installé (pas version.json).
+        // version.json ne sert qu’au cache post-install ; s’il est en avance
+        // sur le package, on l’ignore pour ne pas masquer une maj disponible.
         val installed = installedVersion.trim()
+        if (installed.isNotBlank()) return installed
         val f = versionFile(filesDir)
         if (f.exists()) {
             try {
                 val stored = JSONObject(f.readText(StandardCharsets.UTF_8)).optString("tag")
-                if (stored.isNotBlank()) {
-                    if (installed.isBlank()) return stored
-                    // Si le fichier OTA dit plus récent que le package → install ratée : on ignore.
-                    if (isNewer(stored, installed)) return installed
-                    return stored
-                }
+                if (stored.isNotBlank()) return stored
             } catch (_: Exception) {
             }
         }
-        return installed
+        return ""
     }
 
     fun markInstalled(filesDir: File, tag: String) {
