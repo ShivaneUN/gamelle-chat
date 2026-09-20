@@ -673,6 +673,8 @@ io.on('connection', (socket) => {
     emitToRole(socket.data.code, 'controller', 'camera-list', cams);
   });
   socket.on('switch-camera', (payload) => emitToRole(socket.data.code, 'receiver', 'switch-camera', payload));
+  socket.on('torch', (payload) => emitToRole(socket.data.code, 'receiver', 'torch', payload));
+  socket.on('torch-status', (payload) => emitToRole(socket.data.code, 'controller', 'torch-status', payload));
 
   socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
   socket.on('screen-on', () => {

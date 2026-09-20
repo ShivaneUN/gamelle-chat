@@ -511,6 +511,7 @@ async function enableCamera() {
     startLiveRelay();
     socket.emit('cam-status', { on: true });
     sendCameraList();
+    if (torchWanted) await applyTorch(true);
   } catch (e) {
     renderCamBtn();
     alert('Impossible d\'accéder à la caméra: ' + e.name + ' — ' + e.message + '\n\nClique le 🔒 à gauche de l\'adresse → Caméra → Autoriser.');
@@ -529,6 +530,45 @@ async function sendCameraList() {
     console.warn('Impossible de lister les caméras:', e.message);
   }
 }
+
+// --- Flash / torche demandé par le contrôleur ---
+let torchWanted = false;
+
+async function applyTorch(on) {
+  torchWanted = !!on;
+  if (!camOn || !localStream) {
+    socket.emit('torch-status', { on: false, unsupported: false });
+    return false;
+  }
+  const track = localStream.getVideoTracks()[0];
+  if (!track) {
+    socket.emit('torch-status', { on: false, unsupported: true });
+    return false;
+  }
+  let caps = null;
+  try {
+    caps = track.getCapabilities ? track.getCapabilities() : null;
+  } catch (e) {
+    caps = null;
+  }
+  if (!caps || !('torch' in caps) || !caps.torch) {
+    socket.emit('torch-status', { on: false, unsupported: true });
+    return false;
+  }
+  try {
+    await track.applyConstraints({ advanced: [{ torch: !!on }] });
+    socket.emit('torch-status', { on: !!on, unsupported: false });
+    return true;
+  } catch (e) {
+    console.warn('Flash impossible:', e.message);
+    socket.emit('torch-status', { on: false, unsupported: true });
+    return false;
+  }
+}
+
+socket.on('torch', async (payload) => {
+  await applyTorch(!!(payload && payload.on));
+});
 
 // --- Changement de caméra demandé par le contrôleur, sans couper le direct ---
 socket.on('switch-camera', async (payload) => {
@@ -606,6 +646,7 @@ socket.on('switch-camera', async (payload) => {
     await localVideo.play().catch(() => {});
     if (micOn) await startMicTalk(localStream, false);
     sendCameraList();
+    if (torchWanted) await applyTorch(true);
   } catch (e) {
     console.warn('Changement de caméra impossible:', e.message);
   }
@@ -616,6 +657,7 @@ function disableCamera() {
   if (pcCam) { pcCam.close(); pcCam = null; }
   const keepTalking = micOn;
   stopMicTalk();
+  torchWanted = false;
   if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
   localVideo.srcObject = null;
   localVideo.classList.remove('on');
@@ -627,6 +669,7 @@ function disableCamera() {
   renderCamBtn();
   setCamDot(false);
   socket.emit('cam-status', { on: false });
+  socket.emit('torch-status', { on: false, unsupported: false });
   if (keepTalking) {
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((s) => {
       if (!micOn) { s.getTracks().forEach((t) => t.stop()); return; }
