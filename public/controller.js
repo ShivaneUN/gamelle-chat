@@ -132,51 +132,125 @@ let lastRelayObjectUrl = null;
 let relayShown = false;
 let relayDecoding = false;
 let pendingRelayFrame = null;
+let relayCanvas = null;
+let relayCtx = null;
+
+function ensureRelayCanvas() {
+  if (relayCanvas || !remoteRelay || !remoteRelay.parentNode) return relayCanvas;
+  relayCanvas = document.createElement('canvas');
+  relayCanvas.id = 'remoteRelayCanvas';
+  relayCanvas.setAttribute('aria-hidden', 'true');
+  remoteRelay.parentNode.insertBefore(relayCanvas, remoteRelay);
+  relayCtx = relayCanvas.getContext('2d', { alpha: false, desynchronized: true });
+  return relayCanvas;
+}
 
 function showRelayLiveOnce() {
   if (relayShown) return;
   relayShown = true;
+  const canvas = ensureRelayCanvas();
+  if (canvas) {
+    if (remoteVideo) {
+      remoteVideo.classList.remove('on');
+      remoteVideo.style.display = 'none';
+    }
+    if (remoteRelay) {
+      remoteRelay.classList.remove('on');
+      remoteRelay.style.display = 'none';
+    }
+    canvas.classList.add('on');
+    canvas.style.display = 'block';
+    canvas.style.width = '100%';
+    setLivePlaceholder(false);
+    if (liveHint) liveHint.textContent = 'Vue live';
+    return;
+  }
   showRelayLive();
 }
 
+function frameToBlob(data) {
+  if (!data) return null;
+  if (typeof data === 'string') {
+    try {
+      const bin = atob(data);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: 'image/jpeg' });
+    } catch (e) {
+      return null;
+    }
+  }
+  if (data instanceof Blob) return data;
+  try {
+    return new Blob([data], { type: 'image/jpeg' });
+  } catch (e) {
+    return null;
+  }
+}
+
 function flushRelayFrame() {
-  if (relayDecoding || pendingRelayFrame == null || !remoteRelay) return;
+  if (relayDecoding || pendingRelayFrame == null) return;
   const data = pendingRelayFrame;
   pendingRelayFrame = null;
   relayDecoding = true;
 
-  let url = null;
-  if (typeof data === 'string') {
-    url = 'data:image/jpeg;base64,' + data;
-  } else {
-    try {
-      const blob = data instanceof Blob ? data : new Blob([data], { type: 'image/jpeg' });
-      url = URL.createObjectURL(blob);
-    } catch (e) {
-      relayDecoding = false;
-      if (pendingRelayFrame != null) flushRelayFrame();
-      return;
-    }
-  }
-
-  const prev = lastRelayObjectUrl;
-  const onDone = () => {
-    if (prev && prev !== url) {
-      try { URL.revokeObjectURL(prev); } catch (e) {}
-    }
-    if (url && url.indexOf('blob:') === 0) lastRelayObjectUrl = url;
+  const finish = () => {
     relayDecoding = false;
     if (pendingRelayFrame != null) flushRelayFrame();
   };
 
-  remoteRelay.onload = onDone;
-  remoteRelay.onerror = onDone;
-  remoteRelay.src = url;
-  showRelayLiveOnce();
+  const blob = frameToBlob(data);
+  if (!blob) {
+    finish();
+    return;
+  }
+
+  const paintBitmap = (bmp) => {
+    const canvas = ensureRelayCanvas();
+    if (canvas && relayCtx && bmp) {
+      if (canvas.width !== bmp.width) canvas.width = bmp.width;
+      if (canvas.height !== bmp.height) canvas.height = bmp.height;
+      try {
+        relayCtx.drawImage(bmp, 0, 0);
+      } catch (e) {}
+      try { if (bmp.close) bmp.close(); } catch (e) {}
+      showRelayLiveOnce();
+      finish();
+      return;
+    }
+    // Fallback <img>
+    const url = URL.createObjectURL(blob);
+    const prev = lastRelayObjectUrl;
+    const onDone = () => {
+      if (prev) {
+        try { URL.revokeObjectURL(prev); } catch (e) {}
+      }
+      lastRelayObjectUrl = url;
+      finish();
+    };
+    if (!remoteRelay) {
+      try { URL.revokeObjectURL(url); } catch (e) {}
+      finish();
+      return;
+    }
+    remoteRelay.onload = onDone;
+    remoteRelay.onerror = onDone;
+    remoteRelay.src = url;
+    showRelayLiveOnce();
+  };
+
+  if (typeof createImageBitmap === 'function') {
+    createImageBitmap(blob).then(paintBitmap).catch(() => {
+      paintBitmap(null);
+    });
+    return;
+  }
+  paintBitmap(null);
 }
 
 function applyFrame(data) {
-  if (!data || !remoteRelay) return;
+  if (!data) return;
+  // Garde uniquement la dernière frame (drop le reste = moins de freeze).
   pendingRelayFrame = data;
   flushRelayFrame();
 }

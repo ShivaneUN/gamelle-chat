@@ -275,9 +275,10 @@ button.big { display: block; width: 100%; padding: 16px; font-size: 16px; margin
 }
 video { width: 100%; border-radius: 12px; background: #000; }
 .live-wrap { position: relative; background: #000; border-radius: 12px; min-height: 180px; overflow: hidden; }
-.live-wrap video, .live-wrap img { width: 100%; display: none; vertical-align: top; }
+.live-wrap video, .live-wrap img, .live-wrap canvas { width: 100%; display: none; vertical-align: top; }
 .live-wrap img.on,
-.live-wrap video.on { display: block !important; }
+.live-wrap video.on,
+.live-wrap canvas.on { display: block !important; }
 .live-placeholder {
   position: absolute;
   inset: 0;
