@@ -669,7 +669,7 @@ const talkPlayState = { nextTime: 0 };
 async function startTalk() {
   try {
     if (!window.isSecureContext) {
-      alert('Cette page n\'est pas en HTTPS. Ouvre https://gamelle.juvana.cc (Contrôleur) ou https://localhost:3000 (tablette).');
+      alert('Cette page n\'est pas en HTTPS. Ouvre l\'URL Cloudflare du Contrôleur (ton tunnel) ou https://localhost:3000 (tablette).');
       return;
     }
     unlockSoundEngine();

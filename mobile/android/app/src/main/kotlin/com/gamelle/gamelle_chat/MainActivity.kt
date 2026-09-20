@@ -68,8 +68,10 @@ class MainActivity : FlutterActivity() {
         }.lowercase()
         if (host.isEmpty() || host == "api.trycloudflare.com") return false
         if (host == "localhost" || host == "127.0.0.1" || host == "::1") return false
-        if (host == "juvana.cc" || host.endsWith(".juvana.cc")) return true
-        return host.endsWith(".trycloudflare.com")
+        if (host.startsWith("ton-")) return false
+        if (host.endsWith(".trycloudflare.com")) return true
+        // Named Tunnel perso : domaine public (pas de domaine hardcodé).
+        return host.contains('.') && !host.endsWith(".local")
     }
 
     private fun readAssetText(name: String): String? {
