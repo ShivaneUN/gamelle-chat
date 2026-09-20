@@ -27,8 +27,8 @@ npm start
 
 Le terminal affiche :
 ```
-Sur la tablette (récepteur) : https://localhost:3000
-Même WiFi                   : https://192.168.X.X:3000
+Sur la tablette (récepteur) : https://localhost:3xxx
+Même WiFi                   : https://192.168.X.X:3xxx
 Depuis n'importe où (4G / autre WiFi) : ton lien cloudflare free ou payant
 ```
 
@@ -46,9 +46,9 @@ Depuis n'importe où (4G / autre WiFi) : ton lien cloudflare free ou payant
 1. Dans Cloudflare : **Zero Trust → Networks → Tunnels → Create** (nom `gamelle`)
 2. Copie le **token**, crée le fichier `tunnel.token` à la racine du projet (voir `tunnel.token.example`)
 3. Public hostname du tunnel :
-   - **Subdomain** : `gamelle`
-   - **Domain** : `juvana.cc`
-   - **Service** : `http://127.0.0.1:3001`
+   - **Subdomain** : ton domaine
+   - **Domain** : ton domaine
+   - **Service** : `http://127.0.0.1:3xxx`
 4. Pour l’APK : copie aussi `tunnel.token` dans `mobile/android/app/src/main/assets/tunnel.token`
 
 Sans `tunnel.token`, l’app retombe sur le tunnel rapide (`trycloudflare.com`, URL variable).
@@ -64,4 +64,4 @@ Le certificat local est auto-signé, donc le navigateur affiche un avertissement
 ## Limites connues
 - L’écran du récepteur doit rester allumé (limite du navigateur)
 - La tablette doit rester allumée et connectée à internet pour l’accès 4G
-- Le tunnel rapide Cloudflare change d’URL sans `tunnel.token` ; avec Named Tunnel → `https://gamelle.juvana.cc`
+- Le tunnel rapide Cloudflare change d’URL sans `tunnel.token` ; avec Named Tunnel → `https://toncomptcloudflare
