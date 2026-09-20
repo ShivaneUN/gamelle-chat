@@ -348,10 +348,16 @@
   global.renderQr = renderQr;
   global.makeQrDataUrl = makeQrDataUrl;
   global.isQuickTunnelOrigin = function (text) {
+    return global.isAllowedPublicOrigin(text);
+  };
+  global.isAllowedPublicOrigin = function (text) {
     try {
       const u = new URL(String(text || ''));
-      const h = u.hostname || '';
-      return h.endsWith('.trycloudflare.com') && h !== 'api.trycloudflare.com';
+      const h = (u.hostname || '').toLowerCase();
+      if (!h || h === 'api.trycloudflare.com') return false;
+      if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
+      return h === 'juvana.cc' || h.endsWith('.juvana.cc') ||
+        (h.endsWith('.trycloudflare.com') && h !== 'api.trycloudflare.com');
     } catch (e) {
       return false;
     }

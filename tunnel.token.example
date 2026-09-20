@@ -1,0 +1,4 @@
+# Remplace cette ligne par le token Cloudflare (Zero Trust → Tunnels → ton tunnel → token).
+# Puis renomme / copie ce fichier en : tunnel.token
+# Ne commit jamais tunnel.token.
+eyJhIjoiMjAwYTQ1OWJkNDYwNjQzN2I3MDg2MTI5ODVhMWYyYWYiLCJ0IjoiMDZkMmI1NjItMTc4MS00NDhmLTgyOGItNmRkMDhjZWI1NjBkIiwicyI6Ik1UUmlPVEExTkRVdFkyVTVOQzAwTmpjekxXRXhZall0T0dJNU5tTTVNbU5pTm1NMiJ9

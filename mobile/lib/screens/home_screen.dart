@@ -320,6 +320,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 16),
         if (expand) Expanded(child: Center(child: qr)) else Center(child: qr),
+        if (remote != null) ...[
+          const SizedBox(height: 12),
+          SelectableText(
+            remote,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: _muted, fontSize: 12, height: 1.3),
+          ),
+        ],
         const SizedBox(height: 14),
         Wrap(
           alignment: WrapAlignment.center,
