@@ -29,7 +29,7 @@ Le terminal affiche :
 ```
 Sur la tablette (récepteur) : https://localhost:3000
 Même WiFi                   : https://192.168.X.X:3000
-Depuis n'importe où (4G / autre WiFi) : https://gamelle.juvana.cc
+Depuis n'importe où (4G / autre WiFi) : ton lien cloudflare free ou payant
 ```
 
 (Sans `tunnel.token` : URL `trycloudflare.com` variable.)
