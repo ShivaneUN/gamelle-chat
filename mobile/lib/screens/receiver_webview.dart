@@ -48,8 +48,11 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
     _rendererSub = _events.receiveBroadcastStream().listen((event) {
       final map = event is Map ? Map<String, dynamic>.from(event) : null;
-      if (map?['type'] == 'rendererGone') {
+      final type = map?['type']?.toString();
+      if (type == 'rendererGone') {
         _recoverAfterRendererGone();
+      } else if (type == 'screenOn') {
+        unawaited(_syncScreenOnJs());
       }
     });
     _urlSub = NodeBridgeService.instance.messages.listen((msg) {
@@ -159,6 +162,16 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     try {
       await web.runJavaScript(
         'if (typeof keepCameraAlive === "function") keepCameraAlive();',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncScreenOnJs() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.runJavaScript(
+        'if (typeof syncScreenOnFromNative === "function") syncScreenOnFromNative();',
       );
     } catch (_) {}
   }
