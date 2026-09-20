@@ -8,6 +8,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../services/github_update_service.dart';
 import '../services/node_bridge_service.dart';
 import '../widgets/scan_qr.dart';
+import 'accounts_panel.dart';
 import 'receiver_webview.dart';
 import 'settings_screen.dart';
 
@@ -16,6 +17,8 @@ const _card = Color(0xFF151821);
 const _tile = Color(0xFF1C2030);
 const _accent = Color(0xFFFF7A45);
 const _muted = Color(0xFF8B93A7);
+
+enum _LeftMode { qr, settings, accounts }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -32,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _applying = false;
   bool _updateAvailable = false;
   bool _allowBackground = false;
+  _LeftMode _leftMode = _LeftMode.qr;
   double _updatePct = 0;
   String _updateText = 'Vérifie les releases GitHub.';
 
@@ -92,18 +96,21 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final s = await GithubUpdateService.instance.check();
       if (!mounted) return;
+      // Un seul setState : available + fin de busy, sinon le bouton reste sur Vérifier.
       setState(() {
         _updateAvailable = s.available;
-        _updateText = s.message;
+        _updateText = s.message.isNotEmpty
+            ? s.message
+            : (s.available ? 'Mise à jour disponible.' : 'Déjà à jour.');
+        _updateBusy = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _updateAvailable = false;
         _updateText = 'Impossible de vérifier GitHub.';
+        _updateBusy = false;
       });
-    } finally {
-      if (mounted) setState(() => _updateBusy = false);
     }
   }
 
@@ -121,6 +128,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _updateAvailable = s.available;
         _updateText = s.message;
         if (s.ok) _updatePct = 1;
+        _updateBusy = false;
+        _applying = false;
       });
       if (s.ok && s.install) {
         setState(() => _updateText = s.message.isNotEmpty
@@ -139,14 +148,9 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _updateAvailable = false;
         _updateText = 'Échec de la mise à jour.';
+        _updateBusy = false;
+        _applying = false;
       });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _updateBusy = false;
-          _applying = false;
-        });
-      }
     }
   }
 
@@ -204,13 +208,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _openSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const SettingsScreen(),
-      ),
-    );
-    if (mounted) setState(() {});
+  void _toggleSettings() {
+    setState(() {
+      _leftMode = _leftMode == _LeftMode.settings ? _LeftMode.qr : _LeftMode.settings;
+    });
+  }
+
+  void _toggleAccounts() {
+    setState(() {
+      _leftMode = _leftMode == _LeftMode.accounts ? _LeftMode.qr : _LeftMode.accounts;
+    });
+  }
+
+  void _closeLeftPanel() {
+    if (_leftMode == _LeftMode.qr) return;
+    setState(() => _leftMode = _LeftMode.qr);
   }
 
   Future<void> _copy(String value, {String done = 'Lien copié'}) async {
@@ -226,7 +238,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop || !_allowBackground) return;
+        if (didPop) return;
+        if (_leftMode != _LeftMode.qr) {
+          _closeLeftPanel();
+          return;
+        }
+        if (!_allowBackground) return;
         await _goBackground();
       },
       child: Scaffold(
@@ -246,11 +263,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 720;
+                      final Widget left;
+                      switch (_leftMode) {
+                        case _LeftMode.settings:
+                          left = _settingsPanel(expand: wide);
+                        case _LeftMode.accounts:
+                          left = _accountsPanel(expand: wide);
+                        case _LeftMode.qr:
+                          left = _pairingPanel(expand: wide);
+                      }
                       if (wide) {
                         return Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(child: _pairingPanel(expand: true)),
+                            Expanded(child: left),
                             const SizedBox(width: 16),
                             Expanded(child: _actionsPanel(expand: true)),
                           ],
@@ -258,7 +284,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
                       return ListView(
                         children: [
-                          _pairingPanel(expand: false),
+                          left,
                           const SizedBox(height: 16),
                           _actionsPanel(expand: false),
                         ],
@@ -271,6 +297,36 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _settingsPanel({required bool expand}) {
+    final panel = SettingsPanel(
+      embedded: true,
+      onClose: _closeLeftPanel,
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: expand ? SingleChildScrollView(child: panel) : panel,
+    );
+  }
+
+  Widget _accountsPanel({required bool expand}) {
+    final panel = AccountsPanel(
+      embedded: true,
+      onClose: _closeLeftPanel,
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: expand ? SingleChildScrollView(child: panel) : panel,
     );
   }
 
@@ -379,8 +435,20 @@ class _HomeScreenState extends State<HomeScreen> {
       _ActionTile(
         icon: Icons.settings_rounded,
         title: 'Réglages',
-        subtitle: 'Wi-Fi, serveur, Cloudflare, notifications',
-        onTap: _applying ? null : _openSettings,
+        subtitle: _leftMode == _LeftMode.settings
+            ? 'Fermer pour revoir le QR'
+            : 'Wi-Fi, serveur, Cloudflare, notifications',
+        highlighted: _leftMode == _LeftMode.settings,
+        onTap: _applying ? null : _toggleSettings,
+      ),
+      _ActionTile(
+        icon: Icons.people_alt_rounded,
+        title: 'Comptes',
+        subtitle: _leftMode == _LeftMode.accounts
+            ? 'Fermer pour revoir le QR'
+            : 'Identifiants pour le contrôleur web',
+        highlighted: _leftMode == _LeftMode.accounts,
+        onTap: _applying ? null : _toggleAccounts,
       ),
       _ActionTile(
         icon: Icons.system_update_alt_rounded,
@@ -417,11 +485,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
             if (!_applying) ...[
               const SizedBox(height: 10),
+              // Un seul bouton : Vérifier → Installer dès qu’une maj est détectée.
               if (_updateAvailable)
                 FilledButton(
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: _accent,
+                    minimumSize: const Size.fromHeight(44),
                   ),
                   onPressed: _updateBusy ? null : _applyUpdate,
                   child: const Text('Installer'),
@@ -432,6 +502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Color(0x55FFFFFF)),
+                    minimumSize: const Size.fromHeight(44),
                   ),
                   child: Text(_updateBusy ? 'Vérification…' : 'Vérifier'),
                 ),
@@ -447,23 +518,18 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    final list = expand
-        ? Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                Expanded(child: tiles[i]),
-              ],
-            ],
-          )
-        : Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                tiles[i],
-              ],
-            ],
-          );
+    // ListView : la tuile Mises à jour (bouton Installer) n’est plus écrasée
+    // par des Expanded de hauteur égale.
+    final list = ListView(
+      shrinkWrap: !expand,
+      physics: expand ? null : const NeverScrollableScrollPhysics(),
+      children: [
+        for (var i = 0; i < tiles.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          tiles[i],
+        ],
+      ],
+    );
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -564,11 +630,11 @@ class _ActionTile extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (extra != null)
-                    if (fill)
-                      Flexible(child: SingleChildScrollView(child: extra!))
-                    else
-                      extra!,
+                  if (extra != null) ...[
+                    const SizedBox(height: 4),
+                    // Toujours visible (pas de Flexible qui clippe Installer).
+                    extra!,
+                  ],
                 ],
               ),
             ),

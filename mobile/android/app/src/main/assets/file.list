@@ -1116,6 +1116,7 @@ nodejs-project/public/controller.js
 nodejs-project/public/favicon-192.png
 nodejs-project/public/favicon-32.png
 nodejs-project/public/index.html
+nodejs-project/public/login.js
 nodejs-project/public/logo.png
 nodejs-project/public/message-library-ui.js
 nodejs-project/public/qr.js

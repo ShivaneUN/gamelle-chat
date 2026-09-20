@@ -59,12 +59,30 @@ if (!code) {
   throw new Error('code-redirect');
 }
 
-const socket = io();
+const socket = io({ withCredentials: true });
 let pcCam = null;   // reçoit la caméra du récepteur
 let talkStream = null;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
+socket.on('auth-required', () => {
+  location.replace('/');
+});
+socket.on('disconnect', (reason) => {
+  if (reason === 'io server disconnect') {
+    // possible kick auth
+  }
+});
+
+const logoutBtn = document.getElementById('logoutBtn');
+if (logoutBtn) {
+  logoutBtn.onclick = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch (e) {}
+    location.replace('/');
+  };
+}
 socket.on('peers', ({ receiver, controllers }) => {
   if (receiver) {
     const extra = controllers > 1 ? ` · ${controllers} contrôleurs` : '';
@@ -107,15 +125,39 @@ function showWebrtcLive() {
   liveHint.textContent = 'Vue live';
 }
 
-function applyFrame(b64) {
-  if (!b64 || typeof b64 !== 'string') return;
-  remoteRelay.src = 'data:image/jpeg;base64,' + b64;
+let lastRelayObjectUrl = null;
+
+function applyFrame(data) {
+  if (!data || !remoteRelay) return;
+  let url = null;
+  if (typeof data === 'string') {
+    url = 'data:image/jpeg;base64,' + data;
+  } else {
+    try {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: 'image/jpeg' });
+      url = URL.createObjectURL(blob);
+      if (lastRelayObjectUrl) {
+        try { URL.revokeObjectURL(lastRelayObjectUrl); } catch (e) {}
+      }
+      lastRelayObjectUrl = url;
+    } catch (e) {
+      return;
+    }
+  }
+  remoteRelay.src = url;
   showRelayLive();
 }
 
 socket.on('live-frame', (data) => {
-  const b64 = typeof data === 'string' ? data : (data && data.jpeg);
-  applyFrame(b64);
+  if (typeof data === 'string') {
+    applyFrame(data);
+    return;
+  }
+  if (data && typeof data === 'object' && typeof data.jpeg === 'string') {
+    applyFrame(data.jpeg);
+    return;
+  }
+  applyFrame(data);
 });
 
 function startLivePoll() {
