@@ -132,42 +132,10 @@ let lastRelayObjectUrl = null;
 let relayShown = false;
 let relayDecoding = false;
 let pendingRelayFrame = null;
-let relayCanvas = null;
-let relayCtx = null;
-
-function ensureRelayCanvas() {
-  if (relayCanvas || !remoteRelay || !remoteRelay.parentNode) return relayCanvas;
-  relayCanvas = document.createElement('canvas');
-  relayCanvas.id = 'remoteRelayCanvas';
-  relayCanvas.setAttribute('aria-hidden', 'true');
-  remoteRelay.parentNode.insertBefore(relayCanvas, remoteRelay);
-  relayCtx = relayCanvas.getContext('2d', { alpha: false, desynchronized: true });
-  return relayCanvas;
-}
 
 function showRelayLiveOnce() {
   if (relayShown) return;
   relayShown = true;
-  const canvas = ensureRelayCanvas();
-  if (canvas) {
-    if (remoteVideo) {
-      remoteVideo.classList.remove('on');
-      remoteVideo.style.display = 'none';
-    }
-    if (remoteRelay) {
-      remoteRelay.classList.remove('on');
-      remoteRelay.style.display = 'none';
-    }
-    canvas.classList.add('on');
-    canvas.style.display = 'block';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.objectFit = 'contain';
-    canvas.style.background = '#000';
-    setLivePlaceholder(false);
-    if (liveHint) liveHint.textContent = 'Vue live';
-    return;
-  }
   showRelayLive();
 }
 
@@ -191,6 +159,7 @@ function frameToBlob(data) {
   }
 }
 
+/** Affiche la frame via <img> + object-fit contain (fiable sur iOS ; canvas y coupe l’image). */
 function flushRelayFrame() {
   if (relayDecoding || pendingRelayFrame == null) return;
   const data = pendingRelayFrame;
@@ -203,52 +172,24 @@ function flushRelayFrame() {
   };
 
   const blob = frameToBlob(data);
-  if (!blob) {
+  if (!blob || !remoteRelay) {
     finish();
     return;
   }
 
-  const paintBitmap = (bmp) => {
-    const canvas = ensureRelayCanvas();
-    if (canvas && relayCtx && bmp) {
-      if (canvas.width !== bmp.width) canvas.width = bmp.width;
-      if (canvas.height !== bmp.height) canvas.height = bmp.height;
-      try {
-        relayCtx.drawImage(bmp, 0, 0);
-      } catch (e) {}
-      try { if (bmp.close) bmp.close(); } catch (e) {}
-      showRelayLiveOnce();
-      finish();
-      return;
+  const url = URL.createObjectURL(blob);
+  const prev = lastRelayObjectUrl;
+  const onDone = () => {
+    if (prev) {
+      try { URL.revokeObjectURL(prev); } catch (e) {}
     }
-    // Fallback <img>
-    const url = URL.createObjectURL(blob);
-    const prev = lastRelayObjectUrl;
-    const onDone = () => {
-      if (prev) {
-        try { URL.revokeObjectURL(prev); } catch (e) {}
-      }
-      lastRelayObjectUrl = url;
-      finish();
-    };
-    if (!remoteRelay) {
-      try { URL.revokeObjectURL(url); } catch (e) {}
-      finish();
-      return;
-    }
-    remoteRelay.onload = onDone;
-    remoteRelay.onerror = onDone;
-    remoteRelay.src = url;
-    showRelayLiveOnce();
+    lastRelayObjectUrl = url;
+    finish();
   };
-
-  if (typeof createImageBitmap === 'function') {
-    createImageBitmap(blob).then(paintBitmap).catch(() => {
-      paintBitmap(null);
-    });
-    return;
-  }
-  paintBitmap(null);
+  remoteRelay.onload = onDone;
+  remoteRelay.onerror = onDone;
+  remoteRelay.src = url;
+  showRelayLiveOnce();
 }
 
 function applyFrame(data) {
@@ -348,9 +289,14 @@ function clearLiveView() {
   remoteVideo.srcObject = null;
   remoteVideo.classList.remove('on');
   remoteVideo.style.display = 'none';
+  if (lastRelayObjectUrl) {
+    try { URL.revokeObjectURL(lastRelayObjectUrl); } catch (e) {}
+    lastRelayObjectUrl = null;
+  }
   remoteRelay.removeAttribute('src');
   remoteRelay.classList.remove('on');
   remoteRelay.style.display = 'none';
+  relayShown = false;
   setLivePlaceholder(true);
   liveHint.textContent = 'En attente de la caméra du récepteur…';
 }
@@ -468,11 +414,8 @@ let recvScreenOn = true;
 function renderScreenOffBtn() {
   const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(
-    btn,
-    recvScreenOn ? 'Écran off' : 'Écran on',
-    recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
-  );
+  // Comme Son : label fixe, surbrillance = écran allumé (on).
+  setBtnLabel(btn, 'Écran', recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
