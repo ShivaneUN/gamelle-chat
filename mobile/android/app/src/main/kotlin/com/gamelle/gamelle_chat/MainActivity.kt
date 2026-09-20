@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
     )
     private var fixedPublicUrl: String? = null
     private var tunnelToken: String? = null
+    private var allowedSuffixes: List<String> = listOf("trycloudflare.com")
 
     private fun isAllowedPublicUrl(url: String): Boolean {
         val host = try {
@@ -68,8 +69,11 @@ class MainActivity : FlutterActivity() {
         }.lowercase()
         if (host.isEmpty() || host == "api.trycloudflare.com") return false
         if (host == "localhost" || host == "127.0.0.1" || host == "::1") return false
-        if (host == "juvana.cc" || host.endsWith(".juvana.cc")) return true
-        return host.endsWith(".trycloudflare.com")
+        if (host.endsWith(".trycloudflare.com")) return true
+        return allowedSuffixes.any { s ->
+            val suffix = s.lowercase().trim('.')
+            suffix.isNotEmpty() && (host == suffix || host.endsWith(".$suffix"))
+        }
     }
 
     private fun readAssetText(name: String): String? {
@@ -80,27 +84,110 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun readPersistText(name: String): String? {
+        return try {
+            val f = File(filesDir, "gamelle-persist/$name")
+            if (!f.exists()) return null
+            f.readText()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun writePersistText(name: String, text: String) {
+        try {
+            val f = File(filesDir, "gamelle-persist/$name")
+            f.parentFile?.mkdirs()
+            f.writeText(text)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun applyTunnelConfigText(cfgRaw: String?) {
+        if (cfgRaw.isNullOrBlank()) return
+        val suffixes = Regex("\"allowedSuffixes\"\\s*:\\s*\\[([^\\]]*)\\]")
+            .find(cfgRaw)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { body ->
+                Regex("\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
+            }
+            .orEmpty()
+        if (suffixes.isNotEmpty()) {
+            allowedSuffixes = (suffixes + "trycloudflare.com").distinct()
+        }
+        val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
+        val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
+        if (!url.isNullOrBlank()) {
+            val host = try {
+                java.net.URI(url).host?.lowercase().orEmpty()
+            } catch (_: Exception) {
+                ""
+            }
+            if (host.isNotEmpty() &&
+                host != "localhost" &&
+                host != "127.0.0.1" &&
+                !host.startsWith("TON-")
+            ) {
+                val parts = host.split('.')
+                if (parts.size >= 2) {
+                    val base = parts.takeLast(2).joinToString(".")
+                    allowedSuffixes = (allowedSuffixes + base + host).distinct()
+                }
+                if (isAllowedPublicUrl(url)) fixedPublicUrl = url
+            }
+        }
+    }
+
+    private fun applyTunnelTokenText(tokenRaw: String?) {
+        if (tokenRaw.isNullOrBlank()) return
+        val token = tokenRaw
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") && it.length >= 40 }
+        if (!token.isNullOrBlank()) tunnelToken = token
+    }
+
     private fun loadTunnelSettings() {
         fixedPublicUrl = null
         tunnelToken = null
+        allowedSuffixes = listOf("trycloudflare.com")
+        // 1) Secrets perso dans gamelle-persist (survivent aux OTA publiques).
         try {
-            val cfgRaw = readAssetText("tunnel.config.json")
-            if (!cfgRaw.isNullOrBlank()) {
-                val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
-                val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
-                if (!url.isNullOrBlank() && isAllowedPublicUrl(url)) {
-                    fixedPublicUrl = url
+            applyTunnelConfigText(readPersistText("tunnel.config.json"))
+            applyTunnelTokenText(readPersistText("tunnel.token"))
+        } catch (_: Exception) {
+        }
+        // 2) Fallback assets APK (dev / install privée uniquement — releases publiques = vides).
+        try {
+            val cfgAsset = readAssetText("tunnel.config.json")
+            if (fixedPublicUrl.isNullOrBlank()) applyTunnelConfigText(cfgAsset)
+            // Migre une fois assets → persist si l’APK embarquait encore un secret.
+            if (!cfgAsset.isNullOrBlank() &&
+                readPersistText("tunnel.config.json").isNullOrBlank() &&
+                cfgAsset.contains("\"publicUrl\"") &&
+                !cfgAsset.contains("TON-") &&
+                Regex("\"publicUrl\"\\s*:\\s*\"https?://[^\"]+\"").containsMatchIn(cfgAsset)
+            ) {
+                val url = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgAsset)?.groupValues?.getOrNull(1).orEmpty()
+                if (url.isNotBlank() && !url.contains("TON-")) {
+                    writePersistText("tunnel.config.json", cfgAsset)
+                    applyTunnelConfigText(cfgAsset)
                 }
             }
         } catch (_: Exception) {
         }
         try {
-            val tokenRaw = readAssetText("tunnel.token") ?: ""
-            val token = tokenRaw
-                .lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") }
-            if (!token.isNullOrBlank()) tunnelToken = token
+            val tokAsset = readAssetText("tunnel.token")
+            if (tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
+            if (!tunnelToken.isNullOrBlank() &&
+                readPersistText("tunnel.token").isNullOrBlank() &&
+                !tokAsset.isNullOrBlank() &&
+                tokAsset.trim().length >= 40 &&
+                !tokAsset.contains("REMPLACE")
+            ) {
+                writePersistText("tunnel.token", tokAsset.trim() + "\n")
+            }
         } catch (_: Exception) {
         }
     }
@@ -121,6 +208,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private var screenForcedOff = false
+    private var restoreScreenOffAfterAlarm = false
+    private var alarmScreenLatched = false
     private var userRequestedBackground = false
     private var blackOverlay: View? = null
 
@@ -318,20 +407,34 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "screenOn" -> {
+                    restoreScreenOffAfterAlarm = false
                     applyScreen(true)
                     result.success(true)
                 }
                 "screenOff" -> {
+                    restoreScreenOffAfterAlarm = false
                     applyScreen(false)
                     result.success(true)
                 }
                 "alarmShow" -> {
+                    if (!alarmScreenLatched) {
+                        restoreScreenOffAfterAlarm = screenForcedOff
+                        alarmScreenLatched = true
+                    }
                     applyScreen(true)
                     AlarmNotifier.show(this, call.arguments as? String ?: "")
                     result.success(true)
                 }
                 "alarmHide" -> {
                     AlarmNotifier.hide(this)
+                    alarmScreenLatched = false
+                    if (restoreScreenOffAfterAlarm) {
+                        restoreScreenOffAfterAlarm = false
+                        applyScreen(false)
+                        mainHandler.post {
+                            webEventSink?.success(mapOf("type" to "screenOff"))
+                        }
+                    }
                     result.success(true)
                 }
                 "background" -> {
@@ -439,6 +542,10 @@ class MainActivity : FlutterActivity() {
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     applyScreen(true)
+                    // Resync bouton WebView + contrôleur (écran rallumé au toucher).
+                    mainHandler.post {
+                        webEventSink?.success(mapOf("type" to "screenOn"))
+                    }
                 }
                 true
             }

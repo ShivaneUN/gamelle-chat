@@ -147,6 +147,48 @@ function mergeSchedulesFrom(srcFile) {
 
 mergeSchedulesFrom(path.join(__dirname, 'data', 'schedules.json'));
 mergeSchedulesFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'schedules.json'));
+
+/** Reunion des comptes (par id puis username) — évite la perte à l’OTA. */
+function mergeAccountsFrom(srcFile) {
+  if (!srcFile || srcFile === ACCOUNTS_FILE || !fs.existsSync(srcFile)) return;
+  let incoming = null;
+  try { incoming = JSON.parse(fs.readFileSync(srcFile, 'utf8')); } catch (e) { return; }
+  if (!incoming || !Array.isArray(incoming.users) || !incoming.users.length) return;
+  let current = { users: [] };
+  try {
+    if (fs.existsSync(ACCOUNTS_FILE)) current = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+  } catch (e) {}
+  if (!current || typeof current !== 'object') current = { users: [] };
+  if (!Array.isArray(current.users)) current.users = [];
+  const byId = new Map();
+  const byName = new Map();
+  current.users.forEach((u) => {
+    if (!u || typeof u !== 'object') return;
+    if (u.id) byId.set(String(u.id), u);
+    if (u.username) byName.set(String(u.username).toLowerCase(), u);
+  });
+  let changed = false;
+  incoming.users.forEach((u) => {
+    if (!u || typeof u !== 'object' || !u.username || !u.passHash || !u.salt) return;
+    const id = u.id ? String(u.id) : '';
+    const name = String(u.username).toLowerCase();
+    if (id && byId.has(id)) return;
+    if (byName.has(name)) return;
+    current.users.push(u);
+    if (id) byId.set(id, u);
+    byName.set(name, u);
+    changed = true;
+  });
+  if (changed) {
+    try {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(current, null, 2));
+    } catch (e) {}
+  }
+}
+
+mergeAccountsFrom(path.join(__dirname, 'data', 'accounts.json'));
+mergeAccountsFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'accounts.json'));
 console.log('Stockage persistant :', STORE);
 
 app.use((req, res, next) => {
@@ -438,20 +480,34 @@ app.delete('/api/auth/users/:id', (req, res) => {
 function loadTunnelConfig() {
   const defaults = {
     publicUrl: '',
-    allowedSuffixes: ['juvana.cc', 'trycloudflare.com'],
+    allowedSuffixes: ['trycloudflare.com'],
   };
-  try {
-    const cfgPath = path.join(__dirname, 'tunnel.config.json');
-    if (!fs.existsSync(cfgPath)) return defaults;
-    const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    const publicUrl = String((j && j.publicUrl) || '').replace(/\/$/, '');
-    const suffixes = Array.isArray(j && j.allowedSuffixes) && j.allowedSuffixes.length
-      ? j.allowedSuffixes.map((s) => String(s).toLowerCase())
-      : defaults.allowedSuffixes;
-    return { publicUrl, allowedSuffixes: suffixes };
-  } catch (e) {
-    return defaults;
+  const candidates = [
+    path.join(STORE, 'tunnel.config.json'),
+    path.join(__dirname, 'tunnel.config.json'),
+  ];
+  for (const cfgPath of candidates) {
+    try {
+      if (!fs.existsSync(cfgPath)) continue;
+      const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      const publicUrl = String((j && j.publicUrl) || '').replace(/\/$/, '');
+      if (!publicUrl || publicUrl.includes('TON-')) continue;
+      const suffixes = Array.isArray(j && j.allowedSuffixes) && j.allowedSuffixes.length
+        ? j.allowedSuffixes.map((s) => String(s).toLowerCase())
+        : defaults.allowedSuffixes;
+      // Autorise le domaine de l’URL configurée.
+      try {
+        const host = new URL(publicUrl).hostname.toLowerCase();
+        const parts = host.split('.');
+        if (parts.length >= 2) suffixes.push(parts.slice(-2).join('.'), host);
+      } catch (e) {}
+      return {
+        publicUrl,
+        allowedSuffixes: [...new Set(suffixes.concat(defaults.allowedSuffixes))],
+      };
+    } catch (e) {}
   }
+  return defaults;
 }
 
 const tunnelConfig = loadTunnelConfig();
@@ -459,15 +515,20 @@ const tunnelConfig = loadTunnelConfig();
 function readTunnelToken() {
   const fromEnv = process.env.CLOUDFLARE_TUNNEL_TOKEN || process.env.TUNNEL_TOKEN;
   if (fromEnv && String(fromEnv).trim()) return String(fromEnv).trim();
-  try {
-    const tokenPath = path.join(__dirname, 'tunnel.token');
-    if (!fs.existsSync(tokenPath)) return '';
-    const raw = fs.readFileSync(tokenPath, 'utf8').trim();
-    if (!raw || raw.includes('REMPLACE_MOI')) return '';
-    return raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
-  } catch (e) {
-    return '';
+  const candidates = [
+    path.join(STORE, 'tunnel.token'),
+    path.join(__dirname, 'tunnel.token'),
+  ];
+  for (const tokenPath of candidates) {
+    try {
+      if (!fs.existsSync(tokenPath)) continue;
+      const raw = fs.readFileSync(tokenPath, 'utf8').trim();
+      if (!raw || raw.includes('REMPLACE_MOI') || raw.includes('TON-')) continue;
+      const line = raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
+      if (line.length >= 40) return line;
+    } catch (e) {}
   }
+  return '';
 }
 
 function isAllowedPublicUrl(url) {
@@ -732,6 +793,25 @@ function emitToRole(code, role, event, payload) {
   });
 }
 
+/** Relais live JPEG : volatile si dispo (drop sous charge 4G), sinon emit normal. */
+function emitLiveFrame(code, payload) {
+  const socketIds = io.sockets.adapter.rooms.get(code);
+  if (!socketIds) return;
+  socketIds.forEach((id) => {
+    const s = io.sockets.sockets.get(id);
+    if (!s || s.data.role !== 'controller') return;
+    try {
+      if (s.volatile && typeof s.volatile.emit === 'function') {
+        s.volatile.emit('live-frame', payload);
+      } else {
+        s.emit('live-frame', payload);
+      }
+    } catch (e) {
+      try { s.emit('live-frame', payload); } catch (e2) {}
+    }
+  });
+}
+
 function emitPeers(code, room) {
   for (const id of [...room.controllerIds]) {
     if (!io.sockets.sockets.get(id)) room.controllerIds.delete(id);
@@ -872,7 +952,7 @@ io.on('connection', (socket) => {
     }
     if (!out) return;
     if (forApi && forApi.length) liveJpegs[socket.data.code] = forApi;
-    emitToRole(socket.data.code, 'controller', 'live-frame', out);
+    emitLiveFrame(socket.data.code, out);
   });
 
   // Relais voix : contrôleur ↔ récepteur (pas entre contrôleurs)
@@ -1034,14 +1114,19 @@ io.on('connection', (socket) => {
   socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
   socket.on('screen-on', () => {
     if (!socket.data.code) return;
-    getRoom(socket.data.code).screenOn = true;
+    const room = getRoom(socket.data.code);
+    room.screenOn = true;
+    // Choix explicite pendant une alarme → ne pas forcer le retour off.
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
     notifyFlutter('screen', 'on');
     emitToRole(socket.data.code, 'receiver', 'screen-on');
     emitToRole(socket.data.code, 'controller', 'screen-on');
   });
   socket.on('screen-off', () => {
     if (!socket.data.code) return;
-    getRoom(socket.data.code).screenOn = false;
+    const room = getRoom(socket.data.code);
+    room.screenOn = false;
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
     notifyFlutter('screen', 'off');
     emitToRole(socket.data.code, 'receiver', 'screen-off');
     emitToRole(socket.data.code, 'controller', 'screen-off');
@@ -1110,12 +1195,20 @@ function startRoomAlarm(code, { messageId, duration, text, audioUrl, name, sound
     sequence: seq,
   };
   room._alarmUntil = Date.now() + dur * 1000;
+  // Mémorise si l’écran était off avant l’alarme (pour le remettre après).
+  if (room._restoreScreenOff === undefined) {
+    room._restoreScreenOff = room.screenOn === false;
+  }
+  room.screenOn = true;
   io.to(code).emit('alarm', room._alarmPayload);
   notifyFlutter('screen', 'on');
   notifyFlutter('alarm', JSON.stringify({
     message: spoken || 'C’est l’heure !',
     duration: dur,
   }));
+  // Boutons Écran réc+ctrl → on pendant l’alarme.
+  emitToRole(code, 'receiver', 'screen-on');
+  emitToRole(code, 'controller', 'screen-on');
   room._alarmTimer = setTimeout(() => stopRoomAlarm(code), dur * 1000);
 }
 
@@ -1126,8 +1219,16 @@ function stopRoomAlarm(code) {
   room._alarmTimer = null;
   room._alarmPayload = null;
   room._alarmUntil = 0;
+  const restoreOff = room._restoreScreenOff === true;
+  room._restoreScreenOff = undefined;
   io.to(code).emit('alarm-stop');
   notifyFlutter('alarm-stop', '');
+  if (restoreOff) {
+    room.screenOn = false;
+    notifyFlutter('screen', 'off');
+    emitToRole(code, 'receiver', 'screen-off');
+    emitToRole(code, 'controller', 'screen-off');
+  }
 }
 
 // --- Vérifie toutes les 5s : horaires du jour (tous les jours ou jours choisis) ---
@@ -1197,6 +1298,9 @@ httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
   console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
 });
 
+server.on('error', (err) => {
+  console.error('Serveur HTTPS:', err && err.message ? err.message : err);
+});
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');

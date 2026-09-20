@@ -13,14 +13,17 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=45">
+<link rel="stylesheet" href="/style.css?v=46">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
   <div class="page-head">
     <h1>Contrôleur</h1>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <div id="status" class="status off">Hors ligne</div>
+      <div class="status-wrap">
+        <div id="status" class="status off">Hors ligne</div>
+        <div id="peersPop" class="peers-pop" hidden></div>
+      </div>
       <button id="logoutBtn" class="chip-btn" type="button">Déconnexion</button>
     </div>
   </div>
@@ -67,7 +70,7 @@
         </button>
         <button id="screenOffBtn" class="tile-btn toggle-on" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m3 3 18 18"/></svg>
-          <span class="lbl">Écran off</span>
+          <span class="lbl">Écran</span>
         </button>
       </div>
     </div>
@@ -174,6 +177,6 @@
 <script src="/schedule-ui.js?v=13"></script>
 <script src="/alarm-ui.js?v=5"></script>
 <script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=25"></script>
+<script src="/controller.js?v=29"></script>
 </body>
 </html>

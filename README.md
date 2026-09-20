@@ -1,21 +1,16 @@
 # Gamelle Chat
 
-Prototype à lancer sur la tablette (Termux) ou un PC. Le Récepteur reste près de la gamelle ; le Contrôleur peut être **sur le même WiFi ou en 4G / autre réseau**.
+Prototype à lancer sur la tablette (Termux / APK) ou un PC. Le Récepteur reste près de la gamelle ; le Contrôleur peut être **sur le même WiFi ou en 4G / autre réseau**.
 
 ## Ce qui est inclus
 - Jumelage par code : **plusieurs Contrôleurs** + 1 Récepteur avec le même code
 - **HTTPS local automatique** (certificat auto-signé généré au 1er démarrage)
-- **Accès distant** : tunnel Cloudflare au démarrage, pour ouvrir le Contrôleur depuis n’importe quel réseau
+- **Accès distant** : tunnel Cloudflare (à configurer toi-même), pour ouvrir le Contrôleur depuis n’importe quel réseau
 - **Bibliothèque de messages personnalisés** (texte et/ou audio enregistré)
 - Horaires visibles et modifiables depuis le Contrôleur ET le Récepteur, toujours synchronisés
-- Bouton "Activer le son" obligatoire une fois sur le récepteur
-- Arrêt automatique de l'alarme après la durée programmée, ou **déclenchement / arrêt manuel depuis les 2 appareils**
-- Vue caméra en direct : WebRTC sur le même WiFi, **relais via le serveur hors WiFi**
-- **Choix de la caméra** (avant/arrière/externe) depuis le Contrôleur
-- Prise de photo et vidéo (5s) à distance
-- Galerie : suppression manuelle + purge automatique après 24h **côté Contrôleur uniquement** (copie récepteur gardée sur la tablette)
-- Parler à distance (push-to-talk), y compris hors WiFi
-- Sauvegarde persistante : horaires, messages et audios survivent à un redémarrage du serveur
+- Vue caméra en direct (JPEG + WebRTC selon le réseau)
+- Choix de la caméra, photo / vidéo à distance, galerie, parler à distance
+- Sauvegarde persistante : horaires, messages et audios survivent à un redémarrage
 
 ## Installation
 
@@ -25,43 +20,37 @@ npm install
 npm start
 ```
 
-Le terminal affiche :
-```
-Sur la tablette (récepteur) : https://localhost:3000
-Même WiFi                   : https://192.168.X.X:3000
-Depuis n'importe où (4G / autre WiFi) : https://gamelle.juvana.cc
-```
+Sans tunnel configuré, tu as au minimum le HTTPS local (`https://localhost:3000` / IP LAN).
 
-(Sans `tunnel.token` : URL `trycloudflare.com` variable.)
+## Accès 4G : chaque install a SES propres liens
 
-## Utilisation hors WiFi
+- **Local** : HTTPS auto (`localhost` / IP LAN) — toujours créé au démarrage.
+- **Online** : sans config, un **tunnel Cloudflare rapide** (`*.trycloudflare.com`) est créé — **URL différente à chaque machine / démarrage**.
+- **URL fixe** (optionnel) : crée **ton** compte Cloudflare + Named Tunnel, puis place `tunnel.token` et `tunnel.config.json` dans le stockage persistant de l’app (ou en local pour un build privé). **Ne partage jamais** le token/URL d’un autre.
 
-1. Lance `npm start` **sur la tablette** (elle doit avoir internet)
-2. Sur la tablette : ouvre l’adresse locale, accepte l’avertissement, rôle **Récepteur**, active le son + la caméra
-3. Sur le téléphone (4G ou autre WiFi) : ouvre **`https://gamelle.juvana.cc`** (URL fixe), **même code**, rôle **Contrôleur**
-4. Pas d’avertissement de certificat sur l’URL Cloudflare (vrai HTTPS)
+Les releases publiques GitHub **n’embarquent aucun** lien ni token Cloudflare perso.
 
-### Lien fixe (Named Tunnel) — `juvana.cc`
-
-1. Dans Cloudflare : **Zero Trust → Networks → Tunnels → Create** (nom `gamelle`)
-2. Copie le **token**, crée le fichier `tunnel.token` à la racine du projet (voir `tunnel.token.example`)
-3. Public hostname du tunnel :
-   - **Subdomain** : `gamelle`
-   - **Domain** : `juvana.cc`
-   - **Service** : `http://127.0.0.1:3001`
-4. Pour l’APK : copie aussi `tunnel.token` dans `mobile/android/app/src/main/assets/tunnel.token`
-
-Sans `tunnel.token`, l’app retombe sur le tunnel rapide (`trycloudflare.com`, URL variable).
+1. Compte [Cloudflare](https://dash.cloudflare.com) (gratuit OK)
+2. **Zero Trust → Networks → Tunnels → Create**
+3. Voir `tunnel.token.example` et `tunnel.config.json.example`
+4. Sur Android, les secrets vont dans `gamelle-persist/` (survivent aux OTA)
 
 Pour désactiver le tunnel : `TUNNEL=0 npm start`.
 
+## Utilisation hors WiFi
+
+1. Lance le serveur **sur la tablette** (avec internet)
+2. Tablette : rôle **Récepteur**, active le son + la caméra
+3. Téléphone (4G) : ouvre **ton** URL Cloudflare (celle de *ton* `tunnel.config.json`), connecte-toi avec un compte créé sur la tablette, même code de jumelage
+4. Pas d’avertissement de certificat sur l’URL Cloudflare (vrai HTTPS)
+
 ## ⚠️ Avertissement de sécurité au premier accès local (normal)
 
-Le certificat local est auto-signé, donc le navigateur affiche un avertissement la première fois :
-- Chrome : "Paramètres avancés" puis "Continuer vers... (dangereux)"
-- C’est normal : la connexion reste chiffrée
+Le certificat local est auto-signé :
+- Chrome : "Paramètres avancés" puis "Continuer vers… (dangereux)"
+- Normal : la connexion reste chiffrée
 
 ## Limites connues
 - L’écran du récepteur doit rester allumé (limite du navigateur)
 - La tablette doit rester allumée et connectée à internet pour l’accès 4G
-- Le tunnel rapide Cloudflare change d’URL sans `tunnel.token` ; avec Named Tunnel → `https://gamelle.juvana.cc`
+- Sans Named Tunnel + token, l’URL Cloudflare rapide change à chaque démarrage

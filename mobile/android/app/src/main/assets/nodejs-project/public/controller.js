@@ -60,8 +60,11 @@ if (!code) {
 }
 
 const socket = io({ withCredentials: true });
-let pcCam = null;   // reçoit la caméra du récepteur
+let pcCam = null;   // reçoit la caméra du récepteur (WebRTC si 1 seul ctrl)
 let talkStream = null;
+let peerControllerCount = 1;
+let webrtcLive = false;
+let camWanted = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
@@ -84,16 +87,21 @@ if (logoutBtn) {
   };
 }
 socket.on('peers', ({ receiver, controllers, names }) => {
+  const list = Array.isArray(names) ? names.filter(Boolean) : [];
+  window.__GAMELLE_PEER_NAMES__ = list;
+  peerControllerCount = Number(controllers) || 0;
   if (receiver) {
-    const list = Array.isArray(names) ? names.filter(Boolean) : [];
-    const extra = controllers > 1
-      ? ` · ${controllers} contrôleurs`
-      : (list[0] ? ` · ${list[0]}` : '');
+    const n = peerControllerCount;
+    let extra = '';
+    if (n > 1) extra = ` · ${n} contrôleurs`;
+    else if (list[0]) extra = ` · ${list[0]}`;
     setStatus(true, 'En ligne' + extra);
   } else {
     setStatus(false, 'Hors ligne');
     renderReceiverBattery({ offline: true });
   }
+  renderPeersPop();
+  syncControllerLiveTransport();
 });
 let livePollTimer = null;
 
@@ -105,6 +113,7 @@ function setLivePlaceholder(show) {
 }
 
 function showRelayLive() {
+  if (webrtcLive) return;
   if (remoteVideo) {
     remoteVideo.classList.remove('on');
     remoteVideo.style.display = 'none';
@@ -116,6 +125,7 @@ function showRelayLive() {
 }
 
 function showWebrtcLive() {
+  webrtcLive = true;
   if (remoteRelay) {
     remoteRelay.classList.remove('on');
     remoteRelay.style.display = 'none';
@@ -125,46 +135,18 @@ function showWebrtcLive() {
     remoteVideo.style.display = 'block';
   }
   setLivePlaceholder(false);
-  liveHint.textContent = 'Vue live';
+  liveHint.textContent = 'Vue live · direct';
+  stopLivePoll();
 }
 
 let lastRelayObjectUrl = null;
 let relayShown = false;
 let relayDecoding = false;
 let pendingRelayFrame = null;
-let relayCanvas = null;
-let relayCtx = null;
-
-function ensureRelayCanvas() {
-  if (relayCanvas || !remoteRelay || !remoteRelay.parentNode) return relayCanvas;
-  relayCanvas = document.createElement('canvas');
-  relayCanvas.id = 'remoteRelayCanvas';
-  relayCanvas.setAttribute('aria-hidden', 'true');
-  remoteRelay.parentNode.insertBefore(relayCanvas, remoteRelay);
-  relayCtx = relayCanvas.getContext('2d', { alpha: false, desynchronized: true });
-  return relayCanvas;
-}
 
 function showRelayLiveOnce() {
   if (relayShown) return;
   relayShown = true;
-  const canvas = ensureRelayCanvas();
-  if (canvas) {
-    if (remoteVideo) {
-      remoteVideo.classList.remove('on');
-      remoteVideo.style.display = 'none';
-    }
-    if (remoteRelay) {
-      remoteRelay.classList.remove('on');
-      remoteRelay.style.display = 'none';
-    }
-    canvas.classList.add('on');
-    canvas.style.display = 'block';
-    canvas.style.width = '100%';
-    setLivePlaceholder(false);
-    if (liveHint) liveHint.textContent = 'Vue live';
-    return;
-  }
   showRelayLive();
 }
 
@@ -188,6 +170,7 @@ function frameToBlob(data) {
   }
 }
 
+/** Affiche la frame via <img> + object-fit contain (fiable sur iOS ; canvas y coupe l’image). */
 function flushRelayFrame() {
   if (relayDecoding || pendingRelayFrame == null) return;
   const data = pendingRelayFrame;
@@ -200,56 +183,28 @@ function flushRelayFrame() {
   };
 
   const blob = frameToBlob(data);
-  if (!blob) {
+  if (!blob || !remoteRelay) {
     finish();
     return;
   }
 
-  const paintBitmap = (bmp) => {
-    const canvas = ensureRelayCanvas();
-    if (canvas && relayCtx && bmp) {
-      if (canvas.width !== bmp.width) canvas.width = bmp.width;
-      if (canvas.height !== bmp.height) canvas.height = bmp.height;
-      try {
-        relayCtx.drawImage(bmp, 0, 0);
-      } catch (e) {}
-      try { if (bmp.close) bmp.close(); } catch (e) {}
-      showRelayLiveOnce();
-      finish();
-      return;
+  const url = URL.createObjectURL(blob);
+  const prev = lastRelayObjectUrl;
+  const onDone = () => {
+    if (prev) {
+      try { URL.revokeObjectURL(prev); } catch (e) {}
     }
-    // Fallback <img>
-    const url = URL.createObjectURL(blob);
-    const prev = lastRelayObjectUrl;
-    const onDone = () => {
-      if (prev) {
-        try { URL.revokeObjectURL(prev); } catch (e) {}
-      }
-      lastRelayObjectUrl = url;
-      finish();
-    };
-    if (!remoteRelay) {
-      try { URL.revokeObjectURL(url); } catch (e) {}
-      finish();
-      return;
-    }
-    remoteRelay.onload = onDone;
-    remoteRelay.onerror = onDone;
-    remoteRelay.src = url;
-    showRelayLiveOnce();
+    lastRelayObjectUrl = url;
+    finish();
   };
-
-  if (typeof createImageBitmap === 'function') {
-    createImageBitmap(blob).then(paintBitmap).catch(() => {
-      paintBitmap(null);
-    });
-    return;
-  }
-  paintBitmap(null);
+  remoteRelay.onload = onDone;
+  remoteRelay.onerror = onDone;
+  remoteRelay.src = url;
+  showRelayLiveOnce();
 }
 
 function applyFrame(data) {
-  if (!data) return;
+  if (!data || webrtcLive) return;
   // Garde uniquement la dernière frame (drop le reste = moins de freeze).
   pendingRelayFrame = data;
   flushRelayFrame();
@@ -279,7 +234,7 @@ function startLivePoll() {
     img.src = '/api/live/' + encodeURIComponent(code) + '?t=' + Date.now();
   };
   tick();
-  livePollTimer = setInterval(tick, 400);
+  livePollTimer = setInterval(tick, 280);
 }
 function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
@@ -319,10 +274,11 @@ socket.on('torch-status', (payload) => {
 
 socket.on('cam-status', ({ on }) => {
   setCamDot(on);
+  camWanted = !!on;
   if (!on) {
     stopLivePoll();
+    stopWebrtcReceiver();
     clearLiveView();
-    if (pcCam) { pcCam.close(); pcCam = null; }
     cameraSelect.style.display = 'none';
     cameraList = [];
     flashOn = false;
@@ -330,7 +286,7 @@ socket.on('cam-status', ({ on }) => {
     renderFlashBtn();
   } else {
     liveHint.textContent = 'Caméra allumée, réception de l\'image…';
-    startLivePoll();
+    syncControllerLiveTransport();
   }
 });
 socket.on('room-state', (state) => {
@@ -342,12 +298,18 @@ socket.on('room-state', (state) => {
 
 function clearLiveView() {
   stopLivePoll();
+  webrtcLive = false;
   remoteVideo.srcObject = null;
   remoteVideo.classList.remove('on');
   remoteVideo.style.display = 'none';
+  if (lastRelayObjectUrl) {
+    try { URL.revokeObjectURL(lastRelayObjectUrl); } catch (e) {}
+    lastRelayObjectUrl = null;
+  }
   remoteRelay.removeAttribute('src');
   remoteRelay.classList.remove('on');
   remoteRelay.style.display = 'none';
+  relayShown = false;
   setLivePlaceholder(true);
   liveHint.textContent = 'En attente de la caméra du récepteur…';
 }
@@ -355,8 +317,63 @@ function clearLiveView() {
 function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  const canOpen = on && list.length > 0;
+  statusEl.style.cursor = canOpen ? 'pointer' : 'default';
+  statusEl.title = canOpen ? 'Voir qui est en ligne' : '';
+  if (!canOpen) {
+    const pop = document.getElementById('peersPop');
+    if (pop) pop.hidden = true;
+  }
 }
 setStatus(false, 'Hors ligne');
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderPeersPop() {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    pop.innerHTML = '';
+    return;
+  }
+  pop.innerHTML = '<div class="peers-pop-title">En ligne</div>' +
+    list.map((n) => `<div class="peers-pop-item">${escapeHtml(n)}</div>`).join('');
+}
+
+function togglePeersPop(force) {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    return;
+  }
+  renderPeersPop();
+  if (typeof force === 'boolean') pop.hidden = !force;
+  else pop.hidden = !pop.hidden;
+}
+
+if (statusEl) {
+  statusEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const list = window.__GAMELLE_PEER_NAMES__ || [];
+    if (!list.length) return;
+    togglePeersPop();
+  });
+}
+document.addEventListener('click', () => {
+  const pop = document.getElementById('peersPop');
+  if (pop) pop.hidden = true;
+});
 
 function setCamDot(on) {
   const dot = document.getElementById('camDot');
@@ -465,11 +482,8 @@ let recvScreenOn = true;
 function renderScreenOffBtn() {
   const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(
-    btn,
-    recvScreenOn ? 'Écran off' : 'Écran on',
-    recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
-  );
+  // Comme Son : label fixe, surbrillance = écran allumé (on).
+  setBtnLabel(btn, 'Écran', recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
@@ -628,31 +642,127 @@ cameraSelect.onchange = () => {
   renderFacingBtn();
 };
 
-// --- WebRTC : réception de la caméra du récepteur ---
+// --- WebRTC : réception de la caméra du récepteur (v1 : seulement si 1 contrôleur) ---
+function preferWebrtcRecv() {
+  return camWanted && peerControllerCount === 1;
+}
+
+function stopWebrtcReceiver() {
+  webrtcLive = false;
+  if (pcCam) {
+    try { pcCam.onicecandidate = null; } catch (e) {}
+    try { pcCam.ontrack = null; } catch (e) {}
+    try { pcCam.oniceconnectionstatechange = null; } catch (e) {}
+    try { pcCam.onconnectionstatechange = null; } catch (e) {}
+    try { pcCam.close(); } catch (e) {}
+    pcCam = null;
+  }
+  if (remoteVideo) {
+    remoteVideo.srcObject = null;
+    remoteVideo.classList.remove('on');
+    remoteVideo.style.display = 'none';
+  }
+}
+
+function onWebrtcRecvState() {
+  if (!pcCam) return;
+  const ice = pcCam.iceConnectionState || '';
+  const conn = pcCam.connectionState || '';
+  if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
+    if (remoteVideo && remoteVideo.srcObject) showWebrtcLive();
+    return;
+  }
+  if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
+    webrtcLive = false;
+    if (camWanted && !livePollTimer) startLivePoll();
+    if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
+  }
+}
+
 function ensureCamPeer() {
+  if (!preferWebrtcRecv()) {
+    stopWebrtcReceiver();
+    return null;
+  }
   if (pcCam) return pcCam;
-  pcCam = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+  try {
+    pcCam = new RTCPeerConnection({ iceServers });
+  } catch (e) {
+    pcCam = null;
+    return null;
+  }
   pcCam.onicecandidate = (e) => {
-    if (e.candidate) socket.emit('signal', { channel: 'cam', type: 'candidate', candidate: e.candidate });
+    if (e.candidate) {
+      try {
+        socket.emit('signal', { channel: 'cam', type: 'candidate', candidate: e.candidate });
+      } catch (err) {}
+    }
   };
   pcCam.ontrack = (e) => {
-    remoteVideo.srcObject = e.streams[0];
+    const stream = (e.streams && e.streams[0]) || null;
+    if (remoteVideo && stream) {
+      remoteVideo.srcObject = stream;
+      remoteVideo.playsInline = true;
+      remoteVideo.muted = true;
+      remoteVideo.play().catch(() => {});
+    }
     showWebrtcLive();
   };
+  pcCam.oniceconnectionstatechange = onWebrtcRecvState;
+  pcCam.onconnectionstatechange = onWebrtcRecvState;
+  try {
+    socket.emit('signal', { channel: 'cam', type: 'ready' });
+  } catch (e) {}
   return pcCam;
 }
 
-socket.on('signal', async (payload) => {
-  if (payload.channel === 'cam' && pcCam) {
-    if (payload.type === 'offer') {
-      await pcCam.setRemoteDescription(payload.sdp);
-      const answer = await pcCam.createAnswer();
-      await pcCam.setLocalDescription(answer);
-      socket.emit('signal', { channel: 'cam', type: 'answer', sdp: answer });
-    }
-    if (payload.type === 'answer') await pcCam.setRemoteDescription(payload.sdp);
-    if (payload.type === 'candidate') { try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {} }
+function syncControllerLiveTransport() {
+  if (!camWanted) {
+    stopLivePoll();
+    stopWebrtcReceiver();
+    return;
   }
+  if (preferWebrtcRecv()) {
+    // JPEG en secours tant que le direct WebRTC n’est pas UP.
+    if (!webrtcLive && !livePollTimer) startLivePoll();
+    ensureCamPeer();
+  } else {
+    stopWebrtcReceiver();
+    if (!livePollTimer) startLivePoll();
+    if (liveHint) liveHint.textContent = webrtcLive ? 'Vue live · direct' : 'Vue live';
+  }
+}
+
+socket.on('signal', async (payload) => {
+  if (!payload || payload.channel !== 'cam') return;
+  if (payload.type === 'offer' && payload.sdp) {
+    if (!preferWebrtcRecv()) {
+      // Multi-contrôleurs / pas de cam → ignore l’offre, reste en JPEG.
+      return;
+    }
+    const pc = ensureCamPeer();
+    if (!pc) return;
+    try {
+      await pc.setRemoteDescription(payload.sdp);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('signal', { channel: 'cam', type: 'answer', sdp: pc.localDescription });
+    } catch (e) {
+      webrtcLive = false;
+      if (camWanted && !livePollTimer) startLivePoll();
+    }
+    return;
+  }
+  if (!pcCam) return;
+  try {
+    if (payload.type === 'answer' && payload.sdp) {
+      await pcCam.setRemoteDescription(payload.sdp);
+    }
+    if (payload.type === 'candidate' && payload.candidate) {
+      try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {}
+    }
+  } catch (e) {}
 });
 
 // --- Capture photo / vidéo ---
@@ -669,7 +779,7 @@ const talkPlayState = { nextTime: 0 };
 async function startTalk() {
   try {
     if (!window.isSecureContext) {
-      alert('Cette page n\'est pas en HTTPS. Ouvre https://gamelle.juvana.cc (Contrôleur) ou https://localhost:3000 (tablette).');
+      alert('Cette page n\'est pas en HTTPS. Ouvre l\'URL Cloudflare du Contrôleur (ton tunnel) ou https://localhost:3000 (tablette).');
       return;
     }
     unlockSoundEngine();

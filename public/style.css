@@ -719,13 +719,16 @@ body.live-page .live-wrap {
   background: #000;
 }
 body.live-page .live-wrap video,
-body.live-page .live-wrap img {
+body.live-page .live-wrap img,
+body.live-page .live-wrap canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* contain = image entière (évite la vue « coupée en 2 ») */
+  object-fit: contain;
   border-radius: 14px;
+  background: #000;
 }
 body.live-page .live-placeholder {
   object-fit: contain;

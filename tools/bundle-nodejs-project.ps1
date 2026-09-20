@@ -62,6 +62,33 @@ if (Test-Path $ptr) {
   Set-Content -Path $ptr -Value $c -Encoding utf8NoBOM -NoNewline
 }
 
+# iconv-lite 0.7+ require ./helpers/merge-exports — parfois non extrait par node_flutter.
+# On inline la petite fonction pour éviter « Cannot find module './helpers/merge-exports' ».
+$iconvInline = @"
+function mergeModules (target, module) {
+  var hasOwn = Object.prototype.hasOwnProperty
+  for (var key in module) {
+    if (hasOwn.call(module, key)) {
+      target[key] = module[key]
+    }
+  }
+}
+"@
+foreach ($rel in @(
+  "node_modules\iconv-lite\lib\index.js",
+  "node_modules\iconv-lite\encodings\index.js"
+)) {
+  $ip = Join-Path $Dest $rel
+  if (-not (Test-Path $ip)) { continue }
+  $ic = Get-Content $ip -Raw -Encoding utf8
+  $ic2 = $ic.Replace('var mergeModules = require("./helpers/merge-exports")`n', $iconvInline)
+  $ic2 = $ic2.Replace("var mergeModules = require(`"./helpers/merge-exports`")`n", $iconvInline)
+  $ic2 = $ic2.Replace("var mergeModules = require(`"../lib/helpers/merge-exports`")`n", $iconvInline)
+  if ($ic2 -ne $ic) {
+    Set-Content -Path $ip -Value $ic2 -Encoding utf8NoBOM -NoNewline
+  }
+}
+
 function Get-AssetRel([string]$full) {
   $rel = $full.Substring($Assets.Length).TrimStart('\', '/')
   return ($rel -replace '\\', '/')

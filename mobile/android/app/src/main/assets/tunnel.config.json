@@ -1,4 +1,4 @@
 {
-  "publicUrl": "https://gamelle.juvana.cc",
-  "allowedSuffixes": ["juvana.cc", "trycloudflare.com"]
+  "publicUrl": "",
+  "allowedSuffixes": ["trycloudflare.com"]
 }

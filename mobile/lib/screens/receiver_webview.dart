@@ -44,8 +44,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     if (uri == null || uri.host.isEmpty) return false;
     final h = uri.host.toLowerCase();
     if (h == 'api.trycloudflare.com') return false;
-    if (h == 'juvana.cc' || h.endsWith('.juvana.cc')) return true;
-    return h.endsWith('.trycloudflare.com');
+    if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return false;
+    if (h.startsWith('ton-')) return false;
+    if (h.endsWith('.trycloudflare.com')) return true;
+    return h.contains('.') && !h.endsWith('.local');
   }
   bool _failed = false;
   String _statusHint = '';
@@ -57,8 +59,13 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
     _rendererSub = _events.receiveBroadcastStream().listen((event) {
       final map = event is Map ? Map<String, dynamic>.from(event) : null;
-      if (map?['type'] == 'rendererGone') {
+      final type = map?['type']?.toString();
+      if (type == 'rendererGone') {
         _recoverAfterRendererGone();
+      } else if (type == 'screenOn') {
+        unawaited(_syncScreenOnJs());
+      } else if (type == 'screenOff') {
+        unawaited(_syncScreenOffJs());
       }
     });
     _urlSub = NodeBridgeService.instance.messages.listen((msg) {
@@ -167,6 +174,26 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     try {
       await web.runJavaScript(
         'if (typeof keepCameraAlive === "function") keepCameraAlive();',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncScreenOnJs() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.runJavaScript(
+        'if (typeof syncScreenOnFromNative === "function") syncScreenOnFromNative();',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncScreenOffJs() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.runJavaScript(
+        'if (typeof syncScreenOffFromNative === "function") syncScreenOffFromNative();',
       );
     } catch (_) {}
   }
