@@ -240,6 +240,11 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        // Avant Node / tunnel : sauver token+URL hors APK (maj depuis 0.0.44).
+        try {
+            PersistRescue.rescue(filesDir)
+        } catch (_: Exception) {
+        }
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
