@@ -32,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _applying = false;
   bool _updateAvailable = false;
   bool _allowBackground = false;
+  bool _settingsOpen = false;
   double _updatePct = 0;
   String _updateText = 'Vérifie les releases GitHub.';
 
@@ -206,13 +207,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _openSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const SettingsScreen(),
-      ),
-    );
-    if (mounted) setState(() {});
+  void _toggleSettings() {
+    setState(() => _settingsOpen = !_settingsOpen);
+  }
+
+  void _closeSettings() {
+    if (!_settingsOpen) return;
+    setState(() => _settingsOpen = false);
   }
 
   Future<void> _copy(String value, {String done = 'Lien copié'}) async {
@@ -228,7 +229,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop || !_allowBackground) return;
+        if (didPop) return;
+        if (_settingsOpen) {
+          _closeSettings();
+          return;
+        }
+        if (!_allowBackground) return;
         await _goBackground();
       },
       child: Scaffold(
@@ -248,11 +254,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= 720;
+                      final left = _settingsOpen
+                          ? _settingsPanel(expand: wide)
+                          : _pairingPanel(expand: wide);
                       if (wide) {
                         return Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(child: _pairingPanel(expand: true)),
+                            Expanded(child: left),
                             const SizedBox(width: 16),
                             Expanded(child: _actionsPanel(expand: true)),
                           ],
@@ -260,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
                       return ListView(
                         children: [
-                          _pairingPanel(expand: false),
+                          left,
                           const SizedBox(height: 16),
                           _actionsPanel(expand: false),
                         ],
@@ -273,6 +282,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _settingsPanel({required bool expand}) {
+    final panel = SettingsPanel(
+      embedded: true,
+      onClose: _closeSettings,
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: expand ? SingleChildScrollView(child: panel) : panel,
     );
   }
 
@@ -373,8 +397,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _ActionTile(
         icon: Icons.settings_rounded,
         title: 'Réglages',
-        subtitle: 'Wi-Fi, serveur, Cloudflare, notifications',
-        onTap: _applying ? null : _openSettings,
+        subtitle: _settingsOpen
+            ? 'Fermer pour revoir le QR'
+            : 'Wi-Fi, serveur, Cloudflare, notifications',
+        highlighted: _settingsOpen,
+        onTap: _applying ? null : _toggleSettings,
       ),
       _ActionTile(
         icon: Icons.system_update_alt_rounded,

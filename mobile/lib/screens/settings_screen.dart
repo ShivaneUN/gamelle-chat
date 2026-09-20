@@ -12,14 +12,23 @@ const _tile = Color(0xFF1C2030);
 const _accent = Color(0xFFFF7A45);
 const _muted = Color(0xFF8B93A7);
 
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+/// Panneau réglages (Wi‑Fi, serveur, Cloudflare, notifs) —
+/// page pleine ou panneau gauche de l’accueil (à la place du QR).
+class SettingsPanel extends StatefulWidget {
+  const SettingsPanel({
+    super.key,
+    this.onClose,
+    this.embedded = false,
+  });
+
+  final VoidCallback? onClose;
+  final bool embedded;
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsPanel> createState() => _SettingsPanelState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsPanelState extends State<SettingsPanel> {
   final _bridge = NodeBridgeService.instance;
   StreamSubscription<NodeBridgeMessage>? _sub;
   bool _busy = false;
@@ -106,6 +115,106 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final running = _bridge.status == NodeStatus.running;
     final tunnelOn = _bridge.tunnelEnabled;
 
+    final body = <Widget>[
+      if (widget.embedded) ...[
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Réglages',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (widget.onClose != null)
+              IconButton(
+                tooltip: 'Fermer',
+                onPressed: widget.onClose,
+                icon: const Icon(Icons.close_rounded, color: Colors.white),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+      ],
+      _SettingsCard(
+        child: Column(
+          children: [
+            _SettingsTile(
+              icon: Icons.wifi_rounded,
+              title: 'Wi-Fi local',
+              subtitle: _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), ''),
+              onTap: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
+              trailing: IconButton(
+                tooltip: 'Copier',
+                onPressed: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
+                icon: const Icon(Icons.copy_rounded, color: _accent),
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            _SettingsTile(
+              icon: Icons.power_settings_new_rounded,
+              title: 'Serveur',
+              subtitle: running
+                  ? 'En cours'
+                  : (_busy ? 'Changement…' : (_bridge.lastError ?? 'Arrêté')),
+              trailing: Switch(
+                value: running,
+                activeThumbColor: _accent,
+                onChanged: _busy ? null : _toggleServer,
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            _SettingsTile(
+              icon: Icons.cloud_outlined,
+              title: 'Cloudflare',
+              subtitle: !tunnelOn
+                  ? 'Désactivé — accès local uniquement'
+                  : (_bridge.publicUrl != null
+                      ? 'Tunnel actif'
+                      : (_bridge.tunnelError ?? 'Connexion…')),
+              trailing: Switch(
+                value: tunnelOn,
+                activeThumbColor: _accent,
+                onChanged: _tunnelBusy ? null : _toggleTunnel,
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            _SettingsTile(
+              icon: Icons.notifications_outlined,
+              title: 'Notifications',
+              subtitle: _notifLabel,
+              onTap: _openNotifSettings,
+              trailing: IconButton(
+                tooltip: 'Ouvrir les réglages',
+                onPressed: _openNotifSettings,
+                icon: const Icon(Icons.open_in_new_rounded, color: _accent),
+              ),
+            ),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 12, left: 4, right: 4),
+        child: Text(
+          running
+              ? 'Le Wi-Fi local reste disponible même si Cloudflare est coupé.'
+              : 'Démarre le serveur pour exposer le Wi-Fi local et le tunnel.',
+          style: const TextStyle(color: _muted, fontSize: 13),
+        ),
+      ),
+    ];
+
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: body,
+      );
+    }
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
@@ -116,77 +225,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        children: [
-          _SettingsCard(
-            child: Column(
-              children: [
-                _SettingsTile(
-                  icon: Icons.wifi_rounded,
-                  title: 'Wi-Fi local',
-                  subtitle: _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), ''),
-                  onTap: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-                  trailing: IconButton(
-                    tooltip: 'Copier',
-                    onPressed: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-                    icon: const Icon(Icons.copy_rounded, color: _accent),
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFF2A3142)),
-                _SettingsTile(
-                  icon: Icons.power_settings_new_rounded,
-                  title: 'Serveur',
-                  subtitle: running
-                      ? 'En cours'
-                      : (_busy ? 'Changement…' : (_bridge.lastError ?? 'Arrêté')),
-                  trailing: Switch(
-                    value: running,
-                    activeThumbColor: _accent,
-                    onChanged: _busy ? null : _toggleServer,
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFF2A3142)),
-                _SettingsTile(
-                  icon: Icons.cloud_outlined,
-                  title: 'Cloudflare',
-                  subtitle: !tunnelOn
-                      ? 'Désactivé — accès local uniquement'
-                      : (_bridge.publicUrl != null
-                          ? 'Tunnel actif'
-                          : (_bridge.tunnelError ?? 'Connexion…')),
-                  trailing: Switch(
-                    value: tunnelOn,
-                    activeThumbColor: _accent,
-                    onChanged: _tunnelBusy ? null : _toggleTunnel,
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFF2A3142)),
-                _SettingsTile(
-                  icon: Icons.notifications_outlined,
-                  title: 'Notifications',
-                  subtitle: _notifLabel,
-                  onTap: _openNotifSettings,
-                  trailing: IconButton(
-                    tooltip: 'Ouvrir les réglages',
-                    onPressed: _openNotifSettings,
-                    icon: const Icon(Icons.open_in_new_rounded, color: _accent),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 12, left: 4, right: 4),
-            child: Text(
-              running
-                  ? 'Le Wi-Fi local reste disponible même si Cloudflare est coupé.'
-                  : 'Démarre le serveur pour exposer le Wi-Fi local et le tunnel.',
-              style: const TextStyle(color: _muted, fontSize: 13),
-            ),
-          ),
-        ],
+        children: body,
       ),
     );
   }
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SettingsPanel();
 }
 
 class _SettingsCard extends StatelessWidget {
@@ -256,7 +305,7 @@ class _SettingsTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (trailing != null) trailing!,
+              ?trailing,
             ],
           ),
         ),
