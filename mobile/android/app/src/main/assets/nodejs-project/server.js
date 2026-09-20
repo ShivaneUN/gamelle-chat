@@ -723,12 +723,16 @@ function getRoom(code) {
   return rooms[code];
 }
 
-function emitToRole(code, role, event, payload) {
+function emitToRole(code, role, event, payload, { volatile = false } = {}) {
   const socketIds = io.sockets.adapter.rooms.get(code);
   if (!socketIds) return;
   socketIds.forEach((id) => {
     const s = io.sockets.sockets.get(id);
-    if (s && s.data.role === role) s.emit(event, payload);
+    if (!s || s.data.role !== role) return;
+    try {
+      if (volatile && s.volatile) s.volatile.emit(event, payload);
+      else s.emit(event, payload);
+    } catch (e) {}
   });
 }
 
@@ -872,7 +876,8 @@ io.on('connection', (socket) => {
     }
     if (!out) return;
     if (forApi && forApi.length) liveJpegs[socket.data.code] = forApi;
-    emitToRole(socket.data.code, 'controller', 'live-frame', out);
+    // volatile : en 4G, mieux dropper une frame que saturer le buffer.
+    emitToRole(socket.data.code, 'controller', 'live-frame', out, { volatile: true });
   });
 
   // Relais voix : contrôleur ↔ récepteur (pas entre contrôleurs)
