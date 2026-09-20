@@ -4,8 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../services/node_bridge_service.dart';
-
 const _bg = Color(0xFF0B0D12);
 const _card = Color(0xFF151821);
 const _tile = Color(0xFF1C2030);
@@ -50,13 +48,10 @@ class _AccountsPanelState extends State<AccountsPanel> {
     super.dispose();
   }
 
+  /// Toujours loopback : l’API comptes est réservée à isLocalRequest (127.0.0.1).
+  /// localUrl LAN (192.168.x) fait échouer la liste → « comptes disparus ».
   Uri _api(String path) {
-    final base = NodeBridgeService.instance.localUrl;
-    final uri = Uri.tryParse(base);
-    if (uri == null || uri.host.isEmpty) {
-      return Uri.parse('https://127.0.0.1:3000$path');
-    }
-    return uri.replace(path: path, query: null, fragment: null);
+    return Uri.parse('https://127.0.0.1:3000$path');
   }
 
   Future<HttpClient> _client() async {

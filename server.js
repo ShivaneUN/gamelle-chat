@@ -147,6 +147,48 @@ function mergeSchedulesFrom(srcFile) {
 
 mergeSchedulesFrom(path.join(__dirname, 'data', 'schedules.json'));
 mergeSchedulesFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'schedules.json'));
+
+/** Reunion des comptes (par id puis username) — évite la perte à l’OTA. */
+function mergeAccountsFrom(srcFile) {
+  if (!srcFile || srcFile === ACCOUNTS_FILE || !fs.existsSync(srcFile)) return;
+  let incoming = null;
+  try { incoming = JSON.parse(fs.readFileSync(srcFile, 'utf8')); } catch (e) { return; }
+  if (!incoming || !Array.isArray(incoming.users) || !incoming.users.length) return;
+  let current = { users: [] };
+  try {
+    if (fs.existsSync(ACCOUNTS_FILE)) current = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+  } catch (e) {}
+  if (!current || typeof current !== 'object') current = { users: [] };
+  if (!Array.isArray(current.users)) current.users = [];
+  const byId = new Map();
+  const byName = new Map();
+  current.users.forEach((u) => {
+    if (!u || typeof u !== 'object') return;
+    if (u.id) byId.set(String(u.id), u);
+    if (u.username) byName.set(String(u.username).toLowerCase(), u);
+  });
+  let changed = false;
+  incoming.users.forEach((u) => {
+    if (!u || typeof u !== 'object' || !u.username || !u.passHash || !u.salt) return;
+    const id = u.id ? String(u.id) : '';
+    const name = String(u.username).toLowerCase();
+    if (id && byId.has(id)) return;
+    if (byName.has(name)) return;
+    current.users.push(u);
+    if (id) byId.set(id, u);
+    byName.set(name, u);
+    changed = true;
+  });
+  if (changed) {
+    try {
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(current, null, 2));
+    } catch (e) {}
+  }
+}
+
+mergeAccountsFrom(path.join(__dirname, 'data', 'accounts.json'));
+mergeAccountsFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'accounts.json'));
 console.log('Stockage persistant :', STORE);
 
 app.use((req, res, next) => {
