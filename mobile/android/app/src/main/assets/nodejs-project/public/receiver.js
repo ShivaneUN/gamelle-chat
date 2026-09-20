@@ -339,10 +339,10 @@ function unlockSoundEngine() {
   }
 }
 
-function renderUnlockSoundBtn() {
-  const btn = document.getElementById('unlockSoundBtn');
+function renderTalkSoundBtn() {
+  const btn = document.getElementById('talkSoundBtn');
   if (!btn) return;
-  setBtnLabel(btn, talkSoundOn ? 'Son' : 'Activer le son', talkSoundOn ? 'cta toggle-on' : 'cta');
+  setBtnLabel(btn, 'Son', talkSoundOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 
 function renderAlarmSoundBtn() {
@@ -356,12 +356,12 @@ function renderCamBtn() {
   setBtnLabel(camBtn, 'Caméra', camOn ? 'chip-btn toggle-on' : 'chip-btn toggle-off');
 }
 
-const unlockSoundBtn = document.getElementById('unlockSoundBtn');
-if (unlockSoundBtn) {
-  unlockSoundBtn.onclick = () => {
+const talkSoundBtn = document.getElementById('talkSoundBtn');
+if (talkSoundBtn) {
+  talkSoundBtn.onclick = () => {
     talkSoundOn = !talkSoundOn;
     if (talkSoundOn) unlockSoundEngine();
-    renderUnlockSoundBtn();
+    renderTalkSoundBtn();
   };
 }
 
@@ -372,7 +372,7 @@ document.getElementById('alarmSoundBtn').onclick = () => {
   renderAlarmSoundBtn();
 };
 unlockSoundEngine();
-renderUnlockSoundBtn();
+renderTalkSoundBtn();
 renderAlarmSoundBtn();
 document.addEventListener('pointerdown', unlockSoundEngine);
 document.addEventListener('touchstart', unlockSoundEngine, { passive: true });
@@ -402,22 +402,41 @@ if (bgBtn) {
   };
 }
 
-// Turn screen off local (style Android Hub) — vrai noir natif, caméra reste active.
+function renderScreenOffBtn() {
+  const btn = document.getElementById('screenOffBtn');
+  if (!btn) return;
+  setBtnLabel(
+    btn,
+    screenOn ? 'Écran off' : 'Écran on',
+    screenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
+  );
+}
+
 const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
   screenOffBtn.onclick = () => {
-    screenOn = false;
-    nativeHost('off');
+    screenOn = !screenOn;
+    if (screenOn) {
+      nativeHost('on');
+      socket.emit('screen-on');
+    } else {
+      nativeHost('off');
+      socket.emit('screen-off');
+    }
+    renderScreenOffBtn();
   };
 }
+renderScreenOffBtn();
 
 socket.on('screen-on', () => {
   screenOn = true;
   nativeHost('on');
+  renderScreenOffBtn();
 });
 socket.on('screen-off', () => {
   screenOn = false;
   nativeHost('off');
+  renderScreenOffBtn();
 });
 
 let talkCapture = null;

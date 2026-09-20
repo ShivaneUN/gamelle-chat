@@ -313,27 +313,31 @@ renderTalkSoundBtn();
 renderAlarmSoundBtn();
 
 let recvScreenOn = true;
-function renderScreenBtn() {
-  const btn = document.getElementById('screenBtn');
+function renderScreenOffBtn() {
+  const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(btn, 'Écran', recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
+  setBtnLabel(
+    btn,
+    recvScreenOn ? 'Écran off' : 'Écran on',
+    recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
+  );
 }
-const screenBtn = document.getElementById('screenBtn');
-if (screenBtn) {
-  screenBtn.onclick = () => {
+const screenOffBtn = document.getElementById('screenOffBtn');
+if (screenOffBtn) {
+  screenOffBtn.onclick = () => {
     recvScreenOn = !recvScreenOn;
     socket.emit(recvScreenOn ? 'screen-on' : 'screen-off');
-    renderScreenBtn();
+    renderScreenOffBtn();
   };
 }
-renderScreenBtn();
+renderScreenOffBtn();
 socket.on('screen-on', () => {
   recvScreenOn = true;
-  renderScreenBtn();
+  renderScreenOffBtn();
 });
 socket.on('screen-off', () => {
   recvScreenOn = false;
-  renderScreenBtn();
+  renderScreenOffBtn();
 });
 
 document.addEventListener('pointerdown', unlockSoundEngine);
