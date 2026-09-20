@@ -1053,14 +1053,19 @@ io.on('connection', (socket) => {
   socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
   socket.on('screen-on', () => {
     if (!socket.data.code) return;
-    getRoom(socket.data.code).screenOn = true;
+    const room = getRoom(socket.data.code);
+    room.screenOn = true;
+    // Choix explicite pendant une alarme → ne pas forcer le retour off.
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
     notifyFlutter('screen', 'on');
     emitToRole(socket.data.code, 'receiver', 'screen-on');
     emitToRole(socket.data.code, 'controller', 'screen-on');
   });
   socket.on('screen-off', () => {
     if (!socket.data.code) return;
-    getRoom(socket.data.code).screenOn = false;
+    const room = getRoom(socket.data.code);
+    room.screenOn = false;
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
     notifyFlutter('screen', 'off');
     emitToRole(socket.data.code, 'receiver', 'screen-off');
     emitToRole(socket.data.code, 'controller', 'screen-off');
@@ -1129,12 +1134,20 @@ function startRoomAlarm(code, { messageId, duration, text, audioUrl, name, sound
     sequence: seq,
   };
   room._alarmUntil = Date.now() + dur * 1000;
+  // Mémorise si l’écran était off avant l’alarme (pour le remettre après).
+  if (room._restoreScreenOff === undefined) {
+    room._restoreScreenOff = room.screenOn === false;
+  }
+  room.screenOn = true;
   io.to(code).emit('alarm', room._alarmPayload);
   notifyFlutter('screen', 'on');
   notifyFlutter('alarm', JSON.stringify({
     message: spoken || 'C’est l’heure !',
     duration: dur,
   }));
+  // Boutons Écran réc+ctrl → on pendant l’alarme.
+  emitToRole(code, 'receiver', 'screen-on');
+  emitToRole(code, 'controller', 'screen-on');
   room._alarmTimer = setTimeout(() => stopRoomAlarm(code), dur * 1000);
 }
 
@@ -1145,8 +1158,16 @@ function stopRoomAlarm(code) {
   room._alarmTimer = null;
   room._alarmPayload = null;
   room._alarmUntil = 0;
+  const restoreOff = room._restoreScreenOff === true;
+  room._restoreScreenOff = undefined;
   io.to(code).emit('alarm-stop');
   notifyFlutter('alarm-stop', '');
+  if (restoreOff) {
+    room.screenOn = false;
+    notifyFlutter('screen', 'off');
+    emitToRole(code, 'receiver', 'screen-off');
+    emitToRole(code, 'controller', 'screen-off');
+  }
 }
 
 // --- Vérifie toutes les 5s : horaires du jour (tous les jours ou jours choisis) ---

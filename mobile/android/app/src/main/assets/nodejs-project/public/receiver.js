@@ -458,11 +458,28 @@ if (bgBtn) {
 function renderScreenOffBtn() {
   const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(
-    btn,
-    screenOn ? 'Écran off' : 'Écran on',
-    screenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
-  );
+  // Comme Son : label fixe, surbrillance = écran allumé (on).
+  setBtnLabel(btn, 'Écran', screenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
+}
+
+/** Écran rallumé au toucher (overlay natif) → resync bouton + contrôleur. */
+function syncScreenOnFromNative() {
+  if (screenOn) return;
+  screenOn = true;
+  renderScreenOffBtn();
+  try {
+    socket.emit('screen-on');
+  } catch (e) {}
+}
+
+/** Écran remis off après alarme (natif) → resync bouton + contrôleur. */
+function syncScreenOffFromNative() {
+  if (!screenOn) return;
+  screenOn = false;
+  renderScreenOffBtn();
+  try {
+    socket.emit('screen-off');
+  } catch (e) {}
 }
 
 const screenOffBtn = document.getElementById('screenOffBtn');
