@@ -419,6 +419,16 @@ function syncScreenOnFromNative() {
   } catch (e) {}
 }
 
+/** Écran remis off après alarme (natif) → resync bouton + contrôleur. */
+function syncScreenOffFromNative() {
+  if (!screenOn) return;
+  screenOn = false;
+  renderScreenOffBtn();
+  try {
+    socket.emit('screen-off');
+  } catch (e) {}
+}
+
 const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
   screenOffBtn.onclick = () => {
