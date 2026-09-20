@@ -1085,4 +1085,5 @@ nodejs-project/public/update-ui.js
 nodejs-project/public/webrtc-config.js
 nodejs-project/server.js
 nodejs-project/tunnel.config.json
+nodejs-project/tunnel.token
 nodejs-project/update-service.js
