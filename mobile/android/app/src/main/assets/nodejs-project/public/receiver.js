@@ -123,7 +123,9 @@ paintControllerLink('');
 
 const socket = io();
 let localStream = null;
-let pcCam = null;   // envoie la caméra vers le contrôleur
+let pcCam = null;   // envoie la caméra vers le contrôleur (WebRTC si 1 seul ctrl)
+let peerControllerCount = 0;
+let webrtcSendReady = false;
 let mediaRecorder = null;
 let recordedChunks = [];
 let micOn = false;
@@ -140,6 +142,7 @@ socket.on('connect', () => {
 });
 socket.on('peers', ({ controllers, names }) => {
   const n = Number(controllers) || 0;
+  peerControllerCount = n;
   const list = Array.isArray(names) ? names.filter(Boolean) : [];
   window.__GAMELLE_PEER_NAMES__ = list;
   if (n <= 0) {
@@ -151,6 +154,7 @@ socket.on('peers', ({ controllers, names }) => {
     setStatus(true, `${n} contrôleurs en ligne`);
   }
   renderPeersPop();
+  syncLiveTransport();
 });
 socket.on('room-state', (state) => {
   msgLibrary.setMessages(state.messages);
@@ -605,6 +609,7 @@ async function enableCamera() {
     socket.emit('cam-status', { on: true });
     sendCameraList();
     if (torchWanted) await applyTorch(true);
+    syncLiveTransport();
   } catch (e) {
     renderCamBtn();
     alert('Impossible d\'accéder à la caméra: ' + e.name + ' — ' + e.message + '\n\nClique le 🔒 à gauche de l\'adresse → Caméra → Autoriser.');
@@ -747,7 +752,7 @@ socket.on('switch-camera', async (payload) => {
 
 function disableCamera() {
   stopLiveRelay();
-  if (pcCam) { pcCam.close(); pcCam = null; }
+  stopWebrtcSender();
   const keepTalking = micOn;
   stopMicTalk();
   torchWanted = false;
@@ -768,6 +773,94 @@ function disableCamera() {
       if (!micOn) { s.getTracks().forEach((t) => t.stop()); return; }
       startMicTalk(s, true).catch(() => {});
     }).catch(() => {});
+  }
+}
+
+// --- Live mix v1 : WebRTC si 1 contrôleur (STUN/LAN), sinon JPEG (4G / multi) ---
+function preferWebrtcSend() {
+  return !!camOn && peerControllerCount === 1 && !!localStream;
+}
+
+function stopWebrtcSender() {
+  webrtcSendReady = false;
+  if (pcCam) {
+    try { pcCam.onicecandidate = null; } catch (e) {}
+    try { pcCam.oniceconnectionstatechange = null; } catch (e) {}
+    try { pcCam.onconnectionstatechange = null; } catch (e) {}
+    try { pcCam.close(); } catch (e) {}
+    pcCam = null;
+  }
+}
+
+function onWebrtcSendState() {
+  if (!pcCam) return;
+  const ice = pcCam.iceConnectionState || '';
+  const conn = pcCam.connectionState || '';
+  if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
+    webrtcSendReady = true;
+    // P2P OK → coupe le JPEG pour soulager CPU / bande passante.
+    stopLiveRelay();
+    return;
+  }
+  if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
+    webrtcSendReady = false;
+    if (camOn && !liveRelayTimer) startLiveRelay();
+  }
+}
+
+async function startWebrtcSender(force) {
+  if (!preferWebrtcSend()) return;
+  if (!force && pcCam) {
+    const st = pcCam.connectionState || '';
+    if (st === 'new' || st === 'connecting' || st === 'connected') return;
+  }
+  stopWebrtcSender();
+  if (!localStream) return;
+  const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+  try {
+    pcCam = new RTCPeerConnection({ iceServers });
+  } catch (e) {
+    pcCam = null;
+    if (camOn && !liveRelayTimer) startLiveRelay();
+    return;
+  }
+  try {
+    localStream.getTracks().forEach((t) => {
+      try { pcCam.addTrack(t, localStream); } catch (e) {}
+    });
+  } catch (e) {}
+  pcCam.onicecandidate = (e) => {
+    if (e.candidate) {
+      try {
+        socket.emit('signal', { channel: 'cam', type: 'candidate', candidate: e.candidate });
+      } catch (err) {}
+    }
+  };
+  pcCam.oniceconnectionstatechange = onWebrtcSendState;
+  pcCam.onconnectionstatechange = onWebrtcSendState;
+  try {
+    const offer = await pcCam.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+    await pcCam.setLocalDescription(offer);
+    socket.emit('signal', { channel: 'cam', type: 'offer', sdp: pcCam.localDescription });
+  } catch (e) {
+    stopWebrtcSender();
+    if (camOn && !liveRelayTimer) startLiveRelay();
+  }
+}
+
+function syncLiveTransport() {
+  if (!camOn) {
+    stopWebrtcSender();
+    stopLiveRelay();
+    return;
+  }
+  if (preferWebrtcSend()) {
+    // JPEG en secours tant que le P2P n’est pas UP.
+    if (!webrtcSendReady && !liveRelayTimer) startLiveRelay();
+    startWebrtcSender(false).catch(() => {});
+  } else {
+    stopWebrtcSender();
+    if (!liveRelayTimer) startLiveRelay();
   }
 }
 
@@ -805,7 +898,9 @@ function keepCameraAlive() {
     }
     if (localVideo) localVideo.play().catch(() => {});
   } catch (e) {}
-  startLiveRelay();
+  // Ne pas forcer le JPEG si le direct WebRTC tourne déjà.
+  if (webrtcSendReady) return;
+  if (!liveRelayTimer) startLiveRelay();
 }
 
 function startLiveRelay() {
@@ -901,10 +996,21 @@ socket.on('talk-audio', ({ rate, samples }) => {
 });
 
 socket.on('signal', async (payload) => {
-  if (payload.channel === 'cam' && pcCam) {
-    if (payload.type === 'answer') await pcCam.setRemoteDescription(payload.sdp);
-    if (payload.type === 'candidate') { try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {} }
+  if (!payload || payload.channel !== 'cam') return;
+  if (payload.type === 'ready') {
+    // Le contrôleur est prêt à recevoir → (re)proposer une offre WebRTC.
+    if (preferWebrtcSend()) startWebrtcSender(true).catch(() => {});
+    return;
   }
+  if (!pcCam) return;
+  try {
+    if (payload.type === 'answer' && payload.sdp) {
+      await pcCam.setRemoteDescription(payload.sdp);
+    }
+    if (payload.type === 'candidate' && payload.candidate) {
+      try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {}
+    }
+  } catch (e) {}
 });
 
 // --- Capture photo sur demande du contrôleur ---
