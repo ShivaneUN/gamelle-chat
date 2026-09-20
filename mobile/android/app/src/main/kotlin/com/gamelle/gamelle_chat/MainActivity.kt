@@ -71,6 +71,8 @@ class MainActivity : FlutterActivity() {
     }
 
     private var screenForcedOff = false
+    private var restoreScreenOffAfterAlarm = false
+    private var alarmScreenLatched = false
     private var userRequestedBackground = false
     private var blackOverlay: View? = null
 
@@ -268,20 +270,34 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "screenOn" -> {
+                    restoreScreenOffAfterAlarm = false
                     applyScreen(true)
                     result.success(true)
                 }
                 "screenOff" -> {
+                    restoreScreenOffAfterAlarm = false
                     applyScreen(false)
                     result.success(true)
                 }
                 "alarmShow" -> {
+                    if (!alarmScreenLatched) {
+                        restoreScreenOffAfterAlarm = screenForcedOff
+                        alarmScreenLatched = true
+                    }
                     applyScreen(true)
                     AlarmNotifier.show(this, call.arguments as? String ?: "")
                     result.success(true)
                 }
                 "alarmHide" -> {
                     AlarmNotifier.hide(this)
+                    alarmScreenLatched = false
+                    if (restoreScreenOffAfterAlarm) {
+                        restoreScreenOffAfterAlarm = false
+                        applyScreen(false)
+                        mainHandler.post {
+                            webEventSink?.success(mapOf("type" to "screenOff"))
+                        }
+                    }
                     result.success(true)
                 }
                 "background" -> {
