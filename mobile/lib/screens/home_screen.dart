@@ -92,18 +92,23 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final s = await GithubUpdateService.instance.check();
       if (!mounted) return;
+      // Un seul setState : available + fin de busy, sinon le bouton reste sur Vérifier.
       setState(() {
         _updateAvailable = s.available;
-        _updateText = s.message;
+        _updateText = s.message.isNotEmpty
+            ? s.message
+            : (s.available
+                ? 'Mise à jour disponible (${s.local} → ${s.remote}).'
+                : 'Déjà à jour.');
+        _updateBusy = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _updateAvailable = false;
         _updateText = 'Impossible de vérifier GitHub.';
+        _updateBusy = false;
       });
-    } finally {
-      if (mounted) setState(() => _updateBusy = false);
     }
   }
 
@@ -121,6 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _updateAvailable = s.available;
         _updateText = s.message;
         if (s.ok) _updatePct = 1;
+        _updateBusy = false;
+        _applying = false;
       });
       if (s.ok && s.install) {
         setState(() => _updateText = s.message.isNotEmpty
@@ -139,14 +146,9 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _updateAvailable = false;
         _updateText = 'Échec de la mise à jour.';
+        _updateBusy = false;
+        _applying = false;
       });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _updateBusy = false;
-          _applying = false;
-        });
-      }
     }
   }
 
@@ -409,11 +411,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
             if (!_applying) ...[
               const SizedBox(height: 10),
+              // Un seul bouton : Vérifier → Installer dès qu’une maj est détectée.
               if (_updateAvailable)
                 FilledButton(
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: _accent,
+                    minimumSize: const Size.fromHeight(44),
                   ),
                   onPressed: _updateBusy ? null : _applyUpdate,
                   child: const Text('Installer'),
@@ -424,6 +428,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Color(0x55FFFFFF)),
+                    minimumSize: const Size.fromHeight(44),
                   ),
                   child: Text(_updateBusy ? 'Vérification…' : 'Vérifier'),
                 ),
@@ -439,23 +444,18 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ];
 
-    final list = expand
-        ? Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                Expanded(child: tiles[i]),
-              ],
-            ],
-          )
-        : Column(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                tiles[i],
-              ],
-            ],
-          );
+    // ListView : la tuile Mises à jour (bouton Installer) n’est plus écrasée
+    // par des Expanded de hauteur égale.
+    final list = ListView(
+      shrinkWrap: !expand,
+      physics: expand ? null : const NeverScrollableScrollPhysics(),
+      children: [
+        for (var i = 0; i < tiles.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          tiles[i],
+        ],
+      ],
+    );
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -556,11 +556,11 @@ class _ActionTile extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (extra != null)
-                    if (fill)
-                      Flexible(child: SingleChildScrollView(child: extra!))
-                    else
-                      extra!,
+                  if (extra != null) ...[
+                    const SizedBox(height: 4),
+                    // Toujours visible (pas de Flexible qui clippe Installer).
+                    extra!,
+                  ],
                 ],
               ),
             ),

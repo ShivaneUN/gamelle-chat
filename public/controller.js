@@ -316,11 +316,8 @@ let recvScreenOn = true;
 function renderScreenOffBtn() {
   const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(
-    btn,
-    recvScreenOn ? 'Écran off' : 'Écran on',
-    recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
-  );
+  // Comme Son : label fixe, surbrillance = écran allumé (on).
+  setBtnLabel(btn, 'Écran', recvScreenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
 }
 const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
