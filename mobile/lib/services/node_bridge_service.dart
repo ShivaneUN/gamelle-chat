@@ -103,8 +103,11 @@ class NodeBridgeService {
   bool _isAllowedPublicHost(String host) {
     final h = host.toLowerCase();
     if (h.isEmpty || h == 'api.trycloudflare.com') return false;
-    if (h == 'TON-DOMAINE.tld' || h.endsWith('.TON-DOMAINE.tld')) return true;
-    return h.endsWith('.trycloudflare.com');
+    if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return false;
+    if (h.startsWith('ton-')) return false;
+    if (h.endsWith('.trycloudflare.com')) return true;
+    // Named Tunnel perso : domaine public (pas de domaine hardcodé).
+    return h.contains('.') && !h.endsWith('.local');
   }
 
   bool _isAllowedPublicUrl(String url) {
