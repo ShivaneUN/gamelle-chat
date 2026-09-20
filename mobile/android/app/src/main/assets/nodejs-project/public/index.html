@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-store">
-<title>Gamelle Chat</title>
+<title>Gamelle Chat — Connexion</title>
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -13,39 +13,28 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=40">
+<link rel="stylesheet" href="/style.css?v=43">
 </head>
 <body>
 <div class="wrap center">
-  <h1>🐾 Gamelle Chat</h1>
-  <p class="muted">Ouverture du contrôleur…</p>
+  <h1>Gamelle Chat</h1>
+  <p class="muted">Connexion contrôleur</p>
+  <form id="loginForm" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
+    <label class="hint" for="username">Identifiant</label>
+    <input id="username" name="username" autocomplete="username" required
+      style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+    <label class="hint" for="password">Mot de passe</label>
+    <div style="position:relative;margin:6px 0 14px;">
+      <input id="password" name="password" type="password" autocomplete="current-password" required
+        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+      <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
+        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
+    </div>
+    <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"></p>
+    <button id="loginBtn" class="chip-btn toggle-on" type="submit" style="width:100%;justify-content:center;">Se connecter</button>
+  </form>
+  <p class="muted" style="font-size:13px;">Les comptes se créent uniquement sur la tablette (Accueil → Comptes).</p>
 </div>
-<script>
-(async function openController() {
-  for (;;) {
-    try {
-      const j = await fetch('/api/active-code').then((r) => r.json());
-      const code = j && j.code ? String(j.code).trim() : '';
-      if (code.length >= 4) {
-        try { sessionStorage.setItem('gamellePairCode', code); } catch (e) {}
-        try { localStorage.setItem('gamellePairCode', code); } catch (e) {}
-        location.replace('/controller.html');
-        return;
-      }
-    } catch (e) {}
-    try {
-      const info = await fetch('/api/info').then((r) => r.json());
-      const code = info && info.pairCode ? String(info.pairCode).trim() : '';
-      if (code.length >= 4) {
-        try { sessionStorage.setItem('gamellePairCode', code); } catch (e) {}
-        try { localStorage.setItem('gamellePairCode', code); } catch (e) {}
-        location.replace('/controller.html');
-        return;
-      }
-    } catch (e) {}
-    await new Promise((r) => setTimeout(r, 800));
-  }
-})();
-</script>
+<script src="/login.js?v=1"></script>
 </body>
 </html>

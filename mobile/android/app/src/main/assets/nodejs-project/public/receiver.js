@@ -496,7 +496,11 @@ function renderCamBtnPending(on) {
 
 async function enableCamera() {
   try {
-    const videoConstraints = { facingMode: { ideal: 'environment' }, width: { ideal: 640 } };
+    const videoConstraints = {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 640 },
+      frameRate: { ideal: 24, max: 30 },
+    };
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
@@ -605,12 +609,12 @@ socket.on('switch-camera', async (payload) => {
 
   const videoAttempts = [];
   if (deviceId) {
-    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 } });
-    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 } });
+    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
   }
-  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 } });
-  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 } });
-  videoAttempts.push({ width: { ideal: 640 } });
+  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+  videoAttempts.push({ width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
 
   let newStream = null;
   let lastErr = null;
@@ -738,56 +742,78 @@ function startLiveRelay() {
   stopLiveRelay();
   keepJsAwake();
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   liveGrabber = null;
   liveGrabberTrack = null;
+  let busy = false;
+  let lastSent = 0;
+  // Relais JPEG (4G / tunnel) : viser ~12 fps sans saturer Socket.io.
+  const INTERVAL_MS = 80;
+  const WIDTH = 320;
+  const QUALITY = 0.52;
+
+  const sendJpeg = (blobOrB64) => {
+    if (!camOn) {
+      busy = false;
+      return;
+    }
+    if (typeof blobOrB64 === 'string') {
+      socket.emit('live-frame', blobOrB64);
+      busy = false;
+      return;
+    }
+    if (blobOrB64 && typeof blobOrB64.arrayBuffer === 'function') {
+      blobOrB64.arrayBuffer().then((buf) => {
+        if (camOn) socket.emit('live-frame', buf);
+        busy = false;
+      }).catch(() => { busy = false; });
+      return;
+    }
+    busy = false;
+  };
+
   const tick = () => {
-    if (!camOn || !localStream) return;
+    if (!camOn || !localStream || !localVideo) return;
+    if (busy) return;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (now - lastSent < INTERVAL_MS) return;
     const track = localStream.getVideoTracks()[0];
     if (!track || track.readyState !== 'live') return;
-    const paint = (srcW, srcH, draw) => {
-      if (!srcW || !srcH) return;
-      const w = 240;
-      const h = Math.max(1, Math.round(srcH * (w / srcW)));
-      canvas.width = w;
-      canvas.height = h;
-      try { draw(w, h); } catch (e) { return; }
-      const data = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
-      if (data) socket.emit('live-frame', data);
-    };
-    if (typeof ImageCapture === 'function') {
-      try {
-        if (liveGrabberTrack !== track) {
-          liveGrabber = new ImageCapture(track);
-          liveGrabberTrack = track;
-        }
-        liveGrabber.grabFrame().then((bmp) => {
-          paint(bmp.width, bmp.height, (w, h) => {
-            ctx.drawImage(bmp, 0, 0, w, h);
-            if (bmp.close) bmp.close();
-          });
-        }).catch(() => {
-          liveGrabber = null;
-          liveGrabberTrack = null;
-          if (localVideo.videoWidth) {
-            paint(localVideo.videoWidth, localVideo.videoHeight, (w, h) => {
-              ctx.drawImage(localVideo, 0, 0, w, h);
-            });
-          }
-        });
-        return;
-      } catch (e) {
-        liveGrabber = null;
-        liveGrabberTrack = null;
-      }
+    const srcW = localVideo.videoWidth;
+    const srcH = localVideo.videoHeight;
+    if (!srcW || !srcH) return;
+
+    const w = WIDTH;
+    const h = Math.max(1, Math.round(srcH * (w / srcW)));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    try {
+      ctx.drawImage(localVideo, 0, 0, w, h);
+    } catch (e) {
+      return;
     }
-    if (localVideo.videoWidth) {
-      paint(localVideo.videoWidth, localVideo.videoHeight, (w, h) => {
-        ctx.drawImage(localVideo, 0, 0, w, h);
-      });
+
+    busy = true;
+    lastSent = now;
+    if (typeof canvas.toBlob === 'function') {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          busy = false;
+          return;
+        }
+        sendJpeg(blob);
+      }, 'image/jpeg', QUALITY);
+      return;
+    }
+    try {
+      const data = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
+      sendJpeg(data || '');
+    } catch (e) {
+      busy = false;
     }
   };
-  liveRelayTimer = setInterval(tick, 250);
+
+  liveRelayTimer = setInterval(tick, 40);
   tick();
 }
 function stopLiveRelay() {

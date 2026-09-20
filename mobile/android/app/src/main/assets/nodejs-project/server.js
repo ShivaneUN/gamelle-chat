@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const selfsigned = require('selfsigned');
 const updater = require('./update-service');
@@ -84,7 +85,12 @@ try {
     throw e;
   }
 }
-const io = new Server(server, { maxHttpBufferSize: 5e7, pingTimeout: 30000, pingInterval: 25000 });
+const io = new Server(server, {
+  maxHttpBufferSize: 5e7,
+  pingTimeout: 30000,
+  pingInterval: 25000,
+  cors: { origin: true, credentials: true },
+});
 
 let publicUrl = null;
 const PORT = Number(process.env.PORT) || 3000;
@@ -97,6 +103,10 @@ const AUDIO_DIR = path.join(STORE, 'uploads', 'audio');
 const DATA_DIR = path.join(STORE, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'schedules.json');
 const ACTIVE_CODE_FILE = path.join(DATA_DIR, 'active-code.json');
+const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const SESSION_COOKIE = 'gamelle_session';
+const SESSION_MAX_AGE_SEC = 365 * 24 * 3600;
 copyDirIfMissing(path.join(__dirname, 'uploads', 'receiver'), RECEIVER_DIR);
 copyDirIfMissing(path.join(__dirname, 'uploads', 'controller'), CONTROLLER_DIR);
 copyDirIfMissing(path.join(__dirname, 'uploads', 'audio'), AUDIO_DIR);
@@ -145,6 +155,127 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(express.json({ limit: '50mb' }));
+
+function loadJsonFile(file, fallback) {
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return j && typeof j === 'object' ? j : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveJsonFile(file, data) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  } catch (e) {}
+}
+
+function isLocalRequest(req) {
+  const raw = String(req.socket && req.socket.remoteAddress || '');
+  const ip = raw.replace(/^::ffff:/i, '');
+  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+}
+
+function parseCookies(req) {
+  const out = {};
+  const raw = String(req.headers && req.headers.cookie || '');
+  raw.split(';').forEach((part) => {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (!k) return;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch (e) {
+      out[k] = v;
+    }
+  });
+  return out;
+}
+
+function readAccounts() {
+  const j = loadJsonFile(ACCOUNTS_FILE, { users: [] });
+  if (!Array.isArray(j.users)) j.users = [];
+  return j;
+}
+
+function writeAccounts(data) {
+  saveJsonFile(ACCOUNTS_FILE, data);
+}
+
+function readSessions() {
+  const j = loadJsonFile(SESSIONS_FILE, { sessions: [] });
+  if (!Array.isArray(j.sessions)) j.sessions = [];
+  return j;
+}
+
+function writeSessions(data) {
+  saveJsonFile(SESSIONS_FILE, data);
+}
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(String(password), String(salt), 64).toString('hex');
+}
+
+function publicUser(u) {
+  return { id: u.id, username: u.username, createdAt: u.createdAt || null };
+}
+
+function getSessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const sessions = readSessions();
+  const s = sessions.sessions.find((x) => x && x.token === token);
+  if (!s) return null;
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x && x.id === s.userId);
+  if (!u) return null;
+  return { id: u.id, username: u.username, token };
+}
+
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const sessions = readSessions();
+  sessions.sessions.push({
+    token,
+    userId,
+    createdAt: Date.now(),
+    lastSeen: Date.now(),
+  });
+  // garder max 200 sessions
+  if (sessions.sessions.length > 200) {
+    sessions.sessions = sessions.sessions.slice(-200);
+  }
+  writeSessions(sessions);
+  return token;
+}
+
+function destroySession(token) {
+  if (!token) return;
+  const sessions = readSessions();
+  sessions.sessions = sessions.sessions.filter((x) => x && x.token !== token);
+  writeSessions(sessions);
+}
+
+function setSessionCookie(res, token, req) {
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  let c = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SEC}`;
+  if (secure) c += '; Secure';
+  res.append('Set-Cookie', c);
+}
+
+function clearSessionCookie(res, req) {
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  let c = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  if (secure) c += '; Secure';
+  res.append('Set-Cookie', c);
+}
+
 function htmlWithAbsoluteLogo(html, req) {
   const base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
   return String(html || '')
@@ -152,20 +283,135 @@ function htmlWithAbsoluteLogo(html, req) {
     .replace(/href="\/(favicon-[^"]+|apple-touch-icon\.png)"/g, `href="${base}/$1"`);
 }
 
-app.get(['/', '/index.html', '/controller.html', '/receiver.html'], (req, res, next) => {
-  const file = req.path === '/' ? 'index.html' : path.basename(req.path);
+function sendHtml(res, req, file) {
   const full = path.join(__dirname, 'public', file);
   fs.readFile(full, 'utf8', (err, html) => {
-    if (err) return next();
+    if (err) {
+      res.status(404).send('Not found');
+      return;
+    }
     res.type('html').send(htmlWithAbsoluteLogo(html, req));
   });
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  const user = getSessionUser(req);
+  if (user) {
+    return res.redirect(302, '/controller.html');
+  }
+  sendHtml(res, req, 'index.html');
+});
+
+app.get('/controller.html', (req, res) => {
+  if (!getSessionUser(req)) {
+    return res.redirect(302, '/?next=controller');
+  }
+  sendHtml(res, req, 'controller.html');
+});
+
+app.get('/receiver.html', (req, res) => {
+  sendHtml(res, req, 'receiver.html');
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media/receiver', express.static(RECEIVER_DIR));
 app.use('/media/controller', express.static(CONTROLLER_DIR));
 app.use('/media/audio', express.static(AUDIO_DIR));
-app.use(express.json({ limit: '50mb' }));
+
+app.get('/api/auth/me', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.json({ ok: true, authenticated: false });
+  res.json({ ok: true, authenticated: true, user: { id: user.id, username: user.username } });
+});
+
+app.get('/api/auth/users', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
+  const accounts = readAccounts();
+  res.json({ ok: true, users: accounts.users.map(publicUser) });
+});
+
+app.post('/api/auth/register', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
+  const username = String((req.body && req.body.username) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  if (username.length < 2 || username.length > 32) {
+    return res.status(400).json({ ok: false, error: 'Identifiant invalide' });
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(username)) {
+    return res.status(400).json({ ok: false, error: 'Identifiant : lettres, chiffres, . _ -' });
+  }
+  if (password.length < 4 || password.length > 128) {
+    return res.status(400).json({ ok: false, error: 'Mot de passe trop court' });
+  }
+  const accounts = readAccounts();
+  if (accounts.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(409).json({ ok: false, error: 'Identifiant déjà pris' });
+  }
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passHash = hashPassword(password, salt);
+  const user = {
+    id: crypto.randomBytes(8).toString('hex'),
+    username,
+    salt,
+    passHash,
+    createdAt: Date.now(),
+  };
+  accounts.users.push(user);
+  writeAccounts(accounts);
+  res.status(201).json({ ok: true, user: publicUser(user) });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const username = String((req.body && req.body.username) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  const accounts = readAccounts();
+  const user = accounts.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+  if (!user || !user.salt || !user.passHash) {
+    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
+  }
+  let ok = false;
+  try {
+    const hash = hashPassword(password, user.salt);
+    ok = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passHash, 'hex'));
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
+    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
+  }
+  const token = createSession(user.id);
+  setSessionCookie(res, token, req);
+  res.json({ ok: true, user: publicUser(user) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const user = getSessionUser(req);
+  if (user && user.token) destroySession(user.token);
+  clearSessionCookie(res, req);
+  res.json({ ok: true });
+});
+
+app.delete('/api/auth/users/:id', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
+  const id = String(req.params.id || '');
+  const accounts = readAccounts();
+  const before = accounts.users.length;
+  accounts.users = accounts.users.filter((u) => u && u.id !== id);
+  if (accounts.users.length === before) {
+    return res.status(404).json({ ok: false, error: 'Compte introuvable' });
+  }
+  writeAccounts(accounts);
+  const sessions = readSessions();
+  sessions.sessions = sessions.sessions.filter((s) => s && s.userId !== id);
+  writeSessions(sessions);
+  res.json({ ok: true });
+});
 
 function loadTunnelConfig() {
   const defaults = {
@@ -256,8 +502,11 @@ app.get('/api/alarm-stop', (_req, res) => {
 app.get('/c/:code', (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
-  res.setHeader('Cache-Control', 'no-store');
-  res.sendFile(path.join(__dirname, 'public', 'controller.html'));
+  if (!getSessionUser(req)) return res.redirect(302, '/?next=controller');
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+  } catch (e) {}
+  sendHtml(res, req, 'controller.html');
 });
 
 app.get('/api/update/status', (_req, res) => {
@@ -503,6 +752,16 @@ function broadcastRoomState(code, room) {
 
 io.on('connection', (socket) => {
   socket.on('join', ({ code, role }) => {
+    if (role === 'controller') {
+      const user = getSessionUser(socket.request);
+      if (!user) {
+        socket.emit('auth-required', { error: 'Connexion requise' });
+        socket.disconnect(true);
+        return;
+      }
+      socket.data.userId = user.id;
+      socket.data.username = user.username;
+    }
     const room = getRoom(code);
     socket.join(code);
     socket.data.code = code;
@@ -551,14 +810,37 @@ io.on('connection', (socket) => {
     socket.to(socket.data.code).emit('signal', payload);
   });
 
-  // Relais caméra JPEG : tous les contrôleurs reçoivent le même flux
+  // Relais caméra JPEG : tous les contrôleurs reçoivent le même flux (string base64 ou binaire)
   socket.on('live-frame', (data) => {
     if (!socket.data.code || socket.data.role !== 'receiver') return;
-    const b64 = typeof data === 'string' ? data : (data && data.jpeg);
-    if (!b64) return;
-    try { liveJpegs[socket.data.code] = Buffer.from(b64, 'base64'); } catch (e) {}
-    emitToRole(socket.data.code, 'controller', 'live-frame', b64);
-    socket.to(socket.data.code).emit('live-frame', b64);
+    let out = null;
+    let forApi = null;
+    if (typeof data === 'string') {
+      out = data;
+      try { forApi = Buffer.from(data, 'base64'); } catch (e) {}
+    } else if (data && typeof data === 'object' && typeof data.jpeg === 'string') {
+      out = data.jpeg;
+      try { forApi = Buffer.from(data.jpeg, 'base64'); } catch (e) {}
+    } else if (data) {
+      try {
+        if (Buffer.isBuffer(data)) {
+          out = data;
+          forApi = data;
+        } else if (data instanceof ArrayBuffer) {
+          out = data;
+          forApi = Buffer.from(data);
+        } else if (ArrayBuffer.isView(data)) {
+          out = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          forApi = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+        }
+      } catch (e) {
+        out = null;
+      }
+    }
+    if (!out) return;
+    if (forApi && forApi.length) liveJpegs[socket.data.code] = forApi;
+    emitToRole(socket.data.code, 'controller', 'live-frame', out);
+    socket.to(socket.data.code).emit('live-frame', out);
   });
 
   // Relais voix : contrôleur ↔ récepteur (pas entre contrôleurs)
