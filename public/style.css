@@ -239,6 +239,40 @@ button.big { display: block; width: 100%; padding: 16px; font-size: 16px; margin
   color: #ef4444;
   border-color: #ef4444;
 }
+.status-wrap {
+  position: relative;
+  display: inline-block;
+}
+.peers-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #151821;
+  border: 1px solid #2A3142;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+}
+.peers-pop-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8B93A7;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 8px;
+}
+.peers-pop-item {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  padding: 4px 0;
+}
+.peers-pop-item + .peers-pop-item {
+  border-top: 1px solid #2A3142;
+}
 video { width: 100%; border-radius: 12px; background: #000; }
 .live-wrap { position: relative; background: #000; border-radius: 12px; min-height: 180px; overflow: hidden; }
 .live-wrap video, .live-wrap img { width: 100%; display: none; vertical-align: top; }

@@ -715,9 +715,17 @@ function emitPeers(code, room) {
     if (!io.sockets.sockets.get(id)) room.controllerIds.delete(id);
   }
   if (room.receiverId && !io.sockets.sockets.get(room.receiverId)) room.receiverId = null;
+  const names = [];
+  for (const id of room.controllerIds) {
+    const s = io.sockets.sockets.get(id);
+    const name = s && s.data && s.data.username ? String(s.data.username) : '';
+    names.push(name || 'Contrôleur');
+  }
+  names.sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
   io.to(code).emit('peers', {
     controllers: room.controllerIds.size,
     receiver: !!room.receiverId,
+    names,
   });
 }
 
@@ -810,7 +818,7 @@ io.on('connection', (socket) => {
     socket.to(socket.data.code).emit('signal', payload);
   });
 
-  // Relais caméra JPEG : tous les contrôleurs reçoivent le même flux (string base64 ou binaire)
+  // Relais caméra JPEG : un seul envoi aux contrôleurs (évite le double flux qui tuait les FPS)
   socket.on('live-frame', (data) => {
     if (!socket.data.code || socket.data.role !== 'receiver') return;
     let out = null;
@@ -826,12 +834,15 @@ io.on('connection', (socket) => {
         if (Buffer.isBuffer(data)) {
           out = data;
           forApi = data;
+        } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
+          // rare côté Node ; Socket.io envoie plutôt Buffer
+          out = data;
         } else if (data instanceof ArrayBuffer) {
           out = data;
           forApi = Buffer.from(data);
         } else if (ArrayBuffer.isView(data)) {
-          out = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-          forApi = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+          out = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+          forApi = out;
         }
       } catch (e) {
         out = null;
@@ -840,7 +851,6 @@ io.on('connection', (socket) => {
     if (!out) return;
     if (forApi && forApi.length) liveJpegs[socket.data.code] = forApi;
     emitToRole(socket.data.code, 'controller', 'live-frame', out);
-    socket.to(socket.data.code).emit('live-frame', out);
   });
 
   // Relais voix : contrôleur ↔ récepteur (pas entre contrôleurs)
