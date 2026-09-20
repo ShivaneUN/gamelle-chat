@@ -84,16 +84,19 @@ if (logoutBtn) {
   };
 }
 socket.on('peers', ({ receiver, controllers, names }) => {
+  const list = Array.isArray(names) ? names.filter(Boolean) : [];
+  window.__GAMELLE_PEER_NAMES__ = list;
   if (receiver) {
-    const list = Array.isArray(names) ? names.filter(Boolean) : [];
-    const extra = controllers > 1
-      ? ` · ${controllers} contrôleurs`
-      : (list[0] ? ` · ${list[0]}` : '');
+    const n = Number(controllers) || 0;
+    let extra = '';
+    if (n > 1) extra = ` · ${n} contrôleurs`;
+    else if (list[0]) extra = ` · ${list[0]}`;
     setStatus(true, 'En ligne' + extra);
   } else {
     setStatus(false, 'Hors ligne');
     renderReceiverBattery({ offline: true });
   }
+  renderPeersPop();
 });
 let livePollTimer = null;
 
@@ -304,8 +307,63 @@ function clearLiveView() {
 function setStatus(on, text) {
   statusEl.className = 'status ' + (on ? 'on' : 'off');
   statusEl.textContent = text;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  const canOpen = on && list.length > 0;
+  statusEl.style.cursor = canOpen ? 'pointer' : 'default';
+  statusEl.title = canOpen ? 'Voir qui est en ligne' : '';
+  if (!canOpen) {
+    const pop = document.getElementById('peersPop');
+    if (pop) pop.hidden = true;
+  }
 }
 setStatus(false, 'Hors ligne');
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderPeersPop() {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    pop.innerHTML = '';
+    return;
+  }
+  pop.innerHTML = '<div class="peers-pop-title">En ligne</div>' +
+    list.map((n) => `<div class="peers-pop-item">${escapeHtml(n)}</div>`).join('');
+}
+
+function togglePeersPop(force) {
+  const pop = document.getElementById('peersPop');
+  if (!pop) return;
+  const list = window.__GAMELLE_PEER_NAMES__ || [];
+  if (!list.length) {
+    pop.hidden = true;
+    return;
+  }
+  renderPeersPop();
+  if (typeof force === 'boolean') pop.hidden = !force;
+  else pop.hidden = !pop.hidden;
+}
+
+if (statusEl) {
+  statusEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const list = window.__GAMELLE_PEER_NAMES__ || [];
+    if (!list.length) return;
+    togglePeersPop();
+  });
+}
+document.addEventListener('click', () => {
+  const pop = document.getElementById('peersPop');
+  if (pop) pop.hidden = true;
+});
 
 function setCamDot(on) {
   const dot = document.getElementById('camDot');
