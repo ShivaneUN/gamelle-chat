@@ -800,10 +800,10 @@ function startLiveRelay() {
   liveGrabberTrack = null;
   let busy = false;
   let lastSent = 0;
-  // JPEG via tunnel : viser un flux stable (~8–10 fps) plutôt que 12 fps théoriques.
-  let intervalMs = 100;
-  const WIDTH = 240;
-  const QUALITY = 0.36;
+  // JPEG via tunnel / 4G : viser ~12 fps fluides, payloads modestes.
+  let intervalMs = 80;
+  const WIDTH = 288;
+  const QUALITY = 0.34;
 
   const tick = () => {
     if (!camOn || !localStream || !localVideo) return;
@@ -831,10 +831,18 @@ function startLiveRelay() {
     const t0 = now;
     const afterSend = () => {
       const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
-      // Adapter : si l’encode est lent, on ralentit pour éviter l’empilement / freeze.
-      if (dt > 90) intervalMs = Math.min(180, Math.max(intervalMs, Math.round(dt * 1.15)));
-      else if (dt < 45) intervalMs = Math.max(90, intervalMs - 5);
+      // Adapter : encode lent → ralentir ; rapide → remonter vers ~12–14 fps.
+      if (dt > 85) intervalMs = Math.min(160, Math.max(intervalMs, Math.round(dt * 1.1)));
+      else if (dt < 40) intervalMs = Math.max(70, intervalMs - 6);
       busy = false;
+    };
+
+    const emitFrame = (payload) => {
+      try {
+        // volatile = drop si buffer plein (mieux pour le live 4G que d’empiler).
+        if (socket.volatile) socket.volatile.emit('live-frame', payload);
+        else socket.emit('live-frame', payload);
+      } catch (e) {}
     };
 
     if (typeof canvas.toBlob === 'function') {
@@ -843,19 +851,19 @@ function startLiveRelay() {
           busy = false;
           return;
         }
-        try { socket.emit('live-frame', blob); } catch (e) {}
+        emitFrame(blob);
         afterSend();
       }, 'image/jpeg', QUALITY);
       return;
     }
     try {
       const data = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-      if (data) socket.emit('live-frame', data);
+      if (data) emitFrame(data);
     } catch (e) {}
     afterSend();
   };
 
-  liveRelayTimer = setInterval(tick, 40);
+  liveRelayTimer = setInterval(tick, 25);
   tick();
 }
 function stopLiveRelay() {

@@ -161,6 +161,9 @@ function showRelayLiveOnce() {
     canvas.classList.add('on');
     canvas.style.display = 'block';
     canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.objectFit = 'contain';
+    canvas.style.background = '#000';
     setLivePlaceholder(false);
     if (liveHint) liveHint.textContent = 'Vue live';
     return;
@@ -279,7 +282,7 @@ function startLivePoll() {
     img.src = '/api/live/' + encodeURIComponent(code) + '?t=' + Date.now();
   };
   tick();
-  livePollTimer = setInterval(tick, 400);
+  livePollTimer = setInterval(tick, 280);
 }
 function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
