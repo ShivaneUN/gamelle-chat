@@ -136,6 +136,38 @@ function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
 }
 
+// --- Flash / torche du récepteur ---
+let flashOn = false;
+const flashBtn = document.getElementById('flashBtn');
+function renderFlashBtn() {
+  if (!flashBtn) return;
+  flashBtn.hidden = false;
+  flashBtn.textContent = 'Flash';
+  flashBtn.className = 'chip-btn ' + (flashOn ? 'toggle-on' : 'toggle-off');
+  flashBtn.title = flashOn ? 'Éteindre le flash' : 'Allumer le flash';
+}
+if (flashBtn) {
+  flashBtn.onclick = () => {
+    flashOn = !flashOn;
+    socket.emit('torch', { on: flashOn });
+    renderFlashBtn();
+  };
+}
+renderFlashBtn();
+socket.on('torch-status', (payload) => {
+  if (!payload) return;
+  if (payload.unsupported) {
+    flashOn = false;
+    renderFlashBtn();
+    if (flashBtn) flashBtn.title = 'Flash non supporté sur cette caméra';
+    return;
+  }
+  if (typeof payload.on === 'boolean') {
+    flashOn = payload.on;
+    renderFlashBtn();
+  }
+});
+
 socket.on('cam-status', ({ on }) => {
   setCamDot(on);
   if (!on) {
@@ -144,7 +176,9 @@ socket.on('cam-status', ({ on }) => {
     if (pcCam) { pcCam.close(); pcCam = null; }
     cameraSelect.style.display = 'none';
     cameraList = [];
+    flashOn = false;
     renderFacingBtn();
+    renderFlashBtn();
   } else {
     liveHint.textContent = 'Caméra allumée, réception de l\'image…';
     startLivePoll();
