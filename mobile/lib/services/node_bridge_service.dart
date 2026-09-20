@@ -49,7 +49,7 @@ class NodeBridgeService {
       return null;
     }
     if (host == 'api.trycloudflare.com') return null;
-    if (!host.endsWith('.trycloudflare.com')) return null;
+    if (!_isAllowedPublicHost(host)) return null;
     final base = raw.replaceAll(RegExp(r'/$'), '');
     // Même URL que le QR HTML : ouvre directement le contrôleur.
     return '$base/controller.html';
@@ -84,7 +84,7 @@ class NodeBridgeService {
               _controller.add(NodeBridgeMessage(tag: 'pairCode', message: code));
             }
             final url = '${json['publicUrl'] ?? ''}';
-            if (_isQuickTunnelUrl(url) && publicUrl != url) {
+            if (_isAllowedPublicUrl(url) && publicUrl != url) {
               publicUrl = url;
               _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: url));
             }
@@ -100,16 +100,22 @@ class NodeBridgeService {
 
   Stream<NodeBridgeMessage> get messages => _controller.stream;
 
-  bool _isQuickTunnelUrl(String url) {
+  bool _isAllowedPublicHost(String host) {
+    final h = host.toLowerCase();
+    if (h.isEmpty || h == 'api.trycloudflare.com') return false;
+    if (h == 'TON-DOMAINE.tld' || h.endsWith('.TON-DOMAINE.tld')) return true;
+    return h.endsWith('.trycloudflare.com');
+  }
+
+  bool _isAllowedPublicUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.host.isEmpty) return false;
-    return uri.host.endsWith('.trycloudflare.com') &&
-        uri.host != 'api.trycloudflare.com';
+    return _isAllowedPublicHost(uri.host);
   }
 
   void _emit(String tag, String message) {
     if (tag == 'publicUrl') {
-      if (!_isQuickTunnelUrl(message)) return;
+      if (!_isAllowedPublicUrl(message)) return;
       publicUrl = message;
       unawaited(_persistPublicUrl(message));
     }
@@ -230,7 +236,7 @@ class NodeBridgeService {
     _tunnelSub ??= CloudflareTunnel.events().listen((event) {
       final type = '${event['type'] ?? ''}';
       final value = '${event['value'] ?? ''}';
-      if (type == 'url' && _isQuickTunnelUrl(value)) {
+      if (type == 'url' && _isAllowedPublicUrl(value)) {
         publicUrl = value;
         tunnelError = null;
         unawaited(_persistPublicUrl(value));

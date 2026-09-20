@@ -49,7 +49,66 @@ class MainActivity : FlutterActivity() {
     private var githubProgressSink: EventChannel.EventSink? = null
     private var webEventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val urlPattern = Pattern.compile("https://(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com", Pattern.CASE_INSENSITIVE)
+    private val urlPattern = Pattern.compile(
+        "https://(?!api\\.)[a-z0-9-]+\\.trycloudflare\\.com",
+        Pattern.CASE_INSENSITIVE,
+    )
+    private val namedReadyPattern = Pattern.compile(
+        "Registered tunnel connection",
+        Pattern.CASE_INSENSITIVE,
+    )
+    private var fixedPublicUrl: String? = null
+    private var tunnelToken: String? = null
+
+    private fun isAllowedPublicUrl(url: String): Boolean {
+        val host = try {
+            java.net.URI(url).host ?: ""
+        } catch (_: Exception) {
+            return false
+        }.lowercase()
+        if (host.isEmpty() || host == "api.trycloudflare.com") return false
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1") return false
+        if (host == "TON-DOMAINE.tld" || host.endsWith(".TON-DOMAINE.tld")) return true
+        return host.endsWith(".trycloudflare.com")
+    }
+
+    private fun readAssetText(name: String): String? {
+        return try {
+            assets.open(name).bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun loadTunnelSettings() {
+        fixedPublicUrl = null
+        tunnelToken = null
+        try {
+            val cfgRaw = readAssetText("tunnel.config.json")
+            if (!cfgRaw.isNullOrBlank()) {
+                val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
+                val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
+                if (!url.isNullOrBlank() && isAllowedPublicUrl(url)) {
+                    fixedPublicUrl = url
+                }
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            val tokenRaw = readAssetText("tunnel.token") ?: ""
+            val token = tokenRaw
+                .lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") }
+            if (!token.isNullOrBlank()) tunnelToken = token
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun useNamedTunnel(): Boolean {
+        return !tunnelToken.isNullOrBlank() && !fixedPublicUrl.isNullOrBlank()
+    }
+
     private var pendingApkPath: String? = null
     private var pendingApkTag: String? = null
 
@@ -59,15 +118,6 @@ class MainActivity : FlutterActivity() {
             keepWebViewsAlive()
             mainHandler.postDelayed(this, 800)
         }
-    }
-
-    private fun isQuickTunnelUrl(url: String): Boolean {
-        val host = try {
-            java.net.URI(url).host ?: ""
-        } catch (_: Exception) {
-            return false
-        }
-        return host.endsWith(".trycloudflare.com") && host != "api.trycloudflare.com"
     }
 
     private var screenForcedOff = false
@@ -625,6 +675,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun runTunnelLoop() {
+        loadTunnelSettings()
         val bin = File(applicationInfo.nativeLibraryDir, "libcloudflared.so")
         if (!bin.exists()) {
             val msg = "cloudflared introuvable (${bin.absolutePath})"
@@ -705,6 +756,15 @@ class MainActivity : FlutterActivity() {
         if (!useHttp && !isPortOpen(3000)) {
             return "serveur local pas prêt (ports 3000/3001)"
         }
+        val named = useNamedTunnel()
+        if (named) {
+            val url = fixedPublicUrl!!
+            gotTunnelUrl = true
+            lastPublicUrl = url
+            lastTunnelError = null
+            persistPublicUrl(url)
+            emit("url", url)
+        }
         val args = mutableListOf(
             bin.absolutePath,
             "tunnel",
@@ -714,9 +774,15 @@ class MainActivity : FlutterActivity() {
             "--edge-ip-version",
             "4",
         )
-        if (!useHttp) args.add("--no-tls-verify")
-        args.add("--url")
-        args.add(if (useHttp) "http://127.0.0.1:3001" else "https://127.0.0.1:3000")
+        if (named) {
+            args.add("run")
+            args.add("--token")
+            args.add(tunnelToken!!)
+        } else {
+            if (!useHttp) args.add("--no-tls-verify")
+            args.add("--url")
+            args.add(if (useHttp) "http://127.0.0.1:3001" else "https://127.0.0.1:3000")
+        }
         val builder = ProcessBuilder(args)
         builder.redirectErrorStream(true)
         builder.directory(home)
@@ -750,15 +816,26 @@ class MainActivity : FlutterActivity() {
                         logFile.appendText(text + "\n")
                     } catch (_: Exception) {
                     }
-                    val matcher = urlPattern.matcher(text)
-                    if (matcher.find()) {
-                        val url = matcher.group()
-                        if (isQuickTunnelUrl(url)) {
+                    if (named) {
+                        if (namedReadyPattern.matcher(text).find()) {
+                            val url = fixedPublicUrl!!
                             gotTunnelUrl = true
                             lastPublicUrl = url
                             lastTunnelError = null
                             persistPublicUrl(url)
                             emit("url", url)
+                        }
+                    } else {
+                        val matcher = urlPattern.matcher(text)
+                        if (matcher.find()) {
+                            val url = matcher.group()
+                            if (isAllowedPublicUrl(url)) {
+                                gotTunnelUrl = true
+                                lastPublicUrl = url
+                                lastTunnelError = null
+                                persistPublicUrl(url)
+                                emit("url", url)
+                            }
                         }
                     }
                 }

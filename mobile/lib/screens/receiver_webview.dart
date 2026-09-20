@@ -38,6 +38,15 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   int? _webId;
   int _generation = 0;
   double _progress = 0;
+
+  bool _isAllowedPublicUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) return false;
+    final h = uri.host.toLowerCase();
+    if (h == 'api.trycloudflare.com') return false;
+    if (h == 'TON-DOMAINE.tld' || h.endsWith('.TON-DOMAINE.tld')) return true;
+    return h.endsWith('.trycloudflare.com');
+  }
   bool _failed = false;
   String _statusHint = '';
 
@@ -55,8 +64,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     _urlSub = NodeBridgeService.instance.messages.listen((msg) {
       if (msg.tag == 'publicUrl' &&
           msg.message.startsWith('http') &&
-          msg.message.contains('.trycloudflare.com') &&
-          !msg.message.contains('api.trycloudflare.com')) {
+          _isAllowedPublicUrl(msg.message)) {
         _injectPublicUrl(msg.message);
         if (mounted) setState(() {});
       }

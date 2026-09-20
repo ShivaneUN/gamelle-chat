@@ -167,7 +167,7 @@ function createMessageLibrary({ containerId, socket, onChange, onUseForAlarm }) 
       return;
     }
     if (!window.isSecureContext) {
-      alert('L\'enregistrement audio exige https:// (URL trycloudflare ou https local).');
+      alert('L\'enregistrement audio exige https:// (URL publique ou https local).');
       return;
     }
 

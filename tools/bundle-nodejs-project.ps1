@@ -12,6 +12,17 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 Copy-Item (Join-Path $Root "server.js") (Join-Path $Dest "server.js") -Force
 Copy-Item (Join-Path $Root "update-service.js") (Join-Path $Dest "update-service.js") -Force
 
+$tunnelCfg = Join-Path $Root "tunnel.config.json"
+if (Test-Path $tunnelCfg) {
+  Copy-Item $tunnelCfg (Join-Path $Assets "tunnel.config.json") -Force
+  Copy-Item $tunnelCfg (Join-Path $Dest "tunnel.config.json") -Force
+}
+$tokenSrc = Join-Path $Root "tunnel.token"
+if (Test-Path $tokenSrc) {
+  Copy-Item $tokenSrc (Join-Path $Assets "tunnel.token") -Force
+  Copy-Item $tokenSrc (Join-Path $Dest "tunnel.token") -Force
+}
+
 $publicDest = Join-Path $Dest "public"
 if (Test-Path $publicDest) { Remove-Item $publicDest -Recurse -Force }
 Copy-Item (Join-Path $Root "public") $publicDest -Recurse -Force

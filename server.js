@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawn } = require('child_process');
 const selfsigned = require('selfsigned');
 const updater = require('./update-service');
 
@@ -166,10 +167,50 @@ app.use('/media/controller', express.static(CONTROLLER_DIR));
 app.use('/media/audio', express.static(AUDIO_DIR));
 app.use(express.json({ limit: '50mb' }));
 
-function isQuickTunnelUrl(url) {
+function loadTunnelConfig() {
+  const defaults = {
+    publicUrl: '',
+    allowedSuffixes: ['TON-DOMAINE.tld', 'trycloudflare.com'],
+  };
   try {
-    const host = new URL(String(url)).hostname || '';
-    return host.endsWith('.trycloudflare.com') && host !== 'api.trycloudflare.com';
+    const cfgPath = path.join(__dirname, 'tunnel.config.json');
+    if (!fs.existsSync(cfgPath)) return defaults;
+    const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const publicUrl = String((j && j.publicUrl) || '').replace(/\/$/, '');
+    const suffixes = Array.isArray(j && j.allowedSuffixes) && j.allowedSuffixes.length
+      ? j.allowedSuffixes.map((s) => String(s).toLowerCase())
+      : defaults.allowedSuffixes;
+    return { publicUrl, allowedSuffixes: suffixes };
+  } catch (e) {
+    return defaults;
+  }
+}
+
+const tunnelConfig = loadTunnelConfig();
+
+function readTunnelToken() {
+  const fromEnv = process.env.CLOUDFLARE_TUNNEL_TOKEN || process.env.TUNNEL_TOKEN;
+  if (fromEnv && String(fromEnv).trim()) return String(fromEnv).trim();
+  try {
+    const tokenPath = path.join(__dirname, 'tunnel.token');
+    if (!fs.existsSync(tokenPath)) return '';
+    const raw = fs.readFileSync(tokenPath, 'utf8').trim();
+    if (!raw || raw.includes('REMPLACE_MOI')) return '';
+    return raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function isAllowedPublicUrl(url) {
+  try {
+    const host = (new URL(String(url)).hostname || '').toLowerCase();
+    if (!host || host === 'api.trycloudflare.com') return false;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+    return (tunnelConfig.allowedSuffixes || []).some((suffix) => {
+      const s = String(suffix).toLowerCase();
+      return host === s || host.endsWith('.' + s);
+    });
   } catch (e) {
     return false;
   }
@@ -182,7 +223,7 @@ function readNativePublicUrl() {
     const j = JSON.parse(fs.readFileSync(extra, 'utf8'));
     if (j && j.url) {
       const url = String(j.url).replace(/\/$/, '');
-      if (isQuickTunnelUrl(url)) return url;
+      if (isAllowedPublicUrl(url)) return url;
     }
   } catch (e) {}
   return null;
@@ -858,34 +899,91 @@ server.listen(PORT, '0.0.0.0', () => {
   }
 });
 
+function markPublicUrl(url) {
+  publicUrl = String(url || '').replace(/\/$/, '');
+  if (!publicUrl) return;
+  console.log(`Depuis n'importe où (4G / autre WiFi) : ${publicUrl}`);
+  console.log('Scanne le QR ou ouvre cette URL sur le Contrôleur.');
+  console.log('================================================\n');
+}
+
+async function ensureCloudflaredBin() {
+  const cf = await import('cloudflared');
+  const bin = cf.bin || (cf.default && cf.default.bin);
+  const install = cf.install || (cf.default && cf.default.install);
+  if (!fs.existsSync(bin)) {
+    console.log('Téléchargement de cloudflared (une seule fois)...');
+    await install(bin);
+  }
+  return { cf, bin };
+}
+
+async function startNamedTunnel(bin, token, fixedUrl) {
+  console.log(`Tunnel nommé Cloudflare → ${fixedUrl}`);
+  markPublicUrl(fixedUrl);
+  const child = spawn(bin, ['tunnel', '--no-autoupdate', 'run', '--token', token], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let connected = false;
+  const onData = (buf) => {
+    const text = String(buf || '');
+    if (!connected && /Registered tunnel connection/i.test(text)) {
+      connected = true;
+      console.log('Tunnel nommé connecté.');
+    }
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  child.on('error', (err) => {
+    console.warn('Tunnel nommé:', err.message || err);
+  });
+  child.on('exit', (code) => {
+    if (publicUrl) console.warn('Tunnel distant fermé (code', code, '). Relance le serveur pour le rétablir.');
+    publicUrl = null;
+  });
+  const stop = () => {
+    try { child.kill(); } catch (e) {}
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+}
+
+async function startQuickTunnel(cf, origin) {
+  const Tunnel = cf.Tunnel || (cf.default && cf.default.Tunnel);
+  const tunnelOpts = origin.startsWith('https:') ? { '--no-tls-verify': true } : {};
+  const tunnel = Tunnel.quick(origin, tunnelOpts);
+  tunnel.once('url', (url) => {
+    markPublicUrl(url);
+  });
+  tunnel.on('error', (err) => {
+    console.warn('Tunnel:', err.message || err);
+  });
+  tunnel.on('exit', (code) => {
+    if (publicUrl) console.warn('Tunnel distant fermé (code', code, '). Relance le serveur pour le rétablir.');
+    publicUrl = null;
+  });
+  const stop = () => { try { tunnel.stop(); } catch (e) {} };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+}
+
 async function startPublicTunnel(origin) {
   try {
-    const cf = await import('cloudflared');
-    const Tunnel = cf.Tunnel || (cf.default && cf.default.Tunnel);
-    const bin = cf.bin || (cf.default && cf.default.bin);
-    const install = cf.install || (cf.default && cf.default.install);
-    if (!fs.existsSync(bin)) {
-      console.log('Téléchargement de cloudflared (une seule fois)...');
-      await install(bin);
+    const { cf, bin } = await ensureCloudflaredBin();
+    const token = readTunnelToken();
+    const fixedUrl = tunnelConfig.publicUrl;
+    if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
+      await startNamedTunnel(bin, token, fixedUrl);
+      return;
     }
-    const tunnelOpts = origin.startsWith('https:') ? { '--no-tls-verify': true } : {};
-    const tunnel = Tunnel.quick(origin, tunnelOpts);
-    tunnel.once('url', (url) => {
-      publicUrl = url.replace(/\/$/, '');
-      console.log(`Depuis n'importe où (4G / autre WiFi) : ${publicUrl}`);
-      console.log('Scanne le QR ou ouvre cette URL sur le Contrôleur.');
-      console.log('================================================\n');
-    });
-    tunnel.on('error', (err) => {
-      console.warn('Tunnel:', err.message || err);
-    });
-    tunnel.on('exit', (code) => {
-      if (publicUrl) console.warn('Tunnel distant fermé (code', code, '). Relance le serveur pour le rétablir.');
-      publicUrl = null;
-    });
-    const stop = () => { try { tunnel.stop(); } catch (e) {} };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    if (token && !fixedUrl) {
+      console.warn('Token tunnel présent mais tunnel.config.json sans publicUrl — fallback quick tunnel.');
+    } else if (!token && fixedUrl) {
+      console.warn('URL fixe configurée mais tunnel.token manquant — fallback quick tunnel (URL variable).');
+      console.warn('Crée un Named Tunnel Cloudflare et mets le token dans tunnel.token');
+    }
+    await startQuickTunnel(cf, origin);
   } catch (e) {
     console.warn('Accès distant indisponible:', e.message);
     console.warn('Les 2 appareils devront être sur le même WiFi (ou relance après npm install).');
