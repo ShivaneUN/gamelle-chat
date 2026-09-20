@@ -723,16 +723,31 @@ function getRoom(code) {
   return rooms[code];
 }
 
-function emitToRole(code, role, event, payload, { volatile = false } = {}) {
+function emitToRole(code, role, event, payload) {
   const socketIds = io.sockets.adapter.rooms.get(code);
   if (!socketIds) return;
   socketIds.forEach((id) => {
     const s = io.sockets.sockets.get(id);
-    if (!s || s.data.role !== role) return;
+    if (s && s.data.role === role) s.emit(event, payload);
+  });
+}
+
+/** Relais live JPEG : volatile si dispo (drop sous charge 4G), sinon emit normal. */
+function emitLiveFrame(code, payload) {
+  const socketIds = io.sockets.adapter.rooms.get(code);
+  if (!socketIds) return;
+  socketIds.forEach((id) => {
+    const s = io.sockets.sockets.get(id);
+    if (!s || s.data.role !== 'controller') return;
     try {
-      if (volatile && s.volatile) s.volatile.emit(event, payload);
-      else s.emit(event, payload);
-    } catch (e) {}
+      if (s.volatile && typeof s.volatile.emit === 'function') {
+        s.volatile.emit('live-frame', payload);
+      } else {
+        s.emit('live-frame', payload);
+      }
+    } catch (e) {
+      try { s.emit('live-frame', payload); } catch (e2) {}
+    }
   });
 }
 
@@ -876,8 +891,7 @@ io.on('connection', (socket) => {
     }
     if (!out) return;
     if (forApi && forApi.length) liveJpegs[socket.data.code] = forApi;
-    // volatile : en 4G, mieux dropper une frame que saturer le buffer.
-    emitToRole(socket.data.code, 'controller', 'live-frame', out, { volatile: true });
+    emitLiveFrame(socket.data.code, out);
   });
 
   // Relais voix : contrôleur ↔ récepteur (pas entre contrôleurs)
@@ -1202,6 +1216,9 @@ httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
   console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
 });
 
+server.on('error', (err) => {
+  console.error('Serveur HTTPS:', err && err.message ? err.message : err);
+});
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');

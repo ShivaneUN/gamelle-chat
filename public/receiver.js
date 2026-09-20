@@ -840,9 +840,14 @@ function startLiveRelay() {
     const emitFrame = (payload) => {
       try {
         // volatile = drop si buffer plein (mieux pour le live 4G que d’empiler).
-        if (socket.volatile) socket.volatile.emit('live-frame', payload);
-        else socket.emit('live-frame', payload);
-      } catch (e) {}
+        if (socket && socket.volatile && typeof socket.volatile.emit === 'function') {
+          socket.volatile.emit('live-frame', payload);
+        } else {
+          socket.emit('live-frame', payload);
+        }
+      } catch (e) {
+        try { socket.emit('live-frame', payload); } catch (e2) {}
+      }
     };
 
     if (typeof canvas.toBlob === 'function') {

@@ -282,7 +282,7 @@ function startLivePoll() {
     img.src = '/api/live/' + encodeURIComponent(code) + '?t=' + Date.now();
   };
   tick();
-  livePollTimer = setInterval(tick, 400);
+  livePollTimer = setInterval(tick, 280);
 }
 function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
