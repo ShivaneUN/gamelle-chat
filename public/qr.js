@@ -356,8 +356,10 @@
       const h = (u.hostname || '').toLowerCase();
       if (!h || h === 'api.trycloudflare.com') return false;
       if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
-      return h === 'TON-DOMAINE.tld' || h.endsWith('.TON-DOMAINE.tld') ||
-        (h.endsWith('.trycloudflare.com') && h !== 'api.trycloudflare.com');
+      if (h.indexOf('ton-') === 0) return false;
+      if (h.endsWith('.trycloudflare.com')) return true;
+      // Domaine Named Tunnel perso (pas de domaine hardcodé dans le dépôt public).
+      return h.indexOf('.') > 0 && !h.endsWith('.local');
     } catch (e) {
       return false;
     }

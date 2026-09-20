@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
     )
     private var fixedPublicUrl: String? = null
     private var tunnelToken: String? = null
+    private var allowedSuffixes: List<String> = listOf("trycloudflare.com")
 
     private fun isAllowedPublicUrl(url: String): Boolean {
         val host = try {
@@ -68,8 +69,11 @@ class MainActivity : FlutterActivity() {
         }.lowercase()
         if (host.isEmpty() || host == "api.trycloudflare.com") return false
         if (host == "localhost" || host == "127.0.0.1" || host == "::1") return false
-        if (host == "TON-DOMAINE.tld" || host.endsWith(".TON-DOMAINE.tld")) return true
-        return host.endsWith(".trycloudflare.com")
+        if (host.endsWith(".trycloudflare.com")) return true
+        return allowedSuffixes.any { s ->
+            val suffix = s.lowercase().trim('.')
+            suffix.isNotEmpty() && (host == suffix || host.endsWith(".$suffix"))
+        }
     }
 
     private fun readAssetText(name: String): String? {
@@ -83,13 +87,42 @@ class MainActivity : FlutterActivity() {
     private fun loadTunnelSettings() {
         fixedPublicUrl = null
         tunnelToken = null
+        allowedSuffixes = listOf("trycloudflare.com")
         try {
             val cfgRaw = readAssetText("tunnel.config.json")
             if (!cfgRaw.isNullOrBlank()) {
+                val suffixes = Regex("\"allowedSuffixes\"\\s*:\\s*\\[([^\\]]*)\\]")
+                    .find(cfgRaw)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.let { body ->
+                        Regex("\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
+                    }
+                    .orEmpty()
+                if (suffixes.isNotEmpty()) {
+                    allowedSuffixes = (suffixes + "trycloudflare.com").distinct()
+                }
                 val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
                 val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
-                if (!url.isNullOrBlank() && isAllowedPublicUrl(url)) {
-                    fixedPublicUrl = url
+                if (!url.isNullOrBlank()) {
+                    // Config locale (souvent gitignorée) : faire confiance à l’URL https déclarée.
+                    val host = try {
+                        java.net.URI(url).host?.lowercase().orEmpty()
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    if (host.isNotEmpty() &&
+                        host != "localhost" &&
+                        host != "127.0.0.1" &&
+                        !host.startsWith("TON-")
+                    ) {
+                        val parts = host.split('.')
+                        if (parts.size >= 2) {
+                            val base = parts.takeLast(2).joinToString(".")
+                            allowedSuffixes = (allowedSuffixes + base + host).distinct()
+                        }
+                        if (isAllowedPublicUrl(url)) fixedPublicUrl = url
+                    }
                 }
             }
         } catch (_: Exception) {

@@ -148,11 +148,6 @@ function mergeSchedulesFrom(srcFile) {
 mergeSchedulesFrom(path.join(__dirname, 'data', 'schedules.json'));
 mergeSchedulesFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'schedules.json'));
 
-function accountWeight(data) {
-  if (!data || !Array.isArray(data.users)) return 0;
-  return data.users.length;
-}
-
 /** Reunion des comptes (par id puis username) — évite la perte à l’OTA. */
 function mergeAccountsFrom(srcFile) {
   if (!srcFile || srcFile === ACCOUNTS_FILE || !fs.existsSync(srcFile)) return;
@@ -485,7 +480,7 @@ app.delete('/api/auth/users/:id', (req, res) => {
 function loadTunnelConfig() {
   const defaults = {
     publicUrl: '',
-    allowedSuffixes: ['TON-DOMAINE.tld', 'trycloudflare.com'],
+    allowedSuffixes: ['trycloudflare.com'],
   };
   try {
     const cfgPath = path.join(__dirname, 'tunnel.config.json');

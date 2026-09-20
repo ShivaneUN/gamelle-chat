@@ -25,8 +25,11 @@ mobile/android/local.properties
 *.pem
 .env
 .env.*
+# Secrets Cloudflare : token + copie locale réelle (jamais le lien perso dans git)
+.local-secrets/
 tunnel.token
 mobile/android/app/src/main/assets/tunnel.token
+mobile/android/app/src/main/assets/nodejs-project/tunnel.token
 npm-debug.log*
 .DS_Store
 Thumbs.db
