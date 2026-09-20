@@ -44,8 +44,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     if (uri == null || uri.host.isEmpty) return false;
     final h = uri.host.toLowerCase();
     if (h == 'api.trycloudflare.com') return false;
-    if (h == 'juvana.cc' || h.endsWith('.juvana.cc')) return true;
-    return h.endsWith('.trycloudflare.com');
+    if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return false;
+    if (h.startsWith('ton-')) return false;
+    if (h.endsWith('.trycloudflare.com')) return true;
+    return h.contains('.') && !h.endsWith('.local');
   }
   bool _failed = false;
   String _statusHint = '';

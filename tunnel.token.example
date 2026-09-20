@@ -1,4 +1,8 @@
-# Remplace cette ligne par le token Cloudflare (Zero Trust → Tunnels → ton tunnel → token).
-# Puis renomme / copie ce fichier en : tunnel.token
-# Ne commit jamais tunnel.token.
-eyJhIjoiMjAwYTQ1OWJkNDYwNjQzN2I3MDg2MTI5ODVhMWYyYWYiLCJ0IjoiMDZkMmI1NjItMTc4MS00NDhmLTgyOGItNmRkMDhjZWI1NjBkIiwicyI6Ik1UUmlPVEExTkRVdFkyVTVOQzAwTmpjekxXRXhZall0T0dJNU5tTTVNbU5pTm1NMiJ9
+# 1) Crée un compte Cloudflare (gratuit) : https://dash.cloudflare.com
+# 2) Zero Trust → Networks → Tunnels → Create a tunnel
+# 3) Copie le token du tunnel
+# 4) Remplace tout ce fichier par UNE seule ligne : le token (sans #)
+# 5) Copie ce fichier vers : tunnel.token
+#
+# Ne commit JAMAIS tunnel.token ni ton tunnel.config.json réel.
+# Chaque installateur doit créer SON propre tunnel (ne partage pas ton URL).

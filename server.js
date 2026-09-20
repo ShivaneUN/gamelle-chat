@@ -480,7 +480,7 @@ app.delete('/api/auth/users/:id', (req, res) => {
 function loadTunnelConfig() {
   const defaults = {
     publicUrl: '',
-    allowedSuffixes: ['juvana.cc', 'trycloudflare.com'],
+    allowedSuffixes: ['trycloudflare.com'],
   };
   try {
     const cfgPath = path.join(__dirname, 'tunnel.config.json');
