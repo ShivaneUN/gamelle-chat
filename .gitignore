@@ -12,6 +12,11 @@ GamelleChat.apk
 *.lnk
 third_party/
 mobile/android/app/src/main/assets/nodejs-project/node_modules/
+!mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/
+!mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/lib/
+!mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/lib/index.js
+!mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/encodings/
+!mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/encodings/index.js
 mobile/android/app/src/main/jniLibs/
 mobile/android/.gradle/
 mobile/android/build/
@@ -20,8 +25,11 @@ mobile/android/local.properties
 *.pem
 .env
 .env.*
+# Secrets Cloudflare : token + copie locale réelle (jamais le lien perso dans git)
+.local-secrets/
 tunnel.token
 mobile/android/app/src/main/assets/tunnel.token
+mobile/android/app/src/main/assets/nodejs-project/tunnel.token
 npm-debug.log*
 .DS_Store
 Thumbs.db

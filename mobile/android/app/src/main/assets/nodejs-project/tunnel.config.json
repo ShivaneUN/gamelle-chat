@@ -1,4 +1,4 @@
 {
-  "publicUrl": "https://TON-SOUS-DOMAINE.TON-DOMAINE.tld",
-  "allowedSuffixes": ["TON-DOMAINE.tld", "trycloudflare.com"]
+  "publicUrl": "",
+  "allowedSuffixes": ["trycloudflare.com"]
 }
