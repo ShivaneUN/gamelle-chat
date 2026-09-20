@@ -84,56 +84,110 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun readPersistText(name: String): String? {
+        return try {
+            val f = File(filesDir, "gamelle-persist/$name")
+            if (!f.exists()) return null
+            f.readText()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun writePersistText(name: String, text: String) {
+        try {
+            val f = File(filesDir, "gamelle-persist/$name")
+            f.parentFile?.mkdirs()
+            f.writeText(text)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun applyTunnelConfigText(cfgRaw: String?) {
+        if (cfgRaw.isNullOrBlank()) return
+        val suffixes = Regex("\"allowedSuffixes\"\\s*:\\s*\\[([^\\]]*)\\]")
+            .find(cfgRaw)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { body ->
+                Regex("\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
+            }
+            .orEmpty()
+        if (suffixes.isNotEmpty()) {
+            allowedSuffixes = (suffixes + "trycloudflare.com").distinct()
+        }
+        val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
+        val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
+        if (!url.isNullOrBlank()) {
+            val host = try {
+                java.net.URI(url).host?.lowercase().orEmpty()
+            } catch (_: Exception) {
+                ""
+            }
+            if (host.isNotEmpty() &&
+                host != "localhost" &&
+                host != "127.0.0.1" &&
+                !host.startsWith("TON-")
+            ) {
+                val parts = host.split('.')
+                if (parts.size >= 2) {
+                    val base = parts.takeLast(2).joinToString(".")
+                    allowedSuffixes = (allowedSuffixes + base + host).distinct()
+                }
+                if (isAllowedPublicUrl(url)) fixedPublicUrl = url
+            }
+        }
+    }
+
+    private fun applyTunnelTokenText(tokenRaw: String?) {
+        if (tokenRaw.isNullOrBlank()) return
+        val token = tokenRaw
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") && it.length >= 40 }
+        if (!token.isNullOrBlank()) tunnelToken = token
+    }
+
     private fun loadTunnelSettings() {
         fixedPublicUrl = null
         tunnelToken = null
         allowedSuffixes = listOf("trycloudflare.com")
+        // 1) Secrets perso dans gamelle-persist (survivent aux OTA publiques).
         try {
-            val cfgRaw = readAssetText("tunnel.config.json")
-            if (!cfgRaw.isNullOrBlank()) {
-                val suffixes = Regex("\"allowedSuffixes\"\\s*:\\s*\\[([^\\]]*)\\]")
-                    .find(cfgRaw)
-                    ?.groupValues
-                    ?.getOrNull(1)
-                    ?.let { body ->
-                        Regex("\"([^\"]+)\"").findAll(body).map { it.groupValues[1] }.toList()
-                    }
-                    .orEmpty()
-                if (suffixes.isNotEmpty()) {
-                    allowedSuffixes = (suffixes + "trycloudflare.com").distinct()
-                }
-                val urlMatch = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgRaw)
-                val url = urlMatch?.groupValues?.getOrNull(1)?.trim()?.trimEnd('/')
-                if (!url.isNullOrBlank()) {
-                    // Config locale (souvent gitignorée) : faire confiance à l’URL https déclarée.
-                    val host = try {
-                        java.net.URI(url).host?.lowercase().orEmpty()
-                    } catch (_: Exception) {
-                        ""
-                    }
-                    if (host.isNotEmpty() &&
-                        host != "localhost" &&
-                        host != "127.0.0.1" &&
-                        !host.startsWith("TON-")
-                    ) {
-                        val parts = host.split('.')
-                        if (parts.size >= 2) {
-                            val base = parts.takeLast(2).joinToString(".")
-                            allowedSuffixes = (allowedSuffixes + base + host).distinct()
-                        }
-                        if (isAllowedPublicUrl(url)) fixedPublicUrl = url
-                    }
+            applyTunnelConfigText(readPersistText("tunnel.config.json"))
+            applyTunnelTokenText(readPersistText("tunnel.token"))
+        } catch (_: Exception) {
+        }
+        // 2) Fallback assets APK (dev / install privée uniquement — releases publiques = vides).
+        try {
+            val cfgAsset = readAssetText("tunnel.config.json")
+            if (fixedPublicUrl.isNullOrBlank()) applyTunnelConfigText(cfgAsset)
+            // Migre une fois assets → persist si l’APK embarquait encore un secret.
+            if (!cfgAsset.isNullOrBlank() &&
+                readPersistText("tunnel.config.json").isNullOrBlank() &&
+                cfgAsset.contains("\"publicUrl\"") &&
+                !cfgAsset.contains("TON-") &&
+                Regex("\"publicUrl\"\\s*:\\s*\"https?://[^\"]+\"").containsMatchIn(cfgAsset)
+            ) {
+                val url = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgAsset)?.groupValues?.getOrNull(1).orEmpty()
+                if (url.isNotBlank() && !url.contains("TON-")) {
+                    writePersistText("tunnel.config.json", cfgAsset)
+                    applyTunnelConfigText(cfgAsset)
                 }
             }
         } catch (_: Exception) {
         }
         try {
-            val tokenRaw = readAssetText("tunnel.token") ?: ""
-            val token = tokenRaw
-                .lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") }
-            if (!token.isNullOrBlank()) tunnelToken = token
+            val tokAsset = readAssetText("tunnel.token")
+            if (tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
+            if (!tunnelToken.isNullOrBlank() &&
+                readPersistText("tunnel.token").isNullOrBlank() &&
+                !tokAsset.isNullOrBlank() &&
+                tokAsset.trim().length >= 40 &&
+                !tokAsset.contains("REMPLACE")
+            ) {
+                writePersistText("tunnel.token", tokAsset.trim() + "\n")
+            }
         } catch (_: Exception) {
         }
     }

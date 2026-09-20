@@ -482,18 +482,32 @@ function loadTunnelConfig() {
     publicUrl: '',
     allowedSuffixes: ['trycloudflare.com'],
   };
-  try {
-    const cfgPath = path.join(__dirname, 'tunnel.config.json');
-    if (!fs.existsSync(cfgPath)) return defaults;
-    const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    const publicUrl = String((j && j.publicUrl) || '').replace(/\/$/, '');
-    const suffixes = Array.isArray(j && j.allowedSuffixes) && j.allowedSuffixes.length
-      ? j.allowedSuffixes.map((s) => String(s).toLowerCase())
-      : defaults.allowedSuffixes;
-    return { publicUrl, allowedSuffixes: suffixes };
-  } catch (e) {
-    return defaults;
+  const candidates = [
+    path.join(STORE, 'tunnel.config.json'),
+    path.join(__dirname, 'tunnel.config.json'),
+  ];
+  for (const cfgPath of candidates) {
+    try {
+      if (!fs.existsSync(cfgPath)) continue;
+      const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      const publicUrl = String((j && j.publicUrl) || '').replace(/\/$/, '');
+      if (!publicUrl || publicUrl.includes('TON-')) continue;
+      const suffixes = Array.isArray(j && j.allowedSuffixes) && j.allowedSuffixes.length
+        ? j.allowedSuffixes.map((s) => String(s).toLowerCase())
+        : defaults.allowedSuffixes;
+      // Autorise le domaine de l’URL configurée.
+      try {
+        const host = new URL(publicUrl).hostname.toLowerCase();
+        const parts = host.split('.');
+        if (parts.length >= 2) suffixes.push(parts.slice(-2).join('.'), host);
+      } catch (e) {}
+      return {
+        publicUrl,
+        allowedSuffixes: [...new Set(suffixes.concat(defaults.allowedSuffixes))],
+      };
+    } catch (e) {}
   }
+  return defaults;
 }
 
 const tunnelConfig = loadTunnelConfig();
@@ -501,15 +515,20 @@ const tunnelConfig = loadTunnelConfig();
 function readTunnelToken() {
   const fromEnv = process.env.CLOUDFLARE_TUNNEL_TOKEN || process.env.TUNNEL_TOKEN;
   if (fromEnv && String(fromEnv).trim()) return String(fromEnv).trim();
-  try {
-    const tokenPath = path.join(__dirname, 'tunnel.token');
-    if (!fs.existsSync(tokenPath)) return '';
-    const raw = fs.readFileSync(tokenPath, 'utf8').trim();
-    if (!raw || raw.includes('REMPLACE_MOI')) return '';
-    return raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
-  } catch (e) {
-    return '';
+  const candidates = [
+    path.join(STORE, 'tunnel.token'),
+    path.join(__dirname, 'tunnel.token'),
+  ];
+  for (const tokenPath of candidates) {
+    try {
+      if (!fs.existsSync(tokenPath)) continue;
+      const raw = fs.readFileSync(tokenPath, 'utf8').trim();
+      if (!raw || raw.includes('REMPLACE_MOI') || raw.includes('TON-')) continue;
+      const line = raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
+      if (line.length >= 40) return line;
+    } catch (e) {}
   }
+  return '';
 }
 
 function isAllowedPublicUrl(url) {

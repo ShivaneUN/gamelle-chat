@@ -22,24 +22,18 @@ npm start
 
 Sans tunnel configuré, tu as au minimum le HTTPS local (`https://localhost:3000` / IP LAN).
 
-## Accès 4G : crée TON propre tunnel Cloudflare
+## Accès 4G : chaque install a SES propres liens
 
-Ce dépôt **ne fournit pas** d’URL publique prête à l’emploi. Chaque personne doit créer **son** compte Cloudflare et **son** tunnel.
+- **Local** : HTTPS auto (`localhost` / IP LAN) — toujours créé au démarrage.
+- **Online** : sans config, un **tunnel Cloudflare rapide** (`*.trycloudflare.com`) est créé — **URL différente à chaque machine / démarrage**.
+- **URL fixe** (optionnel) : crée **ton** compte Cloudflare + Named Tunnel, puis place `tunnel.token` et `tunnel.config.json` dans le stockage persistant de l’app (ou en local pour un build privé). **Ne partage jamais** le token/URL d’un autre.
 
-1. Crée un compte sur [Cloudflare](https://dash.cloudflare.com) (offre gratuite OK)
-2. **Zero Trust → Networks → Tunnels → Create a tunnel** (ex. nom `gamelle`)
-3. Copie le **token** du tunnel :
-   - copie `tunnel.token.example` → `tunnel.token`
-   - colle **uniquement** le token (une ligne)
-4. Configure l’hostname public du tunnel (sous-domaine + ton domaine Cloudflare) vers `http://127.0.0.1:3001`
-5. Copie `tunnel.config.json.example` → `tunnel.config.json` et mets **ton** `publicUrl` + `allowedSuffixes`
-6. Pour l’APK Android, copie aussi ces deux fichiers dans :
-   - `mobile/android/app/src/main/assets/`
-   - `mobile/android/app/src/main/assets/nodejs-project/`
+Les releases publiques GitHub **n’embarquent aucun** lien ni token Cloudflare perso.
 
-**Ne commit jamais** `tunnel.token` ni ton vrai `tunnel.config.json` (déjà dans `.gitignore`).
-
-Sans `tunnel.token`, l’app peut utiliser un tunnel rapide `trycloudflare.com` (URL qui change).
+1. Compte [Cloudflare](https://dash.cloudflare.com) (gratuit OK)
+2. **Zero Trust → Networks → Tunnels → Create**
+3. Voir `tunnel.token.example` et `tunnel.config.json.example`
+4. Sur Android, les secrets vont dans `gamelle-persist/` (survivent aux OTA)
 
 Pour désactiver le tunnel : `TUNNEL=0 npm start`.
 
