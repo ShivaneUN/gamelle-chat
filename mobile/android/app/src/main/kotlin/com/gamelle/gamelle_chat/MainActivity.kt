@@ -389,6 +389,10 @@ class MainActivity : FlutterActivity() {
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     applyScreen(true)
+                    // Resync bouton WebView + contrôleur (écran rallumé au toucher).
+                    mainHandler.post {
+                        webEventSink?.success(mapOf("type" to "screenOn"))
+                    }
                 }
                 true
             }
