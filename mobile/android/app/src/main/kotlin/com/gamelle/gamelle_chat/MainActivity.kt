@@ -488,6 +488,21 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                     mainHandler.postDelayed({ relaunchApp() }, 350)
                 }
+                "saveMedia" -> {
+                    Thread {
+                        val args = call.arguments as? Map<*, *>
+                        val name = (args?.get("name") as? String).orEmpty()
+                        val mime = (args?.get("mime") as? String).orEmpty()
+                        val b64 = (args?.get("base64") as? String).orEmpty()
+                        val out = try {
+                            val r = MediaSaver.saveBase64(this, name, mime, b64)
+                            mapOf("ok" to r.ok, "path" to r.path, "message" to r.message)
+                        } catch (e: Exception) {
+                            mapOf("ok" to false, "path" to "", "message" to (e.message ?: "Erreur"))
+                        }
+                        mainHandler.post { result.success(out) }
+                    }.start()
+                }
                 else -> result.notImplemented()
             }
         }

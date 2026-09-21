@@ -833,11 +833,38 @@ function renderGallery(media) {
     div.className = 'item';
     const el = m.type === 'video'
       ? `<video src="${m.url}" controls></video>`
-      : `<img src="${m.url}">`;
-    div.innerHTML = `${el}<button class="del" data-name="${m.name}">✕</button>`;
+      : `<img src="${m.url}" alt="">`;
+    div.innerHTML = `${el}
+      <div class="gallery-actions">
+        <button type="button" class="save" data-url="${m.url}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer">↓</button>
+        <button type="button" class="del" data-name="${m.name}" title="Retirer de ma galerie">✕</button>
+      </div>`;
     gallery.appendChild(div);
   });
   gallery.querySelectorAll('.del').forEach((btn) => {
     btn.onclick = () => socket.emit('delete-media', btn.dataset.name);
   });
+  gallery.querySelectorAll('.save').forEach((btn) => {
+    btn.onclick = () => saveMediaToDevice(btn.dataset.url, btn.dataset.name, btn.dataset.type);
+  });
+}
+
+async function saveMediaToDevice(url, name, type) {
+  if (!url) return;
+  const fileName = name || ('gamelle_' + Date.now() + (type === 'video' ? '.webm' : '.jpg'));
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1500);
+  } catch (e) {
+    alert('Téléchargement impossible : ' + (e && e.message ? e.message : e));
+  }
 }

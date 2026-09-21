@@ -488,7 +488,14 @@ video { width: 100%; border-radius: 12px; background: #000; }
 .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .gallery .item { position: relative; }
 .gallery img, .gallery video { width: 100%; border-radius: 8px; }
-.gallery .del { position: absolute; top: 4px; right: 4px; background: #e24a4a; border: none; border-radius: 50%; width: 26px; height: 26px; color: #fff; }
+.gallery .gallery-actions {
+  position: absolute; top: 4px; right: 4px; display: flex; gap: 4px;
+}
+.gallery .del, .gallery .save {
+  background: #e24a4a; border: none; border-radius: 50%; width: 28px; height: 28px;
+  color: #fff; font-size: 14px; line-height: 1; padding: 0; cursor: pointer;
+}
+.gallery .save { background: #2f6fed; }
 .alarm-banner {
   position: fixed; inset: 0; background: rgba(255,122,69,.95);
   display: flex; align-items: center; justify-content: center;

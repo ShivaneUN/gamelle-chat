@@ -1246,11 +1246,27 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- Suppression manuelle : ne s'applique qu'à la copie contrôleur (le récepteur garde tout) ---
-  socket.on('delete-media', (name) => {
+  // --- Suppression manuelle ---
+  // Contrôleur : copie contrôleur seulement. Récepteur : archive tablette + copie.
+  socket.on('delete-media', (payload) => {
     if (!socket.data.code) return;
-    const p = path.join(CONTROLLER_DIR, name);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
+    const raw = typeof payload === 'string'
+      ? payload
+      : String((payload && payload.name) || '');
+    const safe = path.basename(raw.replace(/\\/g, '/'));
+    if (!safe || safe !== raw.replace(/^.*[/\\]/, '') || safe.includes('..')) return;
+    const permanent = socket.data.role === 'receiver'
+      || !!(payload && typeof payload === 'object' && payload.permanent);
+    try {
+      const ctrl = path.join(CONTROLLER_DIR, safe);
+      if (fs.existsSync(ctrl)) fs.unlinkSync(ctrl);
+      if (permanent) {
+        const recv = path.join(RECEIVER_DIR, safe);
+        if (fs.existsSync(recv)) fs.unlinkSync(recv);
+      }
+    } catch (e) {
+      console.error('delete-media:', e.message);
+    }
     broadcastRoomState(socket.data.code, getRoom(socket.data.code));
   });
 

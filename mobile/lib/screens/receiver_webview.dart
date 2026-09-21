@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -126,6 +127,11 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           }
           if (m == 'on') {
             unawaited(_life.invokeMethod<void>('screenOn'));
+            return;
+          }
+          if (m.startsWith('saveFile|')) {
+            unawaited(_saveMediaFromJs(m.substring('saveFile|'.length)));
+            return;
           }
         },
       )
@@ -207,6 +213,34 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
       ''');
     } catch (_) {}
+  }
+
+  Future<void> _saveMediaFromJs(String rawJson) async {
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map) return;
+      final name = '${decoded['name'] ?? 'gamelle.bin'}';
+      final mime = '${decoded['mime'] ?? 'application/octet-stream'}';
+      final b64 = '${decoded['base64'] ?? ''}';
+      if (b64.isEmpty) return;
+      final out = await _life.invokeMethod<dynamic>('saveMedia', {
+        'name': name,
+        'mime': mime,
+        'base64': b64,
+      });
+      if (!mounted) return;
+      final map = out is Map ? Map<String, dynamic>.from(out) : <String, dynamic>{};
+      final ok = map['ok'] == true;
+      final msg = '${map['message'] ?? (ok ? 'Enregistré' : 'Échec')}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Enregistrement impossible: $e')),
+      );
+    }
   }
 
   Future<void> _recoverAfterRendererGone() async {

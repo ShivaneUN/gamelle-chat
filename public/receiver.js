@@ -1074,11 +1074,64 @@ function renderGallery(media) {
   media.forEach((m) => {
     const div = document.createElement('div');
     div.className = 'item';
-    div.innerHTML = m.type === 'video'
+    const el = m.type === 'video'
       ? `<video src="${m.url}" controls></video>`
-      : `<img src="${m.url}">`;
+      : `<img src="${m.url}" alt="">`;
+    div.innerHTML = `${el}
+      <div class="gallery-actions">
+        <button type="button" class="save" data-url="${m.url}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer sur l’appareil">↓</button>
+        <button type="button" class="del" data-name="${m.name}" title="Effacer">✕</button>
+      </div>`;
     gallery.appendChild(div);
   });
+  gallery.querySelectorAll('.del').forEach((btn) => {
+    btn.onclick = () => {
+      if (!confirm('Effacer définitivement de la tablette ?')) return;
+      socket.emit('delete-media', { name: btn.dataset.name, permanent: true });
+    };
+  });
+  gallery.querySelectorAll('.save').forEach((btn) => {
+    btn.onclick = () => saveMediaToDevice(btn.dataset.url, btn.dataset.name, btn.dataset.type);
+  });
+}
+
+async function saveMediaToDevice(url, name, type) {
+  if (!url) return;
+  const fileName = name || ('gamelle_' + Date.now() + (type === 'video' ? '.webm' : '.jpg'));
+  const mime = type === 'video' ? 'video/webm' : 'image/jpeg';
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const blob = await res.blob();
+    // App Android : enregistre dans Photos/Films → GamelleChat
+    if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
+      const buf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      const b64 = btoa(bin);
+      GamelleHost.postMessage('saveFile|' + JSON.stringify({
+        name: fileName,
+        mime: blob.type || mime,
+        base64: b64,
+      }));
+      return;
+    }
+    // Navigateur : téléchargement classique
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1500);
+  } catch (e) {
+    alert('Enregistrement impossible : ' + (e && e.message ? e.message : e));
+  }
 }
 
 let lastBattery = null;
