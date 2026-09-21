@@ -269,11 +269,16 @@ function createScheduleManager({ containerId, socket, getMessages }) {
       refreshPickers();
       return;
     }
-    schedules = next;
-    if (container.querySelector('input:focus')) {
-      refreshPickers();
-      return;
+    // Si un champ durée a le focus, commit avant de remplacer la liste.
+    const focused = container.querySelector('input:focus');
+    if (focused && focused.dataset && focused.dataset.i != null) {
+      const i = +focused.dataset.i;
+      if (schedules[i] && focused.dataset.f) {
+        schedules[i][focused.dataset.f] = focused.value;
+        save();
+      }
     }
+    schedules = next;
     render();
   }
 
@@ -394,10 +399,14 @@ function createScheduleManager({ containerId, socket, getMessages }) {
     });
 
     container.querySelectorAll('input[data-f]').forEach((inp) => {
-      inp.onchange = () => {
-        schedules[+inp.dataset.i][inp.dataset.f] = inp.value;
+      const commit = () => {
+        const i = +inp.dataset.i;
+        if (!schedules[i]) return;
+        schedules[i][inp.dataset.f] = inp.value;
         save();
       };
+      inp.onchange = commit;
+      inp.onblur = commit;
     });
     container.querySelectorAll('.sched-del-btn').forEach((btn) => {
       btn.onclick = () => { schedules.splice(+btn.dataset.i, 1); save(); render(); };
@@ -415,7 +424,8 @@ function createScheduleManager({ containerId, socket, getMessages }) {
     if (!schedules[index]) return;
     const current = normalizeDays(schedules[index].days);
     if (isEveryDay(current)) {
-      setDays(index, [day]);
+      // Depuis « tous les jours », un tap désactive CE jour (pas « seulement ce jour »).
+      setDays(index, current.filter((d) => d !== day));
       return;
     }
     const set = new Set(current);

@@ -62,7 +62,7 @@ if (!code) {
 const socket = io({ withCredentials: true });
 let pcCam = null;   // reçoit la caméra du récepteur (WebRTC si 1 seul ctrl)
 let talkStream = null;
-let peerControllerCount = 1;
+let peerControllerCount = 0;
 let webrtcLive = false;
 let camWanted = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };

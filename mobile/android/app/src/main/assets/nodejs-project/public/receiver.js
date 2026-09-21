@@ -138,6 +138,20 @@ socket.on('connect', () => {
     socket.emit('join', { code: c, role: 'receiver' });
     refreshControllerLink();
     startBatteryWatch();
+    // Re-sync après reconnexion (cam / écran / live).
+    try {
+      if (typeof camOn !== 'undefined' && camOn) {
+        socket.emit('cam-status', { on: true });
+        if (typeof torchWanted !== 'undefined' && torchWanted) {
+          socket.emit('torch-status', { on: true, unsupported: false });
+        }
+        if (typeof startLiveRelay === 'function') startLiveRelay();
+        if (typeof syncLiveTransport === 'function') syncLiveTransport();
+      }
+      if (typeof screenOn !== 'undefined') {
+        socket.emit(screenOn ? 'screen-on' : 'screen-off');
+      }
+    } catch (e) {}
   });
 });
 socket.on('peers', ({ controllers, names }) => {
@@ -146,7 +160,7 @@ socket.on('peers', ({ controllers, names }) => {
   const list = Array.isArray(names) ? names.filter(Boolean) : [];
   window.__GAMELLE_PEER_NAMES__ = list;
   if (n <= 0) {
-    setStatus(false, 'Pas de contrôleur en ligne');
+    setStatus(true, 'Récepteur prêt · aucun contrôleur');
   } else if (n === 1) {
     const who = list[0] ? ` · ${list[0]}` : '';
     setStatus(true, `1 contrôleur en ligne${who}`);
@@ -161,6 +175,10 @@ socket.on('room-state', (state) => {
   schedManager.setSchedules(state.schedules);
   renderGallery(state.media || []);
   if (alarmControls.applySync) alarmControls.applySync(state.manualAlarm);
+  if (state && typeof state.screenOn === 'boolean') {
+    screenOn = state.screenOn;
+    renderScreenOffBtn();
+  }
 });
 
 function setStatus(on, text) {
@@ -169,7 +187,7 @@ function setStatus(on, text) {
   statusEl.style.cursor = on ? 'pointer' : 'default';
   statusEl.title = on ? 'Voir qui est en ligne' : '';
 }
-setStatus(false, 'Pas de contrôleur en ligne');
+setStatus(true, 'Récepteur prêt · connexion…');
 
 function renderPeersPop() {
   const pop = document.getElementById('peersPop');
@@ -242,6 +260,7 @@ const alarmControls = createAlarmControls({
   playSound: true,
   isAudioUnlocked: () => alarmSoundOn,
 });
+window.alarmControls = alarmControls;
 
 function openModal(id) {
   const el = document.getElementById(id);
@@ -468,7 +487,6 @@ function renderScreenOffBtn() {
 
 /** Écran rallumé au toucher (overlay natif) → resync bouton + contrôleur. */
 function syncScreenOnFromNative() {
-  if (screenOn) return;
   screenOn = true;
   renderScreenOffBtn();
   try {

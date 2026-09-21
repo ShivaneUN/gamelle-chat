@@ -70,6 +70,7 @@ class NodeBridgeService {
         return host == '127.0.0.1' || host == 'localhost';
       }
       ..connectionTimeout = const Duration(seconds: 2);
+    var failStreak = 0;
     try {
       while (status == NodeStatus.running) {
         try {
@@ -77,6 +78,7 @@ class NodeBridgeService {
           final res = await req.close().timeout(const Duration(seconds: 3));
           final body = await res.transform(utf8.decoder).join();
           final json = jsonDecode(body);
+          failStreak = 0;
           if (json is Map) {
             final code = '${json['pairCode'] ?? ''}';
             if (code.length >= 4 && pairCode != code) {
@@ -89,7 +91,16 @@ class NodeBridgeService {
               _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: url));
             }
           }
-        } catch (_) {}
+        } catch (_) {
+          failStreak += 1;
+          // Node mort alors que le statut dit encore « running ».
+          if (failStreak >= 8) {
+            status = NodeStatus.error;
+            lastError = 'Serveur local injoignable';
+            _controller.add(const NodeBridgeMessage(tag: 'status', message: 'error'));
+            break;
+          }
+        }
         await Future<void>.delayed(const Duration(seconds: 2));
       }
     } finally {

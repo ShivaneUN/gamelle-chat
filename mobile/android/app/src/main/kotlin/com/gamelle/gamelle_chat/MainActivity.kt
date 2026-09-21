@@ -220,8 +220,31 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startKeepAliveSafe(camera: Boolean = KeepAliveService.cameraWanted) {
-        if (!canPostNotifications()) return
-        KeepAliveService.start(this, camera)
+        try {
+            KeepAliveService.start(this, camera)
+        } catch (_: Exception) {
+        }
+        // Sans notif (Android 13+), le FGS peut échouer : wake lock de secours.
+        if (!canPostNotifications()) {
+            ensureFallbackWakeLock()
+        }
+    }
+
+    private var fallbackWakeLock: PowerManager.WakeLock? = null
+
+    private fun ensureFallbackWakeLock() {
+        try {
+            if (fallbackWakeLock?.isHeld == true) return
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            fallbackWakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "gamelle:fallback",
+            ).apply {
+                setReferenceCounted(false)
+                acquire(6 * 60 * 60 * 1000L)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun bringToFrontIfNeeded() {
@@ -381,7 +404,12 @@ class MainActivity : FlutterActivity() {
                 }
                 "applyOverlay" -> {
                     try {
-                        GithubUpdate.applyStoredOverlay(filesDir)
+                        val installed = try {
+                            packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+                        } catch (_: Exception) {
+                            ""
+                        }
+                        GithubUpdate.applyStoredOverlay(filesDir, installed)
                         result.success(true)
                     } catch (e: Exception) {
                         result.error("OTA", e.message, null)
@@ -427,6 +455,9 @@ class MainActivity : FlutterActivity() {
                         alarmScreenLatched = true
                     }
                     applyScreen(true)
+                    requestPlaybackAudio()
+                    keepWebViewsAlive()
+                    unlockWebViewAudio()
                     AlarmNotifier.show(this, call.arguments as? String ?: "")
                     result.success(true)
                 }
@@ -719,17 +750,52 @@ class MainActivity : FlutterActivity() {
                 val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                     .setAudioAttributes(
                         AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                             .build(),
                     )
+                    .setAcceptsDelayedFocusGain(true)
                     .build()
                 am.requestAudioFocus(req)
             } else {
                 @Suppress("DEPRECATION")
-                am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+                am.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN)
             }
         } catch (_: Exception) {
+        }
+    }
+
+    private fun unlockWebViewAudio() {
+        val js = """
+            (function(){
+              try {
+                if (typeof unlockSoundEngine === 'function') unlockSoundEngine();
+                if (window.__gamelleAudioCtx && window.__gamelleAudioCtx.state === 'suspended') {
+                  window.__gamelleAudioCtx.resume();
+                }
+                if (typeof alarmSoundOn !== 'undefined') alarmSoundOn = true;
+                if (typeof renderAlarmSoundBtn === 'function') renderAlarmSoundBtn();
+                if (window.alarmControls && typeof window.alarmControls.setSoundEnabled === 'function') {
+                  window.alarmControls.setSoundEnabled(true);
+                }
+              } catch (e) {}
+            })();
+        """.trimIndent()
+        fun run(root: View?) {
+            if (root == null) return
+            if (root is WebView) {
+                try {
+                    root.evaluateJavascript(js, null)
+                } catch (_: Exception) {
+                }
+            } else if (root is ViewGroup) {
+                for (i in 0 until root.childCount) run(root.getChildAt(i))
+            }
+        }
+        mainHandler.post {
+            run(window?.decorView)
+            // 2e passe : WebView parfois pas encore résumée.
+            mainHandler.postDelayed({ run(window?.decorView) }, 400)
         }
     }
 

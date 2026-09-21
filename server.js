@@ -217,6 +217,16 @@ function saveJsonFile(file, data) {
 }
 
 function isLocalRequest(req) {
+  // Trafic Cloudflare / tunnel : jamais « tablette locale » (cloudflared proxyfie en 127.0.0.1).
+  if (req.headers['cf-connecting-ip'] || req.headers['cf-ray'] || req.headers['cf-visitor']) {
+    return false;
+  }
+  const host = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (host.endsWith('.trycloudflare.com') || host === 'api.trycloudflare.com') return false;
+  if (host && host !== 'localhost' && host !== '127.0.0.1' && host !== '::1') {
+    // Nom de domaine public (Named Tunnel) ≠ keyhole tablette.
+    if (host.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+  }
   const raw = String(req.socket && req.socket.remoteAddress || '');
   const ip = raw.replace(/^::ffff:/i, '');
   return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
@@ -437,14 +447,13 @@ app.post('/api/auth/login', (req, res) => {
     return res.json({ ok: true, user: publicUser(user) });
   }
 
-  // Une session existe déjà ailleurs → refuser (pas de déco auto).
+  // Une session existe ailleurs → on la remplace (mot de passe déjà validé).
+  // Évite le blocage 409 si le cookie a été perdu / navigateur changé.
   const existing = findSessionsForUser(user.id);
   if (existing.length > 0) {
-    return res.status(409).json({
-      ok: false,
-      error: 'Ce compte est déjà connecté sur un autre appareil. Déconnecte-toi là-bas avant de te connecter ici.',
-      code: 'SESSION_ACTIVE',
-    });
+    const sessions = readSessions();
+    sessions.sessions = sessions.sessions.filter((s) => !(s && s.userId === user.id));
+    writeSessions(sessions);
   }
 
   const token = createSession(user.id);
@@ -572,13 +581,11 @@ app.get('/api/active-code', (_req, res) => {
 });
 
 app.post('/api/alarm-stop', (_req, res) => {
-  const code = readActiveCode();
-  if (code) stopRoomAlarm(code);
+  stopAllRoomAlarms();
   res.json({ ok: true });
 });
 app.get('/api/alarm-stop', (_req, res) => {
-  const code = readActiveCode();
-  if (code) stopRoomAlarm(code);
+  stopAllRoomAlarms();
   res.json({ ok: true });
 });
 
@@ -634,13 +641,23 @@ function persist() {
   try {
     if (fs.existsSync(DATA_FILE)) dump = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) || {};
   } catch (e) {}
-  for (const code in rooms) dump[code] = {
-    schedules: rooms[code].schedules,
-    messages: rooms[code].messages,
-    manualAlarm: rooms[code].manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
-    lastFired: rooms[code]._lastFired || {},
-  };
-  fs.writeFileSync(DATA_FILE, JSON.stringify(dump, null, 2));
+  for (const code in rooms) {
+    if (!code || code === 'undefined' || code === 'null') continue;
+    dump[code] = {
+      schedules: rooms[code].schedules,
+      messages: rooms[code].messages,
+      manualAlarm: rooms[code].manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
+      lastFired: rooms[code]._lastFired || {},
+    };
+  }
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(dump, null, 2));
+    fs.renameSync(tmp, DATA_FILE);
+  } catch (e) {
+    try { fs.writeFileSync(DATA_FILE, JSON.stringify(dump, null, 2)); } catch (e2) {}
+  }
 }
 
 function notifyFlutter(tag, message) {
@@ -710,7 +727,9 @@ function scheduleIsDue(s, now, graceMinutes) {
   if (schedMin == null) return false;
   if (!scheduleMatchesWeekday(s, now.getDay())) return false;
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const delta = nowMin - schedMin;
+  let delta = nowMin - schedMin;
+  // Rattrapage juste après minuit (ex. 23:59 → 00:01).
+  if (delta < -12 * 60) delta += 24 * 60;
   const grace = Math.max(0, Number(graceMinutes) || 0);
   return delta >= 0 && delta <= grace;
 }
@@ -790,10 +809,14 @@ ensureActiveCode();
 // rooms[code] = { controllerIds: Set, receiverId, schedules, messages, _lastFired, camOn, cameras }
 const rooms = {};
 function getRoom(code) {
-  if (!rooms[code]) {
-    const saved = persisted[code] || {};
+  const key = String(code || '').trim();
+  if (!key || key === 'undefined' || key === 'null') {
+    throw new Error('pair code invalide');
+  }
+  if (!rooms[key]) {
+    const saved = persisted[key] || {};
     const lastFired = (saved.lastFired && typeof saved.lastFired === 'object') ? { ...saved.lastFired } : {};
-    rooms[code] = {
+    rooms[key] = {
       schedules: (saved.schedules || []).map(normalizeSchedule),
       messages: saved.messages || [],
       manualAlarm: saved.manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
@@ -805,20 +828,37 @@ function getRoom(code) {
       cameras: [],
     };
   }
-  if (!rooms[code].controllerIds) rooms[code].controllerIds = new Set();
-  return rooms[code];
+  if (!rooms[key].controllerIds) rooms[key].controllerIds = new Set();
+  return rooms[key];
 }
 
-/** Charge les salons persistés dès le boot (sinon aucun horaire ne sonne tant que personne n’a join). */
+/** Charge le salon actif (+ données) dès le boot. Les autres codes restent en fichier mais ne tickent pas. */
 function hydrateRoomsFromPersisted() {
-  const codes = new Set(Object.keys(persisted || {}));
   const active = readActiveCode();
-  if (active) codes.add(active);
-  codes.forEach((code) => {
-    if (!code) return;
-    const saved = persisted[code];
-    if (code === active || roomWeight(saved) > 0) getRoom(code);
-  });
+  if (active) {
+    try { getRoom(active); } catch (e) {}
+  }
+  // Si l’actif n’a aucun horaire mais un ancien code en a, on fusionne vers l’actif (anti-fantômes).
+  if (active && rooms[active] && !(rooms[active].schedules || []).length) {
+    let bestCode = null;
+    let bestW = 0;
+    Object.keys(persisted || {}).forEach((code) => {
+      if (code === active) return;
+      const w = roomWeight(persisted[code]);
+      if (w > bestW) {
+        bestW = w;
+        bestCode = code;
+      }
+    });
+    if (bestCode && bestW > 0) {
+      const src = persisted[bestCode] || {};
+      rooms[active].schedules = (src.schedules || []).map(normalizeSchedule);
+      if (!(rooms[active].messages || []).length) rooms[active].messages = src.messages || [];
+      if (src.manualAlarm) rooms[active].manualAlarm = src.manualAlarm;
+      if (src.lastFired) rooms[active]._lastFired = { ...src.lastFired };
+      try { persist(); } catch (e) {}
+    }
+  }
 }
 hydrateRoomsFromPersisted();
 
@@ -894,6 +934,8 @@ function broadcastRoomState(code, room) {
       messages: room.messages,
       media,
       manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
+      screenOn: room.screenOn !== false,
+      camOn: !!room.camOn,
     });
   });
 }
@@ -910,18 +952,29 @@ io.on('connection', (socket) => {
       socket.data.userId = user.id;
       socket.data.username = user.username;
     }
-    const room = getRoom(code);
-    socket.join(code);
-    socket.data.code = code;
+    const pair = String(code || '').trim();
+    if (!pair || pair.length < 4 || pair === 'undefined') {
+      socket.emit('join-error', { error: 'Code de jumelage invalide' });
+      return;
+    }
+    let room;
+    try {
+      room = getRoom(pair);
+    } catch (e) {
+      socket.emit('join-error', { error: 'Code de jumelage invalide' });
+      return;
+    }
+    socket.join(pair);
+    socket.data.code = pair;
     socket.data.role = role;
 
     if (role === 'controller') room.controllerIds.add(socket.id);
     if (role === 'receiver') {
       room.receiverId = socket.id;
-      writeActiveCode(code);
+      writeActiveCode(pair);
     }
 
-    emitPeers(code, room);
+    emitPeers(pair, room);
 
     const media = role === 'receiver' ? receiverMedia() : controllerMedia();
     socket.emit('room-state', {
@@ -929,6 +982,8 @@ io.on('connection', (socket) => {
       messages: room.messages,
       media,
       manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
+      screenOn: room.screenOn !== false,
+      camOn: !!room.camOn,
     });
     if (room._alarmUntil && room._alarmUntil > Date.now() && room._alarmPayload) {
       socket.emit('alarm', room._alarmPayload);
@@ -1026,6 +1081,7 @@ io.on('connection', (socket) => {
 
   // --- Horaires : modifiables depuis n'importe quel appareil, synchronisés sur les 2 ---
   socket.on('update-schedules', (schedules) => {
+    if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
     room.schedules = (schedules || []).map(normalizeSchedule);
     persist();
@@ -1047,6 +1103,7 @@ io.on('connection', (socket) => {
 
   // --- Bibliothèque de messages personnalisés : indépendante des horaires, réutilisable ---
   socket.on('save-message', ({ id, name, text }) => {
+    if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
     let msg = room.messages.find((m) => m.id === id);
     if (!msg) {
@@ -1061,6 +1118,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('delete-message', ({ id }) => {
+    if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
     const msg = room.messages.find((m) => m.id === id);
     if (msg && msg.audioUrl) {
@@ -1085,6 +1143,7 @@ io.on('connection', (socket) => {
 
   socket.on('save-message-audio', ({ messageId, data, ext }) => {
     try {
+      if (!socket.data.code) return;
       const room = getRoom(socket.data.code);
       if (!messageId || !data) {
         socket.emit('audio-save-error', { error: 'Enregistrement vide' });
@@ -1128,6 +1187,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('delete-message-audio', ({ messageId }) => {
+    if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
     const msg = room.messages.find((m) => m.id === messageId);
     if (msg && msg.audioUrl) {
@@ -1174,6 +1234,7 @@ io.on('connection', (socket) => {
 
   // --- Réception du média capturé par le récepteur : permanent + copie purgeable ---
   socket.on('media-captured', ({ type, data, ext }) => {
+    if (!socket.data.code) return;
     try {
       const buffer = Buffer.from(data, 'base64');
       const filename = `${Date.now()}_${type}.${ext}`;
@@ -1187,6 +1248,7 @@ io.on('connection', (socket) => {
 
   // --- Suppression manuelle : ne s'applique qu'à la copie contrôleur (le récepteur garde tout) ---
   socket.on('delete-media', (name) => {
+    if (!socket.data.code) return;
     const p = path.join(CONTROLLER_DIR, name);
     if (fs.existsSync(p)) fs.unlinkSync(p);
     broadcastRoomState(socket.data.code, getRoom(socket.data.code));
@@ -1269,37 +1331,47 @@ function stopRoomAlarm(code) {
   }
 }
 
-// --- Vérifie toutes les 5s : horaires du jour (+ rattrapage si minute sautée) ---
-const SCHEDULE_GRACE_MINUTES = 3;
+function stopAllRoomAlarms() {
+  const codes = new Set(Object.keys(rooms));
+  const active = readActiveCode();
+  if (active) codes.add(active);
+  codes.forEach((code) => {
+    try { stopRoomAlarm(code); } catch (e) {}
+  });
+}
+
+// --- Vérifie toutes les 5s : horaires du code ACTIF (+ rattrapage si minute sautée) ---
+const SCHEDULE_GRACE_MINUTES = 15;
 
 function checkScheduledAlarms() {
   const now = new Date();
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  let anyFired = false;
-  for (const code in rooms) {
-    const room = rooms[code];
-    if (!room._lastFired) room._lastFired = {};
-    const due = [];
-    (room.schedules || []).forEach((raw) => {
-      const s = normalizeSchedule(raw);
-      if (!scheduleIsDue(s, now, SCHEDULE_GRACE_MINUTES)) return;
-      const key = `${s.id}|${day}|${s.time}`;
-      if (room._lastFired[s.id] === key) return;
-      room._lastFired[s.id] = key;
-      due.push(s);
-    });
-    if (!due.length) continue;
-    anyFired = true;
-    const duration = Math.max.apply(null, due.map((s) => s.duration || 30));
-    const sequence = [];
-    due.forEach((s) => {
-      soundsForSchedule(room, s).forEach((part) => sequence.push(part));
-    });
-    startRoomAlarm(code, { duration, sequence });
+  const active = readActiveCode();
+  if (!active) return;
+  let room;
+  try {
+    room = getRoom(active);
+  } catch (e) {
+    return;
   }
-  if (anyFired) {
-    try { persist(); } catch (e) {}
-  }
+  if (!room._lastFired) room._lastFired = {};
+  const due = [];
+  (room.schedules || []).forEach((raw) => {
+    const s = normalizeSchedule(raw);
+    if (!scheduleIsDue(s, now, SCHEDULE_GRACE_MINUTES)) return;
+    const key = `${s.id}|${day}|${s.time}`;
+    if (room._lastFired[s.id] === key) return;
+    room._lastFired[s.id] = key;
+    due.push(s);
+  });
+  if (!due.length) return;
+  const duration = Math.max.apply(null, due.map((s) => s.duration || 30));
+  const sequence = [];
+  due.forEach((s) => {
+    soundsForSchedule(room, s).forEach((part) => sequence.push(part));
+  });
+  startRoomAlarm(active, { duration, sequence });
+  try { persist(); } catch (e) {}
 }
 
 setInterval(checkScheduledAlarms, 5000);

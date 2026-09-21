@@ -58,9 +58,34 @@ object GithubUpdate {
         )
     }
 
-    fun applyStoredOverlay(filesDir: File) {
+    fun applyStoredOverlay(filesDir: File, installedVersion: String = "") {
         val ota = otaDir(filesDir)
         if (!ota.exists()) return
+        val installed = installedVersion.trim()
+        var otaTag = ""
+        try {
+            val vf = versionFile(filesDir)
+            if (vf.exists()) {
+                otaTag = JSONObject(vf.readText(StandardCharsets.UTF_8)).optString("tag").orEmpty()
+            }
+        } catch (_: Exception) {
+        }
+        // Si l’APK installé est déjà ≥ overlay OTA, on jette l’overlay (évite de downgrader server.js).
+        if (installed.isNotBlank() && otaTag.isNotBlank() && !isNewer(otaTag, installed)) {
+            try {
+                ota.deleteRecursively()
+            } catch (_: Exception) {
+            }
+            return
+        }
+        if (installed.isNotBlank() && otaTag.isBlank()) {
+            // Overlay sans version connue + APK frais → trop risqué, on ignore.
+            try {
+                ota.deleteRecursively()
+            } catch (_: Exception) {
+            }
+            return
+        }
         copyWanted(ota, nodeDir(filesDir))
     }
 
