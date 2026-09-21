@@ -30,6 +30,15 @@ Sans tunnel configuré, tu as au minimum le HTTPS local (`https://localhost:3000
 
 Les releases publiques GitHub **n’embarquent aucun** lien ni token Cloudflare perso.
 
+**Chaque nouvelle maj doit rester clean** — avant de publier une release :
+
+```bash
+bash tools/ensure-public-tunnel-assets.sh
+bash tools/check-no-private-secrets.sh path/to/app-release.apk
+```
+
+(CI GitHub Actions `No private secrets` bloque aussi les PR si un lien/token perso réapparaît.)
+
 1. Compte [Cloudflare](https://dash.cloudflare.com) (gratuit OK)
 2. **Zero Trust → Networks → Tunnels → Create**
 3. Voir `tunnel.token.example` et `tunnel.config.json.example`

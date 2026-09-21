@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export DEST="$ROOT/mobile/android/app/src/main/assets/nodejs-project"
 export ASSETS="$ROOT/mobile/android/app/src/main/assets"
 
+# Toujours repartir d’assets tunnel publics avant patch / listes.
+bash "$ROOT/tools/ensure-public-tunnel-assets.sh"
+
 python3 <<'PY'
 from pathlib import Path
 import os

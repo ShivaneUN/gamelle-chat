@@ -12,16 +12,18 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 Copy-Item (Join-Path $Root "server.js") (Join-Path $Dest "server.js") -Force
 Copy-Item (Join-Path $Root "update-service.js") (Join-Path $Dest "update-service.js") -Force
 
-$tunnelCfg = Join-Path $Root "tunnel.config.json"
-if (Test-Path $tunnelCfg) {
-  Copy-Item $tunnelCfg (Join-Path $Assets "tunnel.config.json") -Force
-  Copy-Item $tunnelCfg (Join-Path $Dest "tunnel.config.json") -Force
+# Releases publiques : JAMAIS copier un tunnel/token perso dans l’APK.
+# Les secrets restent dans .local-secrets/ + gamelle-persist sur l’appareil.
+$publicTunnel = @'
+{
+  "publicUrl": "",
+  "allowedSuffixes": ["trycloudflare.com"]
 }
-$tokenSrc = Join-Path $Root "tunnel.token"
-if (Test-Path $tokenSrc) {
-  Copy-Item $tokenSrc (Join-Path $Assets "tunnel.token") -Force
-  Copy-Item $tokenSrc (Join-Path $Dest "tunnel.token") -Force
-}
+'@
+Set-Content -Path (Join-Path $Assets "tunnel.config.json") -Value $publicTunnel.Trim() -Encoding utf8NoBOM
+Set-Content -Path (Join-Path $Dest "tunnel.config.json") -Value $publicTunnel.Trim() -Encoding utf8NoBOM
+Remove-Item (Join-Path $Assets "tunnel.token") -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $Dest "tunnel.token") -ErrorAction SilentlyContinue
 
 $publicDest = Join-Path $Dest "public"
 if (Test-Path $publicDest) { Remove-Item $publicDest -Recurse -Force }
