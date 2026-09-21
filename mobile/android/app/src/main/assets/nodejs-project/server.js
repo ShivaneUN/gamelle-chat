@@ -638,6 +638,7 @@ function persist() {
     schedules: rooms[code].schedules,
     messages: rooms[code].messages,
     manualAlarm: rooms[code].manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
+    lastFired: rooms[code]._lastFired || {},
   };
   fs.writeFileSync(DATA_FILE, JSON.stringify(dump, null, 2));
 }
@@ -689,6 +690,36 @@ function normalizeDays(days) {
 
 function scheduleMatchesWeekday(s, weekday) {
   return normalizeDays(s && s.days).includes(Number(weekday));
+}
+
+/** Minutes depuis minuit (0–1439), ou null si heure invalide. */
+function parseTimeToMinutes(time) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(time || '').trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function formatTimeHHMM(totalMin) {
+  const h = Math.floor(totalMin / 60) % 24;
+  const min = totalMin % 60;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/**
+ * Horaire dû maintenant, ou rattrapé si le tick a sauté la minute
+ * (Doze / veille Android peut retarder setInterval de plusieurs minutes).
+ */
+function scheduleIsDue(s, now, graceMinutes) {
+  const schedMin = parseTimeToMinutes(s && s.time);
+  if (schedMin == null) return false;
+  if (!scheduleMatchesWeekday(s, now.getDay())) return false;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const delta = nowMin - schedMin;
+  const grace = Math.max(0, Number(graceMinutes) || 0);
+  return delta >= 0 && delta <= grace;
 }
 
 function remapBuiltinSound(id) {
@@ -768,11 +799,12 @@ const rooms = {};
 function getRoom(code) {
   if (!rooms[code]) {
     const saved = persisted[code] || {};
+    const lastFired = (saved.lastFired && typeof saved.lastFired === 'object') ? { ...saved.lastFired } : {};
     rooms[code] = {
       schedules: (saved.schedules || []).map(normalizeSchedule),
       messages: saved.messages || [],
       manualAlarm: saved.manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
-      _lastFired: {},
+      _lastFired: lastFired,
       controllerIds: new Set(),
       receiverId: null,
       camOn: false,
@@ -783,6 +815,19 @@ function getRoom(code) {
   if (!rooms[code].controllerIds) rooms[code].controllerIds = new Set();
   return rooms[code];
 }
+
+/** Charge les salons persistés dès le boot (sinon aucun horaire ne sonne tant que personne n’a join). */
+function hydrateRoomsFromPersisted() {
+  const codes = new Set(Object.keys(persisted || {}));
+  const active = readActiveCode();
+  if (active) codes.add(active);
+  codes.forEach((code) => {
+    if (!code) return;
+    const saved = persisted[code];
+    if (code === active || roomWeight(saved) > 0) getRoom(code);
+  });
+}
+hydrateRoomsFromPersisted();
 
 function emitToRole(code, role, event, payload) {
   const socketIds = io.sockets.adapter.rooms.get(code);
@@ -1231,25 +1276,27 @@ function stopRoomAlarm(code) {
   }
 }
 
-// --- Vérifie toutes les 5s : horaires du jour (tous les jours ou jours choisis) ---
-setInterval(() => {
+// --- Vérifie toutes les 5s : horaires du jour (+ rattrapage si minute sautée) ---
+const SCHEDULE_GRACE_MINUTES = 3;
+
+function checkScheduledAlarms() {
   const now = new Date();
-  const current = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  let anyFired = false;
   for (const code in rooms) {
     const room = rooms[code];
     if (!room._lastFired) room._lastFired = {};
     const due = [];
     (room.schedules || []).forEach((raw) => {
       const s = normalizeSchedule(raw);
-      if (!s.time || s.time !== current) return;
-      if (!scheduleMatchesWeekday(s, now.getDay())) return;
+      if (!scheduleIsDue(s, now, SCHEDULE_GRACE_MINUTES)) return;
       const key = `${s.id}|${day}|${s.time}`;
       if (room._lastFired[s.id] === key) return;
       room._lastFired[s.id] = key;
       due.push(s);
     });
     if (!due.length) continue;
+    anyFired = true;
     const duration = Math.max.apply(null, due.map((s) => s.duration || 30));
     const sequence = [];
     due.forEach((s) => {
@@ -1257,7 +1304,14 @@ setInterval(() => {
     });
     startRoomAlarm(code, { duration, sequence });
   }
-}, 5000);
+  if (anyFired) {
+    try { persist(); } catch (e) {}
+  }
+}
+
+setInterval(checkScheduledAlarms, 5000);
+// Premier passage tôt après démarrage (hydratation déjà faite).
+setTimeout(checkScheduledAlarms, 2000);
 
 // --- Purge auto après 24h : UNIQUEMENT sur le stockage contrôleur (le récepteur garde tout) ---
 setInterval(() => {
