@@ -179,6 +179,7 @@ socket.on('room-state', (state) => {
     screenOn = state.screenOn;
     renderScreenOffBtn();
   }
+  if (state && state.outputVolume != null) applyReceiverVolume(state.outputVolume, false);
 });
 
 function setStatus(on, text) {
@@ -338,6 +339,57 @@ if (homeBtn) {
 }
 
 const unlockMicBtn = document.getElementById('unlockMicBtn');
+let recvVolume = 70;
+let volumeDragging = false;
+let lastTalkAckEmit = 0;
+
+function applyReceiverVolume(vol, emit) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(vol))));
+  if (!Number.isFinite(n)) return;
+  recvVolume = n;
+  const slider = document.getElementById('recvVolume');
+  const pct = document.getElementById('recvVolumePct');
+  if (slider && !volumeDragging) slider.value = String(n);
+  if (pct) pct.textContent = n + '%';
+  if (typeof setTalkPlaybackVolume === 'function') setTalkPlaybackVolume(n / 100);
+  if (typeof setAlarmPlaybackVolume === 'function') setAlarmPlaybackVolume(n / 100);
+  try {
+    if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
+      GamelleHost.postMessage('volume|' + n);
+    }
+  } catch (e) {}
+  if (emit) socket.emit('set-receiver-volume', { volume: n });
+}
+
+(function wireVolumeSlider() {
+  const slider = document.getElementById('recvVolume');
+  if (!slider) return;
+  const paint = () => {
+    const n = Math.max(0, Math.min(100, Math.round(Number(slider.value) || 0)));
+    const pct = document.getElementById('recvVolumePct');
+    if (pct) pct.textContent = n + '%';
+  };
+  slider.addEventListener('pointerdown', () => { volumeDragging = true; });
+  slider.addEventListener('pointerup', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('change', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('input', () => {
+    paint();
+    applyReceiverVolume(slider.value, true);
+  });
+  applyReceiverVolume(slider.value, false);
+})();
+
+socket.on('receiver-volume', (payload) => {
+  if (volumeDragging) return;
+  const vol = payload && payload.volume != null ? payload.volume : payload;
+  applyReceiverVolume(vol, false);
+});
 
 function renderMicStatus(state) {
   setBtnLabel(unlockMicBtn, 'Micro', micOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
@@ -1009,8 +1061,20 @@ function stopLiveRelay() {
 
 // --- Voix du contrôleur (relais PCM, marche hors LAN) ---
 socket.on('talk-audio', ({ rate, samples }) => {
-  if (!talkSoundOn) return;
-  playTalkPcm(talkPlayState, rate, samples);
+  if (!talkSoundOn) {
+    const now = Date.now();
+    if (now - lastTalkAckEmit > 400) {
+      lastTalkAckEmit = now;
+      socket.emit('talk-audio-ack', { ok: false, reason: 'muted' });
+    }
+    return;
+  }
+  const ok = playTalkPcm(talkPlayState, rate, samples);
+  const now = Date.now();
+  if (now - lastTalkAckEmit > 300) {
+    lastTalkAckEmit = now;
+    socket.emit('talk-audio-ack', { ok: !!ok });
+  }
 });
 
 socket.on('signal', async (payload) => {

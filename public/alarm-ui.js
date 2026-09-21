@@ -85,7 +85,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
         speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(t);
         utter.lang = 'fr-FR';
-        utter.volume = 1;
+        utter.volume = (typeof getAlarmPlaybackVolume === 'function') ? getAlarmPlaybackVolume() : 1;
         utter.rate = 1;
         const done = () => resolve();
         utter.onend = done;
@@ -125,6 +125,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
       const el = new Audio(url);
       currentAudioEl = el;
       el.loop = false;
+      el.volume = (typeof getAlarmPlaybackVolume === 'function') ? getAlarmPlaybackVolume() : 1;
       const done = () => {
         if (currentAudioEl === el) currentAudioEl = null;
         resolve();

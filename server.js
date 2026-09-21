@@ -643,10 +643,12 @@ function persist() {
   } catch (e) {}
   for (const code in rooms) {
     if (!code || code === 'undefined' || code === 'null') continue;
+    const vol = Number(rooms[code].outputVolume);
     dump[code] = {
       schedules: rooms[code].schedules,
       messages: rooms[code].messages,
       manualAlarm: rooms[code].manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
+      outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
       lastFired: rooms[code]._lastFired || {},
     };
   }
@@ -816,10 +818,12 @@ function getRoom(code) {
   if (!rooms[key]) {
     const saved = persisted[key] || {};
     const lastFired = (saved.lastFired && typeof saved.lastFired === 'object') ? { ...saved.lastFired } : {};
+    const vol = Number(saved.outputVolume);
     rooms[key] = {
       schedules: (saved.schedules || []).map(normalizeSchedule),
       messages: saved.messages || [],
       manualAlarm: saved.manualAlarm || { messageId: '', sound1: 'beep', sound2: '', duration: 30 },
+      outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
       _lastFired: lastFired,
       controllerIds: new Set(),
       receiverId: null,
@@ -829,6 +833,7 @@ function getRoom(code) {
     };
   }
   if (!rooms[key].controllerIds) rooms[key].controllerIds = new Set();
+  if (!Number.isFinite(Number(rooms[key].outputVolume))) rooms[key].outputVolume = 70;
   return rooms[key];
 }
 
@@ -929,6 +934,7 @@ function broadcastRoomState(code, room) {
     const s = io.sockets.sockets.get(socketId);
     if (!s) return;
     const media = s.data.role === 'receiver' ? receiverMedia() : controllerMedia();
+    const vol = Number(room.outputVolume);
     s.emit('room-state', {
       schedules: room.schedules,
       messages: room.messages,
@@ -936,6 +942,7 @@ function broadcastRoomState(code, room) {
       manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
       screenOn: room.screenOn !== false,
       camOn: !!room.camOn,
+      outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
     });
   });
 }
@@ -977,6 +984,7 @@ io.on('connection', (socket) => {
     emitPeers(pair, room);
 
     const media = role === 'receiver' ? receiverMedia() : controllerMedia();
+    const joinVol = Number(room.outputVolume);
     socket.emit('room-state', {
       schedules: room.schedules,
       messages: room.messages,
@@ -984,6 +992,7 @@ io.on('connection', (socket) => {
       manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
       screenOn: room.screenOn !== false,
       camOn: !!room.camOn,
+      outputVolume: Number.isFinite(joinVol) ? Math.max(0, Math.min(100, Math.round(joinVol))) : 70,
     });
     if (room._alarmUntil && room._alarmUntil > Date.now() && room._alarmPayload) {
       socket.emit('alarm', room._alarmPayload);
@@ -1056,6 +1065,24 @@ io.on('connection', (socket) => {
     } else if (socket.data.role === 'receiver') {
       emitToRole(socket.data.code, 'controller', 'talk-audio', payload);
     }
+  });
+
+  // ACK lecture voix côté récepteur → indicateur Micro vert/rouge sur le contrôleur
+  socket.on('talk-audio-ack', (payload) => {
+    if (!socket.data.code || socket.data.role !== 'receiver') return;
+    emitToRole(socket.data.code, 'controller', 'talk-audio-ack', payload || { ok: false });
+  });
+
+  // Volume sortie récepteur (0–100), sync ctrl ↔ recv + persist
+  socket.on('set-receiver-volume', (payload) => {
+    if (!socket.data.code) return;
+    const room = getRoom(socket.data.code);
+    const raw = payload && payload.volume != null ? payload.volume : payload;
+    const vol = Math.max(0, Math.min(100, Math.round(Number(raw))));
+    if (!Number.isFinite(vol)) return;
+    room.outputVolume = vol;
+    try { persist(); } catch (e) {}
+    io.to(socket.data.code).emit('receiver-volume', { volume: vol });
   });
 
   socket.on('cam-status', (payload) => {

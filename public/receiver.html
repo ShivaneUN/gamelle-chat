@@ -13,7 +13,7 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=47">
+<link rel="stylesheet" href="/style.css?v=50">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -33,6 +33,14 @@
     <div class="live-wrap">
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="localVideo" autoplay playsinline muted></video>
+    </div>
+    <div class="volume-row" id="recvVolumeRow">
+      <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
+      <div class="volume-main">
+        <div class="volume-lab">Volume</div>
+        <input id="recvVolume" type="range" min="0" max="100" value="70" aria-label="Volume">
+      </div>
+      <span class="volume-pct" id="recvVolumePct">70%</span>
     </div>
     <p id="camHint" class="hint">Caméra éteinte — le Contrôleur ne voit rien tant qu’elle n’est pas activée.</p>
     <div class="stack-gap">
@@ -185,11 +193,11 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/alarm-sounds.js?v=4"></script>
+<script src="/alarm-sounds.js?v=5"></script>
 <script src="/schedule-ui.js?v=14"></script>
-<script src="/alarm-ui.js?v=5"></script>
+<script src="/alarm-ui.js?v=6"></script>
 <script src="/qr.js?v=6"></script>
-<script src="/talk-pcm.js?v=2"></script>
-<script src="/receiver.js?v=46"></script>
+<script src="/talk-pcm.js?v=3"></script>
+<script src="/receiver.js?v=50"></script>
 </body>
 </html>

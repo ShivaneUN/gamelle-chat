@@ -503,6 +503,16 @@ class MainActivity : FlutterActivity() {
                         mainHandler.post { result.success(out) }
                     }.start()
                 }
+                "setOutputVolume" -> {
+                    val pct = when (val args = call.arguments) {
+                        is Number -> args.toInt()
+                        is Map<*, *> -> (args["volume"] as? Number)?.toInt() ?: 70
+                        is String -> args.toIntOrNull() ?: 70
+                        else -> 70
+                    }
+                    setSystemOutputVolume(pct)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -776,6 +786,23 @@ class MainActivity : FlutterActivity() {
                 @Suppress("DEPRECATION")
                 am.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN)
             }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun setSystemOutputVolume(percent: Int) {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val pct = percent.coerceIn(0, 100)
+            fun apply(stream: Int) {
+                val max = am.getStreamMaxVolume(stream).coerceAtLeast(1)
+                val level = ((pct / 100.0) * max).toInt().coerceIn(0, max)
+                am.setStreamVolume(stream, level, 0)
+            }
+            apply(AudioManager.STREAM_MUSIC)
+            apply(AudioManager.STREAM_ALARM)
+            @Suppress("DEPRECATION")
+            apply(AudioManager.STREAM_SYSTEM)
         } catch (_: Exception) {
         }
     }

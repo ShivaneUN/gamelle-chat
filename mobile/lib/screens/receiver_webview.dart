@@ -133,6 +133,12 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             unawaited(_saveMediaFromJs(m.substring('saveFile|'.length)));
             return;
           }
+          if (m.startsWith('volume|')) {
+            final raw = m.substring('volume|'.length).trim();
+            final pct = int.tryParse(raw) ?? 70;
+            unawaited(_life.invokeMethod<void>('setOutputVolume', {'volume': pct}));
+            return;
+          }
         },
       )
       ..setBackgroundColor(_bg)

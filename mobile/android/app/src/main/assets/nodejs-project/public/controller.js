@@ -294,6 +294,7 @@ socket.on('room-state', (state) => {
   schedManager.setSchedules(state.schedules);
   renderGallery(state.media || []);
   if (alarmControls.applySync) alarmControls.applySync(state.manualAlarm);
+  if (state && state.outputVolume != null) applyReceiverVolume(state.outputVolume, false);
 });
 
 function clearLiveView() {
@@ -412,14 +413,100 @@ const unlockMicBtn = document.getElementById('unlockMicBtn');
 let talking = false;
 let talkSoundOn = true;
 let alarmSoundOn = false;
+let micLinkOk = false;
+let lastTalkAckAt = 0;
+let micAckTimer = null;
+let recvVolume = 70;
+let volumeDragging = false;
+
+function applyReceiverVolume(vol, emit) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(vol))));
+  if (!Number.isFinite(n)) return;
+  recvVolume = n;
+  const slider = document.getElementById('recvVolume');
+  const pct = document.getElementById('recvVolumePct');
+  if (slider && !volumeDragging) slider.value = String(n);
+  if (pct) pct.textContent = n + '%';
+  if (typeof setTalkPlaybackVolume === 'function') setTalkPlaybackVolume(n / 100);
+  if (typeof setAlarmPlaybackVolume === 'function') setAlarmPlaybackVolume(n / 100);
+  if (emit) socket.emit('set-receiver-volume', { volume: n });
+}
+
+(function wireVolumeSlider() {
+  const slider = document.getElementById('recvVolume');
+  if (!slider) return;
+  const paint = () => {
+    const n = Math.max(0, Math.min(100, Math.round(Number(slider.value) || 0)));
+    const pct = document.getElementById('recvVolumePct');
+    if (pct) pct.textContent = n + '%';
+  };
+  slider.addEventListener('pointerdown', () => { volumeDragging = true; });
+  slider.addEventListener('pointerup', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('change', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('input', () => {
+    paint();
+    applyReceiverVolume(slider.value, true);
+  });
+  applyReceiverVolume(slider.value, false);
+})();
+
+socket.on('receiver-volume', (payload) => {
+  if (volumeDragging) return;
+  const vol = payload && payload.volume != null ? payload.volume : payload;
+  applyReceiverVolume(vol, false);
+});
 
 function renderMicStatus(state) {
   if (talking) {
-    setBtnLabel(unlockMicBtn, 'Micro', 'tile-btn toggle-on');
+    setBtnLabel(unlockMicBtn, 'Micro', micLinkOk ? 'tile-btn mic-ok' : 'tile-btn mic-fail');
     return;
   }
   setBtnLabel(unlockMicBtn, 'Micro', 'tile-btn toggle-off');
 }
+
+function clearMicAckWatch() {
+  if (micAckTimer) { clearInterval(micAckTimer); micAckTimer = null; }
+  micLinkOk = false;
+  lastTalkAckAt = 0;
+}
+
+function startMicAckWatch() {
+  clearMicAckWatch();
+  micLinkOk = false;
+  renderMicStatus();
+  micAckTimer = setInterval(() => {
+    if (!talking) { clearMicAckWatch(); renderMicStatus(); return; }
+    const ok = lastTalkAckAt > 0 && (Date.now() - lastTalkAckAt) < 1600;
+    if (ok !== micLinkOk) {
+      micLinkOk = ok;
+      renderMicStatus();
+    }
+  }, 250);
+}
+
+socket.on('talk-audio-ack', (payload) => {
+  if (!talking) return;
+  const ok = !!(payload && payload.ok);
+  if (ok) {
+    lastTalkAckAt = Date.now();
+    if (!micLinkOk) {
+      micLinkOk = true;
+      renderMicStatus();
+    }
+  } else {
+    lastTalkAckAt = 0;
+    if (micLinkOk) {
+      micLinkOk = false;
+      renderMicStatus();
+    }
+  }
+});
 
 async function refreshMicStatus() {
   if (talking) { renderMicStatus('granted'); return; }
@@ -789,6 +876,7 @@ async function startTalk() {
       talkStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     }
     talking = true;
+    startMicAckWatch();
     talkCapture = await startTalkCapture(talkStream, ({ rate, samples }) => {
       if (!talking) return;
       socket.emit('talk-audio', { rate, samples });
@@ -796,6 +884,7 @@ async function startTalk() {
     renderMicStatus('granted');
   } catch (err) {
     talking = false;
+    clearMicAckWatch();
     stopTalkCapture(talkCapture);
     talkCapture = null;
     if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
@@ -806,6 +895,7 @@ async function startTalk() {
 }
 function stopTalk() {
   talking = false;
+  clearMicAckWatch();
   stopTalkCapture(talkCapture);
   talkCapture = null;
   if (talkStream) talkStream.getTracks().forEach((t) => t.stop());

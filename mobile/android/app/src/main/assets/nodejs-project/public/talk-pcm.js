@@ -2,6 +2,26 @@
 (function (global) {
   var TARGET_RATE = 16000;
   var SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+  var playbackVolume = 1;
+
+  function clamp01(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 1;
+    return Math.max(0, Math.min(1, n));
+  }
+
+  function setTalkPlaybackVolume(v) {
+    playbackVolume = clamp01(v);
+    try {
+      if (global.__gamelleTalkGain) {
+        global.__gamelleTalkGain.gain.value = Math.max(0.0001, playbackVolume * 1.25);
+      }
+    } catch (e) {}
+  }
+
+  function getTalkPlaybackVolume() {
+    return playbackVolume;
+  }
 
   function pcmFromFloat(samples) {
     const buf = new Int16Array(samples.length);
@@ -149,13 +169,16 @@
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.setAttribute('playsinline', 'true');
-      audio.volume = 1;
+      audio.volume = playbackVolume;
       const done = () => { try { URL.revokeObjectURL(url); } catch (e) {} };
       audio.addEventListener('ended', done);
       audio.addEventListener('error', done);
       const p = audio.play();
       if (p && p.catch) p.catch(done);
-    } catch (e) {}
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   function encodeWav(rate, int16) {
@@ -184,14 +207,16 @@
 
   function playTalkPcm(state, rate, samples) {
     const int16 = toInt16(samples);
-    if (!int16 || !int16.length) return;
+    if (!int16 || !int16.length) return false;
+    if (playbackVolume <= 0.001) return false;
     const ctx = unlockTalkAudio();
     state.ctx = ctx;
     const srcRate = rate || TARGET_RATE;
+    let started = false;
 
     const playCtx = () => {
       if (!ctx || ctx.state === 'suspended' || ctx.state === 'interrupted') {
-        playViaHtmlAudio(srcRate, int16);
+        started = playViaHtmlAudio(srcRate, int16);
         return;
       }
       const ready = resampleInt16(int16, srcRate, ctx.sampleRate);
@@ -201,7 +226,7 @@
       try {
         buf = ctx.createBuffer(1, float32.length, ctx.sampleRate);
       } catch (e) {
-        playViaHtmlAudio(srcRate, int16);
+        started = playViaHtmlAudio(srcRate, int16);
         return;
       }
       buf.getChannelData(0).set(float32);
@@ -209,9 +234,10 @@
       src.buffer = buf;
       if (!state.gain) {
         state.gain = ctx.createGain();
-        state.gain.gain.value = 1.25;
         state.gain.connect(ctx.destination);
       }
+      global.__gamelleTalkGain = state.gain;
+      state.gain.gain.value = Math.max(0.0001, playbackVolume * 1.25);
       src.connect(state.gain);
       const now = ctx.currentTime;
       if (!state.nextTime || state.nextTime < now + 0.02) state.nextTime = now + 0.02;
@@ -219,17 +245,21 @@
       try {
         src.start(state.nextTime);
         state.nextTime += buf.duration;
+        started = true;
       } catch (e) {
-        playViaHtmlAudio(srcRate, int16);
+        started = playViaHtmlAudio(srcRate, int16);
       }
     };
 
     if (!ctx || ctx.state === 'suspended' || ctx.state === 'interrupted') {
-      if (ctx) ctx.resume().then(playCtx).catch(() => playViaHtmlAudio(srcRate, int16));
-      else playViaHtmlAudio(srcRate, int16);
-      return;
+      if (ctx) {
+        ctx.resume().then(playCtx).catch(() => { playViaHtmlAudio(srcRate, int16); });
+        return true;
+      }
+      return playViaHtmlAudio(srcRate, int16);
     }
     playCtx();
+    return started;
   }
 
   global.sharedAudioCtx = sharedAudioCtx;
@@ -237,4 +267,6 @@
   global.startTalkCapture = startTalkCapture;
   global.stopTalkCapture = stopTalkCapture;
   global.playTalkPcm = playTalkPcm;
+  global.setTalkPlaybackVolume = setTalkPlaybackVolume;
+  global.getTalkPlaybackVolume = getTalkPlaybackVolume;
 })(window);
