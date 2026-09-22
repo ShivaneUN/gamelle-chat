@@ -7,8 +7,6 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +15,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object AlarmNotifier {
-    const val CHANNEL = "gamelle_alarm"
+    // v2 : canal sans ringtone (le WebView joue son1→son2 en boucle).
+    const val CHANNEL = "gamelle_alarm_silent_v2"
+    private const val LEGACY_CHANNEL = "gamelle_alarm"
     const val NOTIF_ID = 77
     const val ACTION_STOP = "com.gamelle.gamelle_chat.STOP_ALARM"
 
@@ -80,19 +80,15 @@ object AlarmNotifier {
     private fun ensureChannel(ctx: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+        try { nm.deleteNotificationChannel(LEGACY_CHANNEL) } catch (_: Exception) {}
         val ch = NotificationChannel(CHANNEL, "Alarme Gamelle", NotificationManager.IMPORTANCE_HIGH)
-        ch.description = "Alarme repas / horaires"
+        ch.description = "Alarme repas / horaires (son via l’appli)"
         ch.enableVibration(true)
         ch.enableLights(true)
         ch.setBypassDnd(true)
         ch.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-        ch.setSound(sound, attrs)
+        // Son = WebView (séquence son1→son2). Pas de ringtone système qui vole le focus.
+        ch.setSound(null, null)
         nm.createNotificationChannel(ch)
     }
 }

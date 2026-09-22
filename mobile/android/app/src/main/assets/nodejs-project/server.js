@@ -769,7 +769,8 @@ function resolveAlarmSound(room, id) {
     return { type: 'builtin', id };
   }
   const msg = (room.messages || []).find((m) => m.id === id);
-  if (!msg) return { type: 'builtin', id: 'beep' };
+  // Message disparu / id invalide → ignorer (évite un 2e bip fantôme « un seul son »).
+  if (!msg) return null;
   return {
     type: 'message',
     text: (msg.text || '').trim(),

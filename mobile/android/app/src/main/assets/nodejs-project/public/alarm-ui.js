@@ -16,6 +16,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
   let selectedSound1 = 'beep';
   let selectedMessageId = '';
   let seqToken = 0;
+  let playbackRunning = false;
 
   function fillMessages() {
     const messages = getMessages ? getMessages() : [];
@@ -90,9 +91,9 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
         const done = () => resolve();
         utter.onend = done;
         utter.onerror = (ev) => {
+          // canceled/interrupted = enchaînement normal de la séquence, pas un vrai échec.
           if (ev.error === 'canceled' || ev.error === 'interrupted') return resolve();
-          if (typeof playBuiltinSound === 'function') playBuiltinSound('beep').then(done);
-          else done();
+          done();
         };
         const voices = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
         const fr = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('fr'));
@@ -113,6 +114,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
 
   function stopSound() {
     seqToken++;
+    playbackRunning = false;
     clearInterval(alarmSpeakInterval);
     alarmSpeakInterval = null;
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
@@ -126,10 +128,16 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
       currentAudioEl = el;
       el.loop = false;
       el.volume = (typeof getAlarmPlaybackVolume === 'function') ? getAlarmPlaybackVolume() : 1;
+      let settled = false;
       const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(safety);
         if (currentAudioEl === el) currentAudioEl = null;
         resolve();
       };
+      // Évite de bloquer toute la boucle si ended/error ne vient jamais (WebView).
+      const safety = setTimeout(done, 20000);
       el.addEventListener('ended', done);
       el.addEventListener('error', done);
       el.play().catch(() => done());
@@ -180,15 +188,22 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
   async function playAlarmAudio() {
     if (!playSound || !alarmOn) return;
     if (isAudioUnlocked && !isAudioUnlocked()) return;
+    // Ne pas relancer une boucle déjà active (unlock Android / setSoundEnabled répétés).
+    if (playbackRunning) return;
     const token = ++seqToken;
+    playbackRunning = true;
     const sequence = defaultSequenceFromLast();
-    while (alarmOn && token === seqToken) {
-      for (let i = 0; i < sequence.length; i++) {
-        if (!alarmOn || token !== seqToken) return;
-        await playPart(sequence[i], token);
-        await wait(180);
+    try {
+      while (alarmOn && token === seqToken) {
+        for (let i = 0; i < sequence.length; i++) {
+          if (!alarmOn || token !== seqToken) return;
+          await playPart(sequence[i], token);
+          await wait(180);
+        }
+        await wait(280);
       }
-      await wait(280);
+    } finally {
+      if (token === seqToken) playbackRunning = false;
     }
   }
 
@@ -222,6 +237,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
     getSharedAudioCtx();
     if (alarmOn) {
       if (alarmMsg) alarmMsg.textContent = describeSequence(defaultSequenceFromLast()) || '(bip)';
+      // Reprend seulement si la boucle est morte (ex. son était coupé).
       playAlarmAudio();
     }
   }

@@ -799,26 +799,35 @@ class MainActivity : FlutterActivity() {
                 val level = ((pct / 100.0) * max).toInt().coerceIn(0, max)
                 am.setStreamVolume(stream, level, 0)
             }
+            // WebView / HTMLAudio / WebAudio → MUSIC. Ne pas toucher STREAM_ALARM
+            // (sinon conflit avec la notif système et le focus alarme).
             apply(AudioManager.STREAM_MUSIC)
-            apply(AudioManager.STREAM_ALARM)
-            @Suppress("DEPRECATION")
-            apply(AudioManager.STREAM_SYSTEM)
         } catch (_: Exception) {
         }
     }
 
     private fun unlockWebViewAudio() {
+        // Reprend seulement le contexte audio — ne relance PAS la boucle d'alarme
+        // (setSoundEnabled(true) coupait seqToken et cassait son2 / la répétition).
         val js = """
             (function(){
               try {
                 if (typeof unlockSoundEngine === 'function') unlockSoundEngine();
-                if (window.__gamelleAudioCtx && window.__gamelleAudioCtx.state === 'suspended') {
-                  window.__gamelleAudioCtx.resume();
+                if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
+                if (window.__gamelleAudioCtx) {
+                  var st = window.__gamelleAudioCtx.state;
+                  if (st === 'suspended' || st === 'interrupted') {
+                    window.__gamelleAudioCtx.resume();
+                  }
                 }
-                if (typeof alarmSoundOn !== 'undefined') alarmSoundOn = true;
-                if (typeof renderAlarmSoundBtn === 'function') renderAlarmSoundBtn();
-                if (window.alarmControls && typeof window.alarmControls.setSoundEnabled === 'function') {
-                  window.alarmControls.setSoundEnabled(true);
+                if (typeof alarmSoundOn !== 'undefined') {
+                  var wasOff = !alarmSoundOn;
+                  alarmSoundOn = true;
+                  if (typeof renderAlarmSoundBtn === 'function') renderAlarmSoundBtn();
+                  // Ne redémarre la lecture que si le son était coupé.
+                  if (wasOff && window.alarmControls && typeof window.alarmControls.setSoundEnabled === 'function') {
+                    window.alarmControls.setSoundEnabled(true);
+                  }
                 }
               } catch (e) {}
             })();
@@ -836,7 +845,7 @@ class MainActivity : FlutterActivity() {
         }
         mainHandler.post {
             run(window?.decorView)
-            // 2e passe : WebView parfois pas encore résumée.
+            // 2e passe : WebView parfois pas encore résumée (resume ctx seulement).
             mainHandler.postDelayed({ run(window?.decorView) }, 400)
         }
     }
