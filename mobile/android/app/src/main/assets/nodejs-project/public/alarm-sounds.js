@@ -1,11 +1,17 @@
-// Sons intégrés (bip, carillon) — Web Audio + repli HTML Audio (iOS Safari).
+// Sons intégrés (bip, carillon).
+// iOS Safari : garder un AudioContext "vivant" + BufferSource (les .play() HTML
+// après le geste utilisateur sont souvent bloqués → 1 seul son audible).
 (function (global) {
   const LABELS = {
     beep: '🔔 Bip',
     chime: '✨ Carillon',
   };
   var alarmVolume = 1;
-  var preferHtml = false;
+  var keepAlive = null;
+  var buffers = null;
+  var htmlEl = null;
+  var htmlUrl = null;
+  var primed = false;
 
   function clamp01(v) {
     const n = Number(v);
@@ -32,10 +38,53 @@
   function audioCtx() {
     const AC = global.AudioContext || global.webkitAudioContext;
     if (!AC) return null;
-    if (!global.__gamelleAudioCtx) global.__gamelleAudioCtx = new AC();
+    if (!global.__gamelleAudioCtx) {
+      try {
+        global.__gamelleAudioCtx = new AC({ sampleRate: 48000 });
+      } catch (e) {
+        global.__gamelleAudioCtx = new AC();
+      }
+    }
     const ctx = global.__gamelleAudioCtx;
-    if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(() => {});
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+      ctx.resume().catch(() => {});
+    }
     return ctx;
+  }
+
+  function toneSamples(rate, freq, durSec, vol, fade) {
+    const n = Math.max(1, Math.floor(rate * durSec));
+    const out = new Float32Array(n);
+    const fadeN = Math.max(1, Math.floor(rate * (fade || 0.02)));
+    for (let i = 0; i < n; i++) {
+      let amp = vol;
+      if (i < fadeN) amp *= i / fadeN;
+      if (i > n - fadeN) amp *= (n - i) / fadeN;
+      out[i] = Math.sin((2 * Math.PI * freq * i) / rate) * amp;
+    }
+    return out;
+  }
+
+  function concatFloat(parts) {
+    let len = 0;
+    parts.forEach((p) => { len += p.length; });
+    const out = new Float32Array(len);
+    let o = 0;
+    parts.forEach((p) => { out.set(p, o); o += p.length; });
+    return out;
+  }
+
+  function buildFloat(id, rate) {
+    const vol = 0.55;
+    if (id === 'chime') {
+      const gap = new Float32Array(Math.floor(rate * 0.05));
+      return concatFloat([
+        toneSamples(rate, 523.25, 0.22, vol, 0.02), gap,
+        toneSamples(rate, 659.25, 0.22, vol, 0.02), gap,
+        toneSamples(rate, 783.99, 0.45, vol, 0.03),
+      ]);
+    }
+    return toneSamples(rate, 880, 0.32, vol, 0.02);
   }
 
   function encodeWav(rate, samples) {
@@ -64,113 +113,132 @@
     return buf;
   }
 
-  function toneSamples(rate, freq, durSec, vol, fade) {
-    const n = Math.max(1, Math.floor(rate * durSec));
-    const out = new Float32Array(n);
-    const fadeN = Math.max(1, Math.floor(rate * (fade || 0.02)));
-    for (let i = 0; i < n; i++) {
-      let amp = vol;
-      if (i < fadeN) amp *= i / fadeN;
-      if (i > n - fadeN) amp *= (n - i) / fadeN;
-      out[i] = Math.sin(2 * Math.PI * freq * i / rate) * amp;
+  function ensureBuffers(ctx) {
+    if (buffers && buffers.ctx === ctx) return buffers;
+    const rate = ctx.sampleRate || 48000;
+    function toBuf(floatSamples) {
+      const b = ctx.createBuffer(1, floatSamples.length, rate);
+      b.getChannelData(0).set(floatSamples);
+      return b;
     }
-    return out;
+    buffers = {
+      ctx,
+      beep: toBuf(buildFloat('beep', rate)),
+      chime: toBuf(buildFloat('chime', rate)),
+    };
+    return buffers;
   }
 
-  function concatFloat(parts) {
-    let len = 0;
-    parts.forEach((p) => { len += p.length; });
-    const out = new Float32Array(len);
-    let o = 0;
-    parts.forEach((p) => { out.set(p, o); o += p.length; });
-    return out;
+  /** À appeler pendant un geste utilisateur (Déclencher) — indispensable iOS. */
+  function startAlarmAudioKeepAlive() {
+    const ctx = audioCtx();
+    if (!ctx) {
+      unlockHtmlSilent();
+      return Promise.resolve();
+    }
+    return ctx.resume().then(() => {
+      ensureBuffers(ctx);
+      if (!keepAlive) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        g.gain.value = 0.00008;
+        osc.frequency.value = 40;
+        osc.connect(g);
+        g.connect(ctx.destination);
+        try { osc.start(); } catch (e) {}
+        keepAlive = { osc, g, ctx };
+      }
+      unlockHtmlSilent();
+      primed = true;
+    }).catch(() => {
+      unlockHtmlSilent();
+      primed = true;
+    });
   }
 
-  function builtinWav(id) {
-    const rate = 22050;
-    const vol = Math.max(0.05, 0.45 * alarmVolume);
-    if (id === 'chime') {
-      const gap = new Float32Array(Math.floor(rate * 0.05));
-      return encodeWav(rate, concatFloat([
-        toneSamples(rate, 523.25, 0.22, vol, 0.02), gap,
-        toneSamples(rate, 659.25, 0.22, vol, 0.02), gap,
-        toneSamples(rate, 783.99, 0.45, vol, 0.03),
-      ]));
-    }
-    return encodeWav(rate, toneSamples(rate, 880, 0.32, vol, 0.02));
+  function stopAlarmAudioKeepAlive() {
+    if (!keepAlive) return;
+    try { keepAlive.osc.stop(); } catch (e) {}
+    try { keepAlive.osc.disconnect(); } catch (e) {}
+    try { keepAlive.g.disconnect(); } catch (e) {}
+    keepAlive = null;
+  }
+
+  function unlockHtmlSilent() {
+    try {
+      if (!htmlEl) {
+        htmlEl = new Audio();
+        htmlEl.setAttribute('playsinline', 'true');
+        htmlEl.preload = 'auto';
+      }
+      // WAV silencieux très court pour "débloquer" l'élément pendant le geste.
+      const silent = encodeWav(22050, new Float32Array(220));
+      if (htmlUrl) { try { URL.revokeObjectURL(htmlUrl); } catch (e) {} }
+      htmlUrl = URL.createObjectURL(new Blob([silent], { type: 'audio/wav' }));
+      htmlEl.volume = 0.01;
+      htmlEl.src = htmlUrl;
+      const p = htmlEl.play();
+      if (p && p.then) p.then(() => { try { htmlEl.pause(); } catch (e) {} }).catch(() => {});
+    } catch (e) {}
+  }
+
+  function playBuffer(ctx, id) {
+    const kind = id === 'chime' ? 'chime' : 'beep';
+    const pack = ensureBuffers(ctx);
+    const buf = pack[kind] || pack.beep;
+    return new Promise((resolve, reject) => {
+      try {
+        if (ctx.state !== 'running') {
+          reject(new Error('ctx-' + ctx.state));
+          return;
+        }
+        const src = ctx.createBufferSource();
+        const g = ctx.createGain();
+        g.gain.value = Math.max(0.0001, alarmVolume);
+        src.buffer = buf;
+        src.connect(g);
+        g.connect(ctx.destination);
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        src.onended = finish;
+        src.start();
+        setTimeout(finish, Math.ceil(buf.duration * 1000) + 80);
+      } catch (e) {
+        reject(e);
+      }
+    });
   }
 
   function playViaHtml(id) {
     return new Promise((resolve) => {
       try {
-        const wav = builtinWav(id === 'chime' ? 'chime' : 'beep');
-        const blob = new Blob([wav], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.setAttribute('playsinline', 'true');
-        audio.volume = Math.max(0, Math.min(1, alarmVolume));
+        const kind = id === 'chime' ? 'chime' : 'beep';
+        const wav = encodeWav(22050, buildFloat(kind, 22050));
+        if (htmlUrl) { try { URL.revokeObjectURL(htmlUrl); } catch (e) {} }
+        htmlUrl = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+        if (!htmlEl) {
+          htmlEl = new Audio();
+          htmlEl.setAttribute('playsinline', 'true');
+        }
+        let settled = false;
         const done = () => {
-          try { URL.revokeObjectURL(url); } catch (e) {}
+          if (settled) return;
+          settled = true;
           resolve();
         };
-        audio.addEventListener('ended', done);
-        audio.addEventListener('error', done);
-        const p = audio.play();
+        htmlEl.onended = done;
+        htmlEl.onerror = done;
+        htmlEl.volume = Math.max(0, Math.min(1, alarmVolume));
+        htmlEl.src = htmlUrl;
+        const p = htmlEl.play();
         if (p && p.then) p.then(() => {}).catch(done);
-        // Sécurité durée
-        setTimeout(done, id === 'chime' ? 1400 : 500);
+        setTimeout(done, kind === 'chime' ? 1400 : 500);
       } catch (e) {
         resolve();
-      }
-    });
-  }
-
-  function playBeep(ctx) {
-    return new Promise((resolve, reject) => {
-      try {
-        const t = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        const peak = Math.max(0.0001, 0.28 * alarmVolume);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, t);
-        osc.frequency.exponentialRampToValueAtTime(660, t + 0.18);
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(peak, t + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(t);
-        osc.stop(t + 0.36);
-        setTimeout(resolve, 380);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-
-  function playChime(ctx) {
-    return new Promise((resolve, reject) => {
-      try {
-        const notes = [523.25, 659.25, 783.99];
-        const peak = Math.max(0.0001, 0.22 * alarmVolume);
-        notes.forEach((freq, i) => {
-          const t = ctx.currentTime + i * 0.22;
-          const osc = ctx.createOscillator();
-          const g = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.value = freq;
-          g.gain.setValueAtTime(0.0001, t);
-          g.gain.exponentialRampToValueAtTime(peak, t + 0.02);
-          g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-          osc.connect(g);
-          g.connect(ctx.destination);
-          osc.start(t);
-          osc.stop(t + 0.72);
-        });
-        setTimeout(resolve, 1100);
-      } catch (e) {
-        reject(e);
       }
     });
   }
@@ -178,23 +246,14 @@
   function playBuiltinSound(id) {
     if (alarmVolume <= 0.001) return Promise.resolve();
     const kind = id === 'chime' ? 'chime' : 'beep';
-    // iOS : après le 1er son, WebAudio passe souvent en "interrupted" → plus de son audible
-    // alors que la boucle continue. Repli HTML Audio pour les cycles suivants.
-    if (preferHtml) return playViaHtml(kind);
-
     const ctx = audioCtx();
-    if (!ctx) return playViaHtml(kind);
-
-    const fn = { beep: playBeep, chime: playChime }[kind] || playBeep;
-    return Promise.resolve(ctx.resume())
-      .then(() => {
-        if (ctx.state !== 'running') throw new Error('ctx-' + ctx.state);
-        return fn(ctx);
-      })
-      .catch(() => {
-        preferHtml = true;
-        return playViaHtml(kind);
-      });
+    if (ctx) {
+      // Ne pas abandonner WebAudio : keep-alive + buffers = seule voie fiable en boucle iOS.
+      const run = () => playBuffer(ctx, kind).catch(() => playViaHtml(kind));
+      if (ctx.state === 'running') return run();
+      return ctx.resume().then(run).catch(() => playViaHtml(kind));
+    }
+    return playViaHtml(kind);
   }
 
   global.BUILTIN_SOUND_LABELS = LABELS;
@@ -203,4 +262,6 @@
   global.playBuiltinSound = playBuiltinSound;
   global.setAlarmPlaybackVolume = setAlarmPlaybackVolume;
   global.getAlarmPlaybackVolume = getAlarmPlaybackVolume;
+  global.startAlarmAudioKeepAlive = startAlarmAudioKeepAlive;
+  global.stopAlarmAudioKeepAlive = stopAlarmAudioKeepAlive;
 })(window);

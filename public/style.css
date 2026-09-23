@@ -646,6 +646,33 @@ body.live-page .page-head {
   min-width: 0;
   width: 100%;
 }
+body.live-page .page-head .head-refresh {
+  grid-column: 1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 10px;
+}
+body.live-page .page-head .head-refresh .ico {
+  width: 16px;
+  height: 16px;
+}
+body.live-page .page-head .head-refresh .lbl {
+  font-size: 11px;
+  font-weight: 600;
+}
+body.live-page .page-head-right {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
 body.live-page .page-head h1 {
   grid-column: 2;
   margin: 0;
@@ -655,8 +682,8 @@ body.live-page .page-head h1 {
   white-space: nowrap;
 }
 body.live-page .status {
-  grid-column: 3;
-  justify-self: end;
+  grid-column: auto;
+  justify-self: auto;
   position: static;
   transform: none;
   margin: 0;

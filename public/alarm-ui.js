@@ -112,11 +112,15 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     try { return new URL(audioUrl, location.origin).href; } catch (e) { return audioUrl; }
   }
 
-  function stopSound() {
+  function stopSound(opts) {
     seqToken++;
     playbackRunning = false;
     clearInterval(alarmSpeakInterval);
     alarmSpeakInterval = null;
+    // Garder le keep-alive si on redémarre tout de suite (geste Déclencher encore frais).
+    if (!(opts && opts.keepAudioAlive) && typeof stopAlarmAudioKeepAlive === 'function') {
+      try { stopAlarmAudioKeepAlive(); } catch (e) {}
+    }
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) {} }
     if (currentAudioEl) { currentAudioEl.pause(); currentAudioEl.src = ''; currentAudioEl = null; }
     if (currentBufferSource) { try { currentBufferSource.stop(); } catch (e) {} currentBufferSource = null; }
@@ -193,9 +197,11 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     const token = ++seqToken;
     playbackRunning = true;
     const sequence = defaultSequenceFromLast();
+    if (typeof startAlarmAudioKeepAlive === 'function') {
+      try { await startAlarmAudioKeepAlive(); } catch (e) {}
+    }
     try {
       while (alarmOn && token === seqToken) {
-        // iOS : reprendre le contexte à chaque cycle (sinon silence après le 1er son).
         getSharedAudioCtx();
         if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
         for (let i = 0; i < sequence.length; i++) {
@@ -211,7 +217,8 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   }
 
   function startLocal(payload) {
-    stopSound();
+    // Ne pas tuer le keep-alive démarré au clic Déclencher (critique iOS).
+    stopSound({ keepAudioAlive: true });
     alarmOn = true;
     lastAlarm = {
       message: (payload && payload.message) || '',
@@ -238,18 +245,23 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
       return;
     }
     getSharedAudioCtx();
+    if (typeof startAlarmAudioKeepAlive === 'function') {
+      try { startAlarmAudioKeepAlive(); } catch (e) {}
+    }
     if (alarmOn) {
       if (alarmMsg) alarmMsg.textContent = describeSequence(defaultSequenceFromLast()) || '(bip)';
-      // Reprend seulement si la boucle est morte (ex. son était coupé).
       playAlarmAudio();
     }
   }
 
   function requestStart() {
     getSharedAudioCtx();
-    // Geste utilisateur : active le son local (contrôleur OFF par défaut sinon).
+    // Geste utilisateur : activer son local + keep-alive iOS AVANT le round-trip socket.
     if (typeof ensureUnlocked === 'function') {
       try { ensureUnlocked(); } catch (e) {}
+    }
+    if (typeof startAlarmAudioKeepAlive === 'function') {
+      try { startAlarmAudioKeepAlive(); } catch (e) {}
     }
     socket.emit('trigger-alarm', {
       sound1: selectedSound1 || '',

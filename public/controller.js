@@ -6,6 +6,13 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
+const refreshBtn = document.getElementById('refreshBtn');
+if (refreshBtn) {
+  refreshBtn.onclick = () => {
+    try { location.reload(); } catch (e) { location.href = location.href; }
+  };
+}
+
 function readControllerCode() {
   const params = new URLSearchParams(location.search);
   let next = (params.get('code') || '').trim();

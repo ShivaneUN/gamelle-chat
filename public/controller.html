@@ -13,13 +13,17 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=50">
+<link rel="stylesheet" href="/style.css?v=53">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
   <div class="page-head">
+    <button id="refreshBtn" class="chip-btn head-refresh" type="button" title="Actualiser" aria-label="Actualiser">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+      <span class="lbl">Refresh</span>
+    </button>
     <h1>Contrôleur</h1>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div class="page-head-right">
       <div class="status-wrap">
         <div id="status" class="status off">Hors ligne</div>
         <div id="peersPop" class="peers-pop" hidden></div>
@@ -181,10 +185,10 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/alarm-sounds.js?v=6"></script>
+<script src="/alarm-sounds.js?v=7"></script>
 <script src="/schedule-ui.js?v=14"></script>
-<script src="/alarm-ui.js?v=8"></script>
+<script src="/alarm-ui.js?v=9"></script>
 <script src="/talk-pcm.js?v=3"></script>
-<script src="/controller.js?v=33"></script>
+<script src="/controller.js?v=34"></script>
 </body>
 </html>
