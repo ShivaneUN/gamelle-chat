@@ -620,6 +620,13 @@ const alarmControls = createAlarmControls({
   getMessages: msgLibrary.getMessages,
   playSound: true,
   isAudioUnlocked: () => alarmSoundOn,
+  ensureUnlocked: () => {
+    if (!alarmSoundOn) {
+      alarmSoundOn = true;
+      renderAlarmSoundBtn();
+    }
+    unlockSoundEngine();
+  },
 });
 
 function openModal(id) {

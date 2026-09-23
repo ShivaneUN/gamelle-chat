@@ -1,5 +1,5 @@
 // Déclenchement / arrêt manuel de l'alarme, synchronisé Contrôleur + Récepteur.
-function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }) {
+function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, ensureUnlocked }) {
   const sound1El = document.getElementById('manualAlarmSound1');
   const msgPickerContainer = document.getElementById('manualAlarmMsg');
   const durationInput = document.getElementById('manualAlarmDuration');
@@ -195,6 +195,9 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
     const sequence = defaultSequenceFromLast();
     try {
       while (alarmOn && token === seqToken) {
+        // iOS : reprendre le contexte à chaque cycle (sinon silence après le 1er son).
+        getSharedAudioCtx();
+        if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
         for (let i = 0; i < sequence.length; i++) {
           if (!alarmOn || token !== seqToken) return;
           await playPart(sequence[i], token);
@@ -244,6 +247,10 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked }
 
   function requestStart() {
     getSharedAudioCtx();
+    // Geste utilisateur : active le son local (contrôleur OFF par défaut sinon).
+    if (typeof ensureUnlocked === 'function') {
+      try { ensureUnlocked(); } catch (e) {}
+    }
     socket.emit('trigger-alarm', {
       sound1: selectedSound1 || '',
       sound2: selectedMessageId || '',
