@@ -226,9 +226,9 @@ if (-not $deviceId) {
 }
 
 Write-Host " Device Flutter : $deviceId"
-Write-Host " Sync assets Node (sans npm)..."
+Write-Host " Sync assets Node (avec npm si besoin)..."
 try {
-  & (Join-Path $scriptDir "bundle-nodejs-project.ps1") -SkipNpm
+  & (Join-Path $scriptDir "bundle-nodejs-project.ps1")
   if (-not $?) { throw "bundle exit code $LASTEXITCODE" }
 } catch {
   Write-Host "[ERREUR] Copie des assets Node impossible : $_" -ForegroundColor Red

@@ -53,6 +53,16 @@ if (-not $SkipNpm) {
 $nmBin = Join-Path $Dest "node_modules\.bin"
 if (Test-Path $nmBin) { Remove-Item $nmBin -Recurse -Force }
 
+# iconv-lite : forcer une copie coherente depuis la racine (evite mix 0.4 streams + 0.7 index
+# qui plante avec IconvLiteEncoderStream undefined apres flutter install).
+$iconvRoot = Join-Path $Root "node_modules\iconv-lite"
+$iconvDest = Join-Path $Dest "node_modules\iconv-lite"
+if (Test-Path (Join-Path $iconvRoot "package.json")) {
+  if (Test-Path $iconvDest) { Remove-Item $iconvDest -Recurse -Force }
+  Copy-Item $iconvRoot $iconvDest -Recurse -Force
+  Write-Host "iconv-lite synchronise depuis racine ($( (Get-Content (Join-Path $iconvDest 'package.json') -Raw | ConvertFrom-Json).version ))"
+}
+
 # nodejs-mobile n'embarque pas ICU : Express 5 / path-to-regexp 8 utilise \p{ID_Start} et plante.
 $ptr = Join-Path $Dest "node_modules\path-to-regexp\dist\index.js"
 if (Test-Path $ptr) {
@@ -91,9 +101,15 @@ foreach ($rel in @(
   $ip = Join-Path $Dest $rel
   if (-not (Test-Path $ip)) { continue }
   $ic = Get-Content $ip -Raw -Encoding utf8
-  $ic2 = $ic.Replace('var mergeModules = require("./helpers/merge-exports")`n', $iconvInline)
-  $ic2 = $ic2.Replace("var mergeModules = require(`"./helpers/merge-exports`")`n", $iconvInline)
-  $ic2 = $ic2.Replace("var mergeModules = require(`"../lib/helpers/merge-exports`")`n", $iconvInline)
+  $ic2 = $ic
+  foreach ($req in @(
+    'var mergeModules = require("./helpers/merge-exports")',
+    "var mergeModules = require(`"./helpers/merge-exports`")",
+    "var mergeModules = require(`"../lib/helpers/merge-exports`")"
+  )) {
+    # Accepte LF ou CRLF apres le require
+    $ic2 = [regex]::Replace($ic2, [regex]::Escape($req) + '\r?\n', $iconvInline)
+  }
   if ($ic2 -ne $ic) {
     Write-Utf8NoBom $ip $ic2 -NoNewline
   }
