@@ -17,6 +17,10 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   let selectedMessageId = '';
   let seqToken = 0;
   let playbackRunning = false;
+  // Cache decodeAudioData : le son 2 perso doit rester en WebAudio (HTML Audio
+  // coupe le keep-alive iOS → bip seul / pas de boucle sur le contrôleur).
+  const decodedAudioCache = new Map();
+  const decodingAudio = new Map();
 
   function fillMessages() {
     const messages = getMessages ? getMessages() : [];
@@ -126,11 +130,12 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     if (currentBufferSource) { try { currentBufferSource.stop(); } catch (e) {} currentBufferSource = null; }
   }
 
-  function playFileOnce(url) {
+  function playFileViaHtml(url) {
     return new Promise((resolve) => {
       const el = new Audio(url);
       currentAudioEl = el;
       el.loop = false;
+      el.setAttribute('playsinline', 'true');
       el.volume = (typeof getAlarmPlaybackVolume === 'function') ? getAlarmPlaybackVolume() : 1;
       let settled = false;
       const done = () => {
@@ -141,10 +146,122 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
         resolve();
       };
       // Évite de bloquer toute la boucle si ended/error ne vient jamais (WebView).
-      const safety = setTimeout(done, 20000);
+      const safety = setTimeout(done, 12000);
       el.addEventListener('ended', done);
       el.addEventListener('error', done);
       el.play().catch(() => done());
+    });
+  }
+
+  function decodeAudioUrl(url) {
+    if (!url) return Promise.reject(new Error('no-url'));
+    if (decodedAudioCache.has(url)) return Promise.resolve(decodedAudioCache.get(url));
+    if (decodingAudio.has(url)) return decodingAudio.get(url);
+    const ctx = getSharedAudioCtx();
+    if (!ctx) return Promise.reject(new Error('no-ctx'));
+    const job = fetch(url, { credentials: 'same-origin', cache: 'force-cache' })
+      .then((r) => {
+        if (!r.ok) throw new Error('http-' + r.status);
+        return r.arrayBuffer();
+      })
+      .then((buf) => new Promise((resolve, reject) => {
+        let settled = false;
+        const ok = (decoded) => {
+          if (settled) return;
+          settled = true;
+          if (!decoded) {
+            reject(new Error('decode-empty'));
+            return;
+          }
+          decodedAudioCache.set(url, decoded);
+          resolve(decoded);
+        };
+        const fail = (err) => {
+          if (settled) return;
+          settled = true;
+          reject(err || new Error('decode-fail'));
+        };
+        // Safari : callback ; Chrome : Promise (parfois les deux).
+        try {
+          const p = ctx.decodeAudioData(buf.slice(0), ok, fail);
+          if (p && typeof p.then === 'function') p.then(ok, fail);
+        } catch (e) {
+          try {
+            const p = ctx.decodeAudioData(buf, ok, fail);
+            if (p && typeof p.then === 'function') p.then(ok, fail);
+          } catch (e2) {
+            fail(e2);
+          }
+        }
+      }))
+      .finally(() => { decodingAudio.delete(url); });
+    decodingAudio.set(url, job);
+    return job;
+  }
+
+  function playDecodedBuffer(buffer) {
+    return new Promise((resolve, reject) => {
+      const ctx = getSharedAudioCtx();
+      if (!ctx || !buffer) {
+        reject(new Error('no-ctx-buf'));
+        return;
+      }
+      const run = () => {
+        try {
+          if (currentBufferSource) {
+            try { currentBufferSource.stop(); } catch (e) {}
+            currentBufferSource = null;
+          }
+          const src = ctx.createBufferSource();
+          const g = ctx.createGain();
+          const vol = (typeof getAlarmPlaybackVolume === 'function') ? getAlarmPlaybackVolume() : 1;
+          g.gain.value = Math.max(0.0001, vol);
+          src.buffer = buffer;
+          src.connect(g);
+          g.connect(ctx.destination);
+          currentBufferSource = src;
+          let settled = false;
+          const done = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(safety);
+            if (currentBufferSource === src) currentBufferSource = null;
+            resolve();
+          };
+          src.onended = done;
+          const ms = Math.ceil((buffer.duration || 1) * 1000) + 120;
+          const safety = setTimeout(done, Math.min(20000, Math.max(400, ms)));
+          src.start(0);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      if (ctx.state === 'running') run();
+      else ctx.resume().then(run).catch(() => reject(new Error('ctx-' + ctx.state)));
+    });
+  }
+
+  async function playFileOnce(url) {
+    // 1) WebAudio (fiable en boucle avec keep-alive, contrôleur iOS inclus)
+    try {
+      if (typeof startAlarmAudioKeepAlive === 'function') {
+        try { await startAlarmAudioKeepAlive(); } catch (e) {}
+      }
+      const buf = await decodeAudioUrl(url);
+      await playDecodedBuffer(buf);
+      return;
+    } catch (e) {
+      // 2) Repli HTML si decode/fetch impossible
+    }
+    await playFileViaHtml(url);
+  }
+
+  function prefetchSequenceAudio(seq) {
+    (seq || []).forEach((part) => {
+      if (!part || part.type === 'builtin') return;
+      const u = resolveAudioUrl(part.audioUrl);
+      if (!u) return;
+      decodeAudioUrl(u).catch(() => {});
     });
   }
 
@@ -197,6 +314,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     const token = ++seqToken;
     playbackRunning = true;
     const sequence = defaultSequenceFromLast();
+    prefetchSequenceAudio(sequence);
     if (typeof startAlarmAudioKeepAlive === 'function') {
       try { await startAlarmAudioKeepAlive(); } catch (e) {}
     }
@@ -204,6 +322,9 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
       while (alarmOn && token === seqToken) {
         getSharedAudioCtx();
         if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
+        if (typeof startAlarmAudioKeepAlive === 'function') {
+          try { await startAlarmAudioKeepAlive(); } catch (e) {}
+        }
         for (let i = 0; i < sequence.length; i++) {
           if (!alarmOn || token !== seqToken) return;
           await playPart(sequence[i], token);
@@ -227,6 +348,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     };
     const unlocked = !isAudioUnlocked || isAudioUnlocked();
     getSharedAudioCtx();
+    prefetchSequenceAudio(defaultSequenceFromLast());
     const desc = describeSequence(defaultSequenceFromLast());
     if (playSound && !unlocked) {
       if (alarmMsg) alarmMsg.textContent = '🔇 Son alarme coupé — réactive-le pour entendre.';
@@ -262,6 +384,13 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     }
     if (typeof startAlarmAudioKeepAlive === 'function') {
       try { startAlarmAudioKeepAlive(); } catch (e) {}
+    }
+    // Précharger le son 2 perso pendant le geste (decodeAudioData plus fiable ensuite).
+    const messages = getMessages ? getMessages() : [];
+    const msg = messages.find((m) => m && m.id === selectedMessageId);
+    if (msg && msg.audioUrl) {
+      const u = resolveAudioUrl(msg.audioUrl);
+      if (u) decodeAudioUrl(u).catch(() => {});
     }
     socket.emit('trigger-alarm', {
       sound1: selectedSound1 || '',
