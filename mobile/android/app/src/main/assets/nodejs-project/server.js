@@ -447,13 +447,14 @@ app.post('/api/auth/login', (req, res) => {
     return res.json({ ok: true, user: publicUser(user) });
   }
 
-  // Une session existe ailleurs → on la remplace (mot de passe déjà validé).
-  // Évite le blocage 409 si le cookie a été perdu / navigateur changé.
+  // Une session existe déjà ailleurs → refuser (pas de déco auto du 1er device).
   const existing = findSessionsForUser(user.id);
   if (existing.length > 0) {
-    const sessions = readSessions();
-    sessions.sessions = sessions.sessions.filter((s) => !(s && s.userId === user.id));
-    writeSessions(sessions);
+    return res.status(409).json({
+      ok: false,
+      error: 'Ce compte est déjà connecté sur un autre appareil. Déconnecte-toi là-bas avant de te connecter ici.',
+      code: 'SESSION_ACTIVE',
+    });
   }
 
   const token = createSession(user.id);

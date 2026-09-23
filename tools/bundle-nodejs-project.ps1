@@ -7,6 +7,13 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Dest = Join-Path $Root "mobile\android\app\src\main\assets\nodejs-project"
 $Assets = Join-Path $Root "mobile\android\app\src\main\assets"
 
+# PowerShell 5.1 n'a pas -Encoding utf8NoBOM (casse launch-phone.bat / Flutter.lnk).
+function Write-Utf8NoBom([string]$Path, [string]$Value, [switch]$NoNewline) {
+  $text = if ($NoNewline) { $Value } else { if ($Value.EndsWith("`n")) { $Value } else { $Value + "`n" } }
+  $enc = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $text, $enc)
+}
+
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
 Copy-Item (Join-Path $Root "server.js") (Join-Path $Dest "server.js") -Force
@@ -14,14 +21,15 @@ Copy-Item (Join-Path $Root "update-service.js") (Join-Path $Dest "update-service
 
 # Releases publiques : JAMAIS copier un tunnel/token perso dans l’APK.
 # Les secrets restent dans .local-secrets/ + gamelle-persist sur l’appareil.
+# (launch-phone.ps1 re-injecte .local-secrets après ce bundle pour l’install perso.)
 $publicTunnel = @'
 {
   "publicUrl": "",
   "allowedSuffixes": ["trycloudflare.com"]
 }
 '@
-Set-Content -Path (Join-Path $Assets "tunnel.config.json") -Value $publicTunnel.Trim() -Encoding utf8NoBOM
-Set-Content -Path (Join-Path $Dest "tunnel.config.json") -Value $publicTunnel.Trim() -Encoding utf8NoBOM
+Write-Utf8NoBom (Join-Path $Assets "tunnel.config.json") $publicTunnel.Trim()
+Write-Utf8NoBom (Join-Path $Dest "tunnel.config.json") $publicTunnel.Trim()
 Remove-Item (Join-Path $Assets "tunnel.token") -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $Dest "tunnel.token") -ErrorAction SilentlyContinue
 
@@ -61,7 +69,7 @@ if (Test-Path $ptr) {
     'const ID = /^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u;',
     'const ID = /^[$_A-Za-z][$_A-Za-z0-9]*$/;'
   )
-  Set-Content -Path $ptr -Value $c -Encoding utf8NoBOM -NoNewline
+  Write-Utf8NoBom $ptr $c -NoNewline
 }
 
 # iconv-lite 0.7+ require ./helpers/merge-exports — parfois non extrait par node_flutter.
@@ -87,7 +95,7 @@ foreach ($rel in @(
   $ic2 = $ic2.Replace("var mergeModules = require(`"./helpers/merge-exports`")`n", $iconvInline)
   $ic2 = $ic2.Replace("var mergeModules = require(`"../lib/helpers/merge-exports`")`n", $iconvInline)
   if ($ic2 -ne $ic) {
-    Set-Content -Path $ip -Value $ic2 -Encoding utf8NoBOM -NoNewline
+    Write-Utf8NoBom $ip $ic2 -NoNewline
   }
 }
 
