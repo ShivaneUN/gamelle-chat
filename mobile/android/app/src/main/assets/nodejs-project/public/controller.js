@@ -14,10 +14,17 @@ function saveSessionToken(token) {
 }
 function readSessionToken() {
   try {
-    return localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || '';
-  } catch (e) {
-    return '';
-  }
+    const q = new URLSearchParams(location.search).get('access');
+    if (q && String(q).trim()) return String(q).trim();
+  } catch (e) {}
+  try {
+    const a = localStorage.getItem(SESSION_KEY);
+    if (a) return a;
+  } catch (e) {}
+  try {
+    return sessionStorage.getItem(SESSION_KEY) || '';
+  } catch (e) {}
+  return '';
 }
 function clearSessionToken() {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
@@ -113,7 +120,7 @@ if (!code) {
     if (c.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
       try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html');
+      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
       return;
     }
     setTimeout(() => location.reload(), 2500);

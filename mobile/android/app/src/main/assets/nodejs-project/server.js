@@ -510,7 +510,13 @@ app.get('/receiver.html', (req, res) => {
   sendHtml(res, req, 'receiver.html');
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (/\.(js|mjs|css|html)$/i.test(String(filePath || ''))) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+  },
+}));
 
 function requireSessionOrLocal(req, res, next) {
   if (isLocalRequest(req) || getSessionUser(req)) return next();
