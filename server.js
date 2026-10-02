@@ -43,6 +43,23 @@ const STORE = storageRoot();
 
 const app = express();
 
+function setUncached(res) {
+  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
+  res.setHeader('Surrogate-Control', 'no-store');
+}
+
+// Le lien public est toujours /controller.html, sans ?v=.
+// Ces en-têtes empêchent le téléphone et Cloudflare de figer cette adresse.
+app.use((req, res, next) => {
+  if (String(req.path || '').startsWith('/media/')) return next();
+  setUncached(res);
+  next();
+});
+
 // --- Certificat HTTPS auto-signé, généré une seule fois et réutilisé ensuite ---
 // Nécessaire pour que le navigateur autorise la caméra et le micro sur une IP locale
 // (Chrome/Android bloque ces accès en http:// sauf sur localhost).
@@ -500,6 +517,22 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function htmlFreshnessGuard(version) {
+  const ver = String(version || '');
+  if (!ver) return '';
+  const meta = `<meta name="gamelle-version" content="${ver.replace(/"/g, '')}">`;
+  const script = `<script>(function(){var pageVer=${JSON.stringify(ver)};` +
+    `fetch("/api/info",{cache:"no-store",credentials:"same-origin"})` +
+    `.then(function(r){return r.json()})` +
+    `.then(function(info){var live=info&&String(info.version||"");if(!live||live===pageVer)return;` +
+    `try{if(sessionStorage.getItem("gamelle-html-reload")===live)return;sessionStorage.setItem("gamelle-html-reload",live)}catch(e){}` +
+    `fetch(location.pathname+location.search,{cache:"reload",credentials:"same-origin",headers:{Accept:"text/html"}})` +
+    `.then(function(r){return r.text()})` +
+    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;document.open();document.write(html);document.close()})` +
+    `}).catch(function(){})})();</script>`;
+  return meta + script;
+}
+
 function sendHtml(res, req, file, extra) {
   const full = path.join(__dirname, 'public', file);
   fs.readFile(full, 'utf8', (err, html) => {
@@ -508,11 +541,19 @@ function sendHtml(res, req, file, extra) {
       return;
     }
     const info = extra || {};
+    const version = info.version || updater.pkgVersion();
     let out = htmlWithAbsoluteLogo(html, req)
       .replace('<!--LOGIN_ERROR-->', escapeHtml(info.error || ''))
-      .replace('<!--SERVER_VER-->', escapeHtml(info.version || updater.pkgVersion()));
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.set('Pragma', 'no-cache');
+      .replace(/<!--SERVER_VER-->/g, escapeHtml(version));
+    if (out.includes('<head>') && !out.includes('name="gamelle-version"')) {
+      out = out.replace('<head>', '<head>' + htmlFreshnessGuard(version));
+    }
+    const assetVer = encodeURIComponent(version);
+    out = out.replace(
+      /(src|href)="(\/[^"]+?\.(?:js|css))(?:\?[^"]*)?"/gi,
+      (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
+    );
+    setUncached(res);
     res.type('html').send(out);
   });
 }
@@ -554,9 +595,7 @@ app.get('/receiver.html', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/\.(js|mjs|css|html)$/i.test(String(filePath || ''))) {
-      res.setHeader('Cache-Control', 'no-store');
-    }
+    if (/\.(js|mjs|css|html)$/i.test(String(filePath || ''))) setUncached(res);
   },
 }));
 

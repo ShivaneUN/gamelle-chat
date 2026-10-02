@@ -54,7 +54,7 @@ class NodeBridgeService {
     if (host == 'api.trycloudflare.com') return null;
     if (!_isAllowedPublicHost(host)) return null;
     final base = raw.replaceAll(RegExp(r'/$'), '');
-    // Même URL que le QR HTML : ouvre directement le contrôleur.
+    // Lien public fixe. Jamais de ?v= : le téléphone mémorise exactement cette adresse.
     return '$base/controller.html';
   }
 

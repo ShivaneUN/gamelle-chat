@@ -63,6 +63,7 @@ const camBtn = document.getElementById('camBtn');
 function paintControllerLink(origin) {
   const base = String(origin || '').replace(/\/$/, '');
   const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(base) : false;
+  // Lien fixe : /controller.html sans ?v=, sinon le téléphone garde une autre adresse.
   const share = scannable ? (base + '/controller.html') : '';
   window.__GAMELLE_CONTROLLER_URL__ = share;
   const urlEl = document.getElementById('ctrlLinkUrl');
