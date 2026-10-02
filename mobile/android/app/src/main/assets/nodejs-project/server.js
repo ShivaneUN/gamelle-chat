@@ -366,9 +366,14 @@ app.get('/receiver.html', (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/media/receiver', express.static(RECEIVER_DIR));
-app.use('/media/controller', express.static(CONTROLLER_DIR));
-app.use('/media/audio', express.static(AUDIO_DIR));
+
+function requireSessionOrLocal(req, res, next) {
+  if (isLocalRequest(req) || getSessionUser(req)) return next();
+  res.status(401).type('text').send('Connexion requise');
+}
+app.use('/media/receiver', requireSessionOrLocal, express.static(RECEIVER_DIR));
+app.use('/media/controller', requireSessionOrLocal, express.static(CONTROLLER_DIR));
+app.use('/media/audio', requireSessionOrLocal, express.static(AUDIO_DIR));
 
 app.get('/api/auth/me', (req, res) => {
   const user = getSessionUser(req);
@@ -568,16 +573,23 @@ function readNativePublicUrl() {
   return null;
 }
 
-app.get('/api/info', (_req, res) => {
-  res.json({
+app.get('/api/info', (req, res) => {
+  const trusted = isLocalRequest(req) || !!getSessionUser(req);
+  const body = {
     publicUrl: publicUrl || readNativePublicUrl(),
-    localUrl: `https://${getLocalIp()}:${PORT}`,
     version: updater.pkgVersion(),
-    pairCode: readActiveCode(),
-  });
+  };
+  if (trusted) {
+    body.localUrl = `https://${getLocalIp()}:${PORT}`;
+    body.pairCode = readActiveCode();
+  }
+  res.json(body);
 });
 
-app.get('/api/active-code', (_req, res) => {
+app.get('/api/active-code', (req, res) => {
+  if (!isLocalRequest(req) && !getSessionUser(req)) {
+    return res.status(401).json({ ok: false, error: 'Connexion requise' });
+  }
   res.json({ code: readActiveCode() });
 });
 
@@ -951,6 +963,10 @@ function broadcastRoomState(code, room) {
 
 io.on('connection', (socket) => {
   socket.on('join', ({ code, role }) => {
+    if (role !== 'controller' && role !== 'receiver') {
+      socket.emit('join-error', { error: 'Rôle invalide' });
+      return;
+    }
     if (role === 'controller') {
       const user = getSessionUser(socket.request);
       if (!user) {
@@ -960,6 +976,11 @@ io.on('connection', (socket) => {
       }
       socket.data.userId = user.id;
       socket.data.username = user.username;
+    }
+    if (role === 'receiver' && !isLocalRequest(socket.request)) {
+      socket.emit('join-error', { error: 'Récepteur réservé à la tablette' });
+      socket.disconnect(true);
+      return;
     }
     const pair = String(code || '').trim();
     if (!pair || pair.length < 4 || pair === 'undefined') {
@@ -1021,7 +1042,11 @@ io.on('connection', (socket) => {
   // --- Relais WebRTC (signaling) : channel 'cam' (récepteur->contrôleur) ou 'talk' (contrôleur->récepteur) ---
   socket.on('signal', (payload) => {
     if (!socket.data.code) return;
-    socket.to(socket.data.code).emit('signal', payload);
+    if (socket.data.role === 'receiver') {
+      emitToRole(socket.data.code, 'controller', 'signal', payload);
+    } else if (socket.data.role === 'controller') {
+      emitToRole(socket.data.code, 'receiver', 'signal', payload);
+    }
   });
 
   // Relais caméra JPEG : un seul envoi aux contrôleurs (évite le double flux qui tuait les FPS)

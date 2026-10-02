@@ -28,7 +28,10 @@ class NodeBridgeService {
   String? publicUrl;
   String? pairCode;
   String? tunnelError;
+  /// Cloudflare libre (trycloudflare). Exclusif avec [customDomainActive].
   bool tunnelEnabled = true;
+  /// Mon domaine (Named Tunnel). Exclusif avec [tunnelEnabled] libre.
+  bool customDomainActive = false;
 
   String? get controllerPublicUrl {
     final base = publicUrl;
@@ -129,9 +132,14 @@ class NodeBridgeService {
 
   void _emit(String tag, String message) {
     if (tag == 'publicUrl') {
-      if (!_isAllowedPublicUrl(message)) return;
-      publicUrl = message;
-      unawaited(_persistPublicUrl(message));
+      if (message.isEmpty) {
+        publicUrl = null;
+        unawaited(_clearStalePublicUrl());
+      } else {
+        if (!_isAllowedPublicUrl(message)) return;
+        publicUrl = message;
+        unawaited(_persistPublicUrl(message));
+      }
     }
     if (tag == 'localUrl' && message.startsWith('http')) {
       localUrl = message;
@@ -139,7 +147,7 @@ class NodeBridgeService {
     if (tag == 'node' && message == 'LISTENING') {
       status = NodeStatus.running;
       lastError = null;
-      _startTunnel();
+      unawaited(refreshCustomDomainFlag().then((_) => _startTunnel()));
       unawaited(_pollServerInfo());
     }
     if (tag == 'node' && message.startsWith('ERROR')) {
@@ -243,18 +251,26 @@ class NodeBridgeService {
   }
 
   Future<void> _startTunnel() async {
-    if (!tunnelEnabled) return;
+    // Libre OU domaine nommé — le natif choisit selon custom-domain.json.
+    if (!tunnelEnabled && !customDomainActive) return;
     if (_tunnelStarted) return;
     _tunnelStarted = true;
     await _clearStalePublicUrl();
     _tunnelSub ??= CloudflareTunnel.events().listen((event) {
       final type = '${event['type'] ?? ''}';
       final value = '${event['value'] ?? ''}';
-      if (type == 'url' && _isAllowedPublicUrl(value)) {
-        publicUrl = value;
-        tunnelError = null;
-        unawaited(_persistPublicUrl(value));
-        _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
+      if (type == 'url') {
+        if (value.isEmpty) {
+          publicUrl = null;
+          tunnelError = null;
+          unawaited(_clearStalePublicUrl());
+          _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
+        } else if (_isAllowedPublicUrl(value)) {
+          publicUrl = value;
+          tunnelError = null;
+          unawaited(_persistPublicUrl(value));
+          _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
+        }
       } else if (type == 'error') {
         if (publicUrl != null) return;
         tunnelError = value;
@@ -283,7 +299,17 @@ class NodeBridgeService {
     _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
   }
 
-  /// Active ou coupe le tunnel Cloudflare sans toucher au serveur Node.
+  Future<void> refreshCustomDomainFlag() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      customDomainActive =
+          s.enabled && s.hasToken && s.publicUrl.trim().isNotEmpty;
+    } catch (_) {
+      customDomainActive = false;
+    }
+  }
+
+  /// Cloudflare libre uniquement. Si on l’allume, Mon domaine passe OFF côté appelant.
   Future<void> setTunnelEnabled(bool enabled) async {
     if (tunnelEnabled == enabled) {
       if (!enabled) return;
@@ -291,14 +317,39 @@ class NodeBridgeService {
     }
     tunnelEnabled = enabled;
     if (!enabled) {
-      await _stopTunnel();
-      _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'off'));
+      // Couper le libre seulement si pas de domaine nommé actif.
+      if (!customDomainActive) {
+        await _stopTunnel();
+        _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'off'));
+      }
       return;
     }
+    // Libre ON → domaine nommé doit être OFF (géré par l’UI avant l’appel).
+    customDomainActive = false;
     if (status == NodeStatus.running) {
+      _tunnelStarted = false;
       await _startTunnel();
     }
     _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'on'));
+  }
+
+  /// Relance le tunnel après changement Mon domaine / Cloudflare libre.
+  Future<void> restartTunnel({bool clearPublicUrl = false}) async {
+    _tunnelStarted = false;
+    try {
+      await CloudflareTunnel.stop();
+    } catch (_) {}
+    if (clearPublicUrl) {
+      publicUrl = null;
+      tunnelError = null;
+      await _clearStalePublicUrl();
+      _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
+    } else {
+      tunnelError = null;
+    }
+    if (status != NodeStatus.running) return;
+    if (!tunnelEnabled && !customDomainActive) return;
+    await _startTunnel();
   }
 
   /// Lance Node.js (Foreground Service, sinon dans le process Flutter).

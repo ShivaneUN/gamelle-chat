@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../services/cloudflare_tunnel.dart';
 import '../services/node_bridge_service.dart';
 
 const _bg = Color(0xFF0B0D12);
@@ -12,7 +13,7 @@ const _tile = Color(0xFF1C2030);
 const _accent = Color(0xFFFF7A45);
 const _muted = Color(0xFF8B93A7);
 
-/// Panneau réglages (Wi‑Fi, serveur, Cloudflare, notifs) —
+/// Panneau réglages (Wi‑Fi, serveur, Cloudflare, mon domaine, notifs) —
 /// page pleine ou panneau gauche de l’accueil (à la place du QR).
 class SettingsPanel extends StatefulWidget {
   const SettingsPanel({
@@ -33,7 +34,15 @@ class _SettingsPanelState extends State<SettingsPanel> {
   StreamSubscription<NodeBridgeMessage>? _sub;
   bool _busy = false;
   bool _tunnelBusy = false;
+  bool _domainBusy = false;
   PermissionStatus _notifStatus = PermissionStatus.denied;
+
+  bool _domainEnabled = false;
+  String _domainUrl = '';
+  bool _hasToken = false;
+  bool _editingToken = false;
+  final _urlCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -42,12 +51,36 @@ class _SettingsPanelState extends State<SettingsPanel> {
       if (mounted) setState(() {});
     });
     _refreshNotif();
+    _loadCustomDomain();
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    _urlCtrl.dispose();
+    _tokenCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCustomDomain() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      if (!mounted) return;
+      setState(() {
+        _domainEnabled = s.enabled;
+        _domainUrl = s.publicUrl;
+        _hasToken = s.hasToken;
+        if (_urlCtrl.text.isEmpty && s.publicUrl.isNotEmpty) {
+          _urlCtrl.text = s.publicUrl;
+        }
+      });
+      await _bridge.refreshCustomDomainFlag();
+      // Domaine actif → Cloudflare libre OFF.
+      if (s.enabled && s.hasToken && s.publicUrl.isNotEmpty && _bridge.tunnelEnabled) {
+        _bridge.tunnelEnabled = false;
+        if (mounted) setState(() {});
+      }
+    } catch (_) {}
   }
 
   Future<void> _refreshNotif() async {
@@ -92,10 +125,109 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (_tunnelBusy) return;
     setState(() => _tunnelBusy = true);
     try {
+      if (on && _domainEnabled) {
+        // Libre ON → Mon domaine OFF automatiquement.
+        await CloudflareTunnel.setCustomDomain(enabled: false);
+        if (mounted) {
+          setState(() => _domainEnabled = false);
+        }
+        await _bridge.refreshCustomDomainFlag();
+      }
       await _bridge.setTunnelEnabled(on);
     } finally {
       if (mounted) setState(() => _tunnelBusy = false);
     }
+  }
+
+  Future<void> _applyDomain({
+    bool? enabled,
+    String? publicUrl,
+    String? token,
+    bool clearToken = false,
+  }) async {
+    if (_domainBusy) return;
+    setState(() => _domainBusy = true);
+    try {
+      final nextEnabled = enabled ?? _domainEnabled;
+      final CustomDomainStatus s;
+      if (clearToken) {
+        s = await CloudflareTunnel.clearCustomDomainToken();
+      } else {
+        s = await CloudflareTunnel.setCustomDomain(
+          enabled: nextEnabled,
+          publicUrl: publicUrl,
+          token: token,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _domainEnabled = s.enabled;
+        _domainUrl = s.publicUrl;
+        _hasToken = s.hasToken;
+        _editingToken = false;
+        _tokenCtrl.clear();
+        if (s.publicUrl.isNotEmpty) _urlCtrl.text = s.publicUrl;
+      });
+
+      final domainLive = s.enabled && s.hasToken && s.publicUrl.isNotEmpty;
+      if (domainLive) {
+        // Mon domaine ON → Cloudflare libre OFF.
+        _bridge.tunnelEnabled = false;
+        _bridge.customDomainActive = true;
+        await _bridge.restartTunnel(clearPublicUrl: false);
+      } else {
+        // Mon domaine OFF → Cloudflare libre ON.
+        _bridge.customDomainActive = false;
+        _bridge.tunnelEnabled = true;
+        await _bridge.restartTunnel(clearPublicUrl: true);
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Domaine : $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _domainBusy = false);
+    }
+  }
+
+  Future<void> _toggleDomain(bool on) async {
+    final url = _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : _domainUrl;
+    if (on && url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Indique d’abord ton lien domaine.')),
+      );
+      return;
+    }
+    if (on && !_hasToken && _tokenCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ajoute d’abord le token tunnel.')),
+      );
+      return;
+    }
+    final token = _tokenCtrl.text.trim().isNotEmpty ? _tokenCtrl.text.trim() : null;
+    await _applyDomain(enabled: on, publicUrl: url, token: token);
+  }
+
+  Future<void> _saveUrl() async {
+    final url = _urlCtrl.text.trim();
+    if (url.isEmpty) return;
+    await _applyDomain(enabled: _domainEnabled, publicUrl: url);
+  }
+
+  Future<void> _saveToken() async {
+    final token = _tokenCtrl.text.trim();
+    if (token.isEmpty) return;
+    await _applyDomain(
+      enabled: _domainEnabled,
+      publicUrl: _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : null,
+      token: token,
+    );
+  }
+
+  Future<void> _deleteToken() async {
+    await _applyDomain(clearToken: true);
   }
 
   Future<void> _openNotifSettings() async {
@@ -108,6 +240,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (_notifStatus.isPermanentlyDenied) return 'Refusées — ouvrir les réglages';
     if (_notifStatus.isDenied) return 'Non accordées';
     return _notifStatus.toString().split('.').last;
+  }
+
+  String get _domainSubtitle {
+    if (!_domainEnabled) {
+      return 'Off — Cloudflare libre actif';
+    }
+    if (_domainUrl.isEmpty) return 'Lien manquant';
+    final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
+    if (!_hasToken) return '$host — token manquant';
+    return '$host — Cloudflare libre off';
   }
 
   @override
@@ -169,16 +311,23 @@ class _SettingsPanelState extends State<SettingsPanel> {
             const Divider(height: 1, color: Color(0xFF2A3142)),
             _SettingsTile(
               icon: Icons.cloud_outlined,
-              title: 'Cloudflare',
-              subtitle: !tunnelOn
-                  ? 'Désactivé — accès local uniquement'
-                  : (_bridge.publicUrl != null
-                      ? 'Tunnel actif'
-                      : (_bridge.tunnelError ?? 'Connexion…')),
+              title: 'Cloudflare libre',
+              subtitle: _domainEnabled
+                  ? 'Off — Mon domaine actif'
+                  : (!tunnelOn
+                      ? 'Désactivé — accès local uniquement'
+                      : (_bridge.publicUrl != null
+                          ? 'Tunnel actif'
+                          : (_bridge.tunnelError ?? 'Connexion…'))),
               trailing: Switch(
-                value: tunnelOn,
+                value: tunnelOn && !_domainEnabled,
                 activeThumbColor: _accent,
-                onChanged: _tunnelBusy ? null : _toggleTunnel,
+                onChanged: (_tunnelBusy || _domainBusy)
+                    ? null
+                    : (on) {
+                        if (!on && _domainEnabled) return;
+                        _toggleTunnel(on);
+                      },
               ),
             ),
             const Divider(height: 1, color: Color(0xFF2A3142)),
@@ -192,6 +341,58 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 onPressed: _openNotifSettings,
                 icon: const Icon(Icons.open_in_new_rounded, color: _accent),
               ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      _SettingsCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SettingsTile(
+              icon: Icons.language_rounded,
+              title: 'Mon domaine',
+              subtitle: _domainSubtitle,
+              trailing: Switch(
+                value: _domainEnabled,
+                activeThumbColor: _accent,
+                onChanged: _domainBusy ? null : _toggleDomain,
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _urlCtrl,
+                      enabled: !_domainBusy,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: 'https://ton-domaine.tld',
+                        hintStyle: TextStyle(color: _muted),
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (_) => _saveUrl(),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _domainBusy ? null : _saveUrl,
+                    icon: const Icon(Icons.check_rounded, color: _accent),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: _buildTokenRow(),
             ),
           ],
         ),
@@ -227,6 +428,71 @@ class _SettingsPanelState extends State<SettingsPanel> {
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         children: body,
       ),
+    );
+  }
+
+  Widget _buildTokenRow() {
+    if (_editingToken || !_hasToken) {
+      return Row(
+        children: [
+          const Icon(Icons.lock_outline_rounded, color: Colors.white, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _tokenCtrl,
+              enabled: !_domainBusy,
+              obscureText: true,
+              obscuringCharacter: '•',
+              enableSuggestions: false,
+              autocorrect: false,
+              // Pas de bascule œil : le token ne s’affiche jamais.
+              style: const TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 1.2),
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '••••••••',
+                hintStyle: TextStyle(color: _muted, letterSpacing: 2),
+                border: InputBorder.none,
+              ),
+              onSubmitted: (_) => _saveToken(),
+            ),
+          ),
+          IconButton(
+            onPressed: _domainBusy ? null : _saveToken,
+            icon: const Icon(Icons.check_rounded, color: _accent),
+          ),
+          if (_editingToken)
+            IconButton(
+              onPressed: _domainBusy
+                  ? null
+                  : () => setState(() {
+                        _editingToken = false;
+                        _tokenCtrl.clear();
+                      }),
+              icon: const Icon(Icons.close_rounded, color: _muted),
+            ),
+        ],
+      );
+    }
+
+    // Token enregistré : icônes seules (pas de révélation).
+    return Row(
+      children: [
+        const Icon(Icons.lock_rounded, color: _accent, size: 22),
+        const Spacer(),
+        IconButton(
+          onPressed: _domainBusy
+              ? null
+              : () => setState(() {
+                    _editingToken = true;
+                    _tokenCtrl.clear();
+                  }),
+          icon: const Icon(Icons.edit_rounded, color: Colors.white),
+        ),
+        IconButton(
+          onPressed: _domainBusy ? null : _deleteToken,
+          icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+        ),
+      ],
     );
   }
 }

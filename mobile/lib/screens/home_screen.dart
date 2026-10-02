@@ -333,8 +333,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _pairingPanel({required bool expand}) {
     final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
     final qrSize = expand ? 260.0 : 220.0;
+    final publicOn = _bridge.tunnelEnabled || _bridge.customDomainActive;
     final Widget qr;
-    if (!_bridge.tunnelEnabled) {
+    if (!publicOn) {
       qr = SizedBox(
         width: qrSize,
         height: qrSize,
@@ -342,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Cloudflare désactivé.\nAccès local via Réglages.',
+              'Accès distant désactivé.\nLocal via Réglages.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _muted, height: 1.4),
             ),
@@ -392,11 +393,13 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _StatusPill(label: _localOk ? 'Local OK' : 'Local…', ok: _localOk),
             _StatusPill(
-              label: !_bridge.tunnelEnabled
-                  ? 'Cloudflare off'
-                  : (_cloudflareOk
-                      ? 'Cloudflare OK'
-                      : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare')),
+              label: _bridge.customDomainActive
+                  ? (_cloudflareOk ? 'Domaine OK' : 'Domaine…')
+                  : (!_bridge.tunnelEnabled
+                      ? 'Cloudflare off'
+                      : (_cloudflareOk
+                          ? 'Cloudflare OK'
+                          : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare'))),
               ok: _cloudflareOk,
             ),
           ],

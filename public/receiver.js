@@ -131,7 +131,8 @@ let recordedChunks = [];
 let micOn = false;
 let talkSoundOn = true;
 let alarmSoundOn = true;
-const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+// WebView Android : l'annulation d'écho rend souvent la piste muette.
+const MIC_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
 
 socket.on('connect', () => {
   resolvePairCode().then((c) => {
