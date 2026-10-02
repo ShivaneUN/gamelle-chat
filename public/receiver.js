@@ -63,7 +63,7 @@ const camBtn = document.getElementById('camBtn');
 function paintControllerLink(origin) {
   const base = String(origin || '').replace(/\/$/, '');
   const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(base) : false;
-  const share = scannable ? (base + '/controller.html?v=0.1.12') : '';
+  const share = scannable ? (base + '/controller.html?v=0.1.13') : '';
   window.__GAMELLE_CONTROLLER_URL__ = share;
   const urlEl = document.getElementById('ctrlLinkUrl');
   const hint = document.getElementById('ctrlLinkHint');

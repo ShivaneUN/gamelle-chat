@@ -460,8 +460,17 @@ function touchSession(token) {
   writeSessions(sessions);
 }
 
+function requestIsHttps(req) {
+  if (req && req.secure) return true;
+  const xf = String((req && req.headers && req.headers['x-forwarded-proto']) || '');
+  if (xf.includes('https')) return true;
+  const host = String((req && req.headers && req.headers.host) || '').split(':')[0].toLowerCase();
+  // Tunnel nommé : cloudflared parle en HTTP au serveur, le téléphone est en HTTPS.
+  return !!(host && host.includes('.') && host !== 'localhost' && !isPrivateIp(host));
+}
+
 function setSessionCookie(res, token, req) {
-  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  const secure = requestIsHttps(req);
   let c = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SEC}`;
   if (secure) c += '; Secure';
   // setHeader (pas append) : certains reverse-proxy / Express 5 gèrent mal multi Set-Cookie.
@@ -469,14 +478,15 @@ function setSessionCookie(res, token, req) {
 }
 
 function clearSessionCookie(res, req) {
-  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  const secure = requestIsHttps(req);
   let c = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   if (secure) c += '; Secure';
   res.setHeader('Set-Cookie', c);
 }
 
 function htmlWithAbsoluteLogo(html, req) {
-  const base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
+  let base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
+  if (base.startsWith('http://') && requestIsHttps(req)) base = 'https://' + base.slice('http://'.length);
   return String(html || '')
     .replace(/content="\/logo\.png"/g, `content="${base}/logo.png"`)
     .replace(/href="\/(favicon-[^"]+|apple-touch-icon\.png)"/g, `href="${base}/$1"`);
@@ -503,6 +513,8 @@ function sendHtml(res, req, file, extra) {
       .replace('<!--SERVER_VER-->', escapeHtml(info.version || updater.pkgVersion()));
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.set('Pragma', 'no-cache');
+    // Le domaine fixe reste dans le cache du téléphone ; les liens libres changent d’adresse.
+    res.set('Clear-Site-Data', '"cache"');
     res.type('html').send(out);
   });
 }
