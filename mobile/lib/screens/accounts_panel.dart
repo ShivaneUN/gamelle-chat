@@ -170,6 +170,82 @@ class _AccountsPanelState extends State<AccountsPanel> {
     }
   }
 
+  Future<void> _setPassword(_AccountRow row) async {
+    final passCtrl = TextEditingController();
+    final pass2Ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title: Text('Nouveau mot de passe — ${row.username}', style: const TextStyle(color: Colors.white, fontSize: 18)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: passCtrl,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: _fieldDecoration('Nouveau mot de passe'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: pass2Ctrl,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: _fieldDecoration('Confirmer'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Enregistrer', style: TextStyle(color: _accent)),
+          ),
+        ],
+      ),
+    );
+    final pass = passCtrl.text;
+    final pass2 = pass2Ctrl.text;
+    passCtrl.dispose();
+    pass2Ctrl.dispose();
+    if (ok != true || !mounted) return;
+    if (pass.length < 4) {
+      setState(() => _error = 'Mot de passe trop court (min. 4).');
+      return;
+    }
+    if (pass != pass2) {
+      setState(() => _error = 'Les mots de passe ne correspondent pas.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final map = await _json('POST', '/api/auth/users/${row.id}/password', body: {
+        'password': pass,
+      });
+      if (!mounted) return;
+      if (map['_status'] != 200) {
+        setState(() => _error = '${map['error'] ?? 'Changement impossible'}');
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Mot de passe de « ${row.username} » mis à jour')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Changement impossible.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _delete(_AccountRow row) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -265,10 +341,20 @@ class _AccountsPanelState extends State<AccountsPanel> {
                   _users[i].username,
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                 ),
-                trailing: IconButton(
-                  tooltip: 'Supprimer',
-                  onPressed: _busy ? null : () => _delete(_users[i]),
-                  icon: const Icon(Icons.delete_outline_rounded, color: _accent),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'Nouveau mot de passe',
+                      onPressed: _busy ? null : () => _setPassword(_users[i]),
+                      icon: const Icon(Icons.key_rounded, color: Colors.white),
+                    ),
+                    IconButton(
+                      tooltip: 'Supprimer',
+                      onPressed: _busy ? null : () => _delete(_users[i]),
+                      icon: const Icon(Icons.delete_outline_rounded, color: _accent),
+                    ),
+                  ],
                 ),
               ),
             ],

@@ -69,8 +69,15 @@
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (errEl) errEl.textContent = '';
-    const username = (userEl && userEl.value || '').trim();
-    const password = (passEl && passEl.value) || '';
+    // iPhone : le mot de passe auto-rempli n’est pas encore dans le champ au clic.
+    await new Promise((r) => setTimeout(r, 60));
+    const fd = new FormData(form);
+    const username = String((userEl && userEl.value) || fd.get('username') || '').trim();
+    const password = String((passEl && passEl.value) || fd.get('password') || '');
+    if (!username || !password) {
+      if (errEl) errEl.textContent = 'Identifiant et mot de passe requis.';
+      return;
+    }
     if (btn) btn.disabled = true;
     try {
       const r = await fetch('/api/auth/login', {

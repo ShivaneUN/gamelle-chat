@@ -199,6 +199,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 function loadJsonFile(file, fallback) {
   try {
@@ -303,6 +304,45 @@ function writeSessions(data) {
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64).toString('hex');
+}
+
+function passwordVariants(password) {
+  const raw = String(password ?? '');
+  const out = [];
+  const add = (s) => {
+    if (!out.includes(s)) out.push(s);
+  };
+  add(raw);
+  try { add(raw.normalize('NFC')); } catch (e) {}
+  try { add(raw.normalize('NFD')); } catch (e) {}
+  const trimmed = raw.trim();
+  add(trimmed);
+  try { add(trimmed.normalize('NFC')); } catch (e) {}
+  try { add(trimmed.normalize('NFD')); } catch (e) {}
+  return out;
+}
+
+function findUserByName(accounts, username) {
+  const want = String(username || '').trim().normalize('NFC').toLowerCase();
+  if (!want || !accounts || !Array.isArray(accounts.users)) return null;
+  return accounts.users.find((u) => {
+    if (!u || !u.username) return false;
+    return String(u.username).trim().normalize('NFC').toLowerCase() === want;
+  }) || null;
+}
+
+function passwordMatches(user, password) {
+  const hashHex = String(user && user.passHash || '').trim().toLowerCase();
+  const salt = String(user && user.salt || '');
+  if (!/^[0-9a-f]+$/i.test(hashHex) || hashHex.length < 32 || !salt) return false;
+  const expected = Buffer.from(hashHex, 'hex');
+  if (!expected.length) return false;
+  for (const candidate of passwordVariants(password)) {
+    const hash = hashPassword(candidate, salt);
+    const got = Buffer.from(hash, 'hex');
+    if (got.length === expected.length && crypto.timingSafeEqual(got, expected)) return true;
+  }
+  return false;
 }
 
 function publicUser(u) {
@@ -541,19 +581,37 @@ app.post('/api/auth/login', (req, res) => {
   const username = String((req.body && req.body.username) || '').trim();
   const password = String((req.body && req.body.password) || '');
   const accounts = readAccounts();
-  const user = accounts.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+  if (!accounts.users.length) {
+    return res.status(401).json({
+      ok: false,
+      code: 'no-accounts',
+      error: 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.',
+    });
+  }
+  const user = findUserByName(accounts, username);
   if (!user || !user.salt || !user.passHash) {
-    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
+    return res.status(401).json({
+      ok: false,
+      code: 'unknown-user',
+      error: 'Cet identifiant n’existe pas. Vérifie le nom dans Comptes sur la tablette.',
+    });
   }
   let ok = false;
   try {
-    const hash = hashPassword(password, user.salt);
-    ok = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passHash, 'hex'));
+    ok = passwordMatches(user, password);
   } catch (e) {
-    ok = false;
+    return res.status(500).json({
+      ok: false,
+      code: 'verify-failed',
+      error: 'Vérification impossible. Sur la tablette : Comptes → Nouveau mot de passe.',
+    });
   }
   if (!ok) {
-    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
+    return res.status(401).json({
+      ok: false,
+      code: 'bad-password',
+      error: 'Mot de passe incorrect. Sur la tablette : Comptes → l’identifiant → Nouveau mot de passe.',
+    });
   }
 
   // Déjà connecté sur CET appareil (même cookie/token) → OK, pas de nouvelle session.
@@ -590,6 +648,24 @@ app.post('/api/auth/logout', (req, res) => {
   if (user && user.token) destroySession(user.token);
   clearSessionCookie(res, req);
   res.json({ ok: true });
+});
+
+app.post('/api/auth/users/:id/password', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
+  const password = String((req.body && req.body.password) || '');
+  if (password.length < 4 || password.length > 128) {
+    return res.status(400).json({ ok: false, error: 'Mot de passe trop court' });
+  }
+  const accounts = readAccounts();
+  const user = accounts.users.find((u) => u && String(u.id) === String(req.params.id || ''));
+  if (!user) return res.status(404).json({ ok: false, error: 'Compte introuvable' });
+  user.salt = crypto.randomBytes(16).toString('hex');
+  user.passHash = hashPassword(password, user.salt);
+  writeAccounts(accounts);
+  destroySessionsForUser(user.id);
+  res.json({ ok: true, user: publicUser(user) });
 });
 
 app.delete('/api/auth/users/:id', (req, res) => {
