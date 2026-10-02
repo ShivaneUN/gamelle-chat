@@ -66,7 +66,13 @@ if (!code) {
   throw new Error('code-redirect');
 }
 
-const socket = io({ withCredentials: true });
+const socket = io({
+  withCredentials: true,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 800,
+  reconnectionDelayMax: 5000,
+});
 window.__gamelleTarget = 'main';
 window.__gamelleSync = false;
 function controlTarget() {
@@ -81,15 +87,25 @@ let talkStream = null;
 let peerControllerCount = 0;
 let webrtcLive = false;
 let camWanted = false;
+let authKicked = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
 socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
 socket.on('auth-required', () => {
+  authKicked = true;
   location.replace('/');
 });
+socket.on('session-replaced', () => {
+  authKicked = true;
+  location.replace('/?reason=session');
+});
 socket.on('disconnect', (reason) => {
-  if (reason === 'io server disconnect') {
-    // possible kick auth
+  // io server disconnect = kick serveur : Socket.IO ne se reconnecte pas tout seul.
+  // Si ce n'est pas un kick auth, on retente (coupures tunnel / Node restart).
+  if (reason === 'io server disconnect' && !authKicked) {
+    setTimeout(() => {
+      try { socket.connect(); } catch (e) {}
+    }, 1000);
   }
 });
 

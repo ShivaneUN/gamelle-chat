@@ -87,7 +87,8 @@ try {
 }
 const io = new Server(server, {
   maxHttpBufferSize: 5e7,
-  pingTimeout: 30000,
+  // 4G / tunnel Cloudflare : pings trop serrés → fausse déco contrôleur.
+  pingTimeout: 60000,
   pingInterval: 25000,
   cors: { origin: true, credentials: true },
 });
@@ -304,6 +305,11 @@ function getSessionUser(req) {
   const sessions = readSessions();
   const s = sessions.sessions.find((x) => x && x.token === token);
   if (!s) return null;
+  const ageMs = Date.now() - Number(s.createdAt || 0);
+  if (Number.isFinite(ageMs) && ageMs > SESSION_MAX_AGE_SEC * 1000) {
+    destroySession(token);
+    return null;
+  }
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x && x.id === s.userId);
   if (!u) return null;
@@ -331,6 +337,34 @@ function destroySession(token) {
   if (!token) return;
   const sessions = readSessions();
   sessions.sessions = sessions.sessions.filter((x) => x && x.token !== token);
+  writeSessions(sessions);
+}
+
+function destroySessionsForUser(userId) {
+  if (!userId) return;
+  const sessions = readSessions();
+  sessions.sessions = sessions.sessions.filter((s) => !(s && s.userId === userId));
+  writeSessions(sessions);
+}
+
+/** Déconnecte les sockets contrôleur encore liés à ce compte (session reprise ailleurs). */
+function disconnectControllersForUser(userId, exceptSocketId) {
+  if (!userId || !io || !io.sockets || !io.sockets.sockets) return;
+  for (const s of io.sockets.sockets.values()) {
+    if (!s || s.id === exceptSocketId) continue;
+    if (s.data && s.data.role === 'controller' && s.data.userId === userId) {
+      try { s.emit('session-replaced', { error: 'Compte reconnecté ailleurs' }); } catch (e) {}
+      try { s.disconnect(true); } catch (e) {}
+    }
+  }
+}
+
+function touchSession(token) {
+  if (!token) return;
+  const sessions = readSessions();
+  const s = sessions.sessions.find((x) => x && x.token === token);
+  if (!s) return;
+  s.lastSeen = Date.now();
   writeSessions(sessions);
 }
 
@@ -470,22 +504,23 @@ app.post('/api/auth/login', (req, res) => {
   // Déjà connecté sur CET appareil (même cookie) → OK, pas de nouvelle session.
   const current = getSessionUser(req);
   if (current && current.id === user.id) {
+    touchSession(current.token);
     return res.json({ ok: true, user: publicUser(user) });
   }
 
-  // Une session existe déjà ailleurs → refuser (pas de déco auto du 1er device).
+  // Mot de passe validé : on reprend le compte (cookie perdu, autre navigateur,
+  // tunnel/domaine changé, ou session zombie après déco réseau).
+  // Sinon l'utilisateur reste bloqué « déjà connecté ailleurs » sans pouvoir
+  // se déconnecter sur l'ancien appareil.
   const existing = findSessionsForUser(user.id);
   if (existing.length > 0) {
-    return res.status(409).json({
-      ok: false,
-      error: 'Ce compte est déjà connecté sur un autre appareil. Déconnecte-toi là-bas avant de te connecter ici.',
-      code: 'SESSION_ACTIVE',
-    });
+    destroySessionsForUser(user.id);
+    disconnectControllersForUser(user.id);
   }
 
   const token = createSession(user.id);
   setSessionCookie(res, token, req);
-  res.json({ ok: true, user: publicUser(user) });
+  res.json({ ok: true, user: publicUser(user), replaced: existing.length > 0 });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -1074,6 +1109,7 @@ io.on('connection', (socket) => {
       if (user) {
         socket.data.userId = user.id;
         socket.data.username = user.username;
+        touchSession(user.token);
       } else {
         socket.data.username = 'Local';
       }
