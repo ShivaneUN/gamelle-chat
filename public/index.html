@@ -20,12 +20,14 @@
   <h1>Gamelle Chat</h1>
   <p class="muted">Connexion contrôleur</p>
   <form id="loginForm" method="POST" action="/api/auth/login" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
-    <label class="hint" for="username">Identifiant</label>
-    <input id="username" name="username" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required
+    <label class="hint" for="gamelleUser">Identifiant</label>
+    <input id="gamelleUser" name="gamelle-user" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" readonly required
+      onfocus="this.removeAttribute('readonly')"
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
-    <label class="hint" for="password">Mot de passe</label>
+    <label class="hint" for="gamellePass">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="password" name="password" type="password" autocomplete="off" autocorrect="off" spellcheck="false" required
+      <input id="gamellePass" name="gamelle-pass" type="password" autocomplete="off" autocorrect="off" spellcheck="false" readonly required
+        onfocus="this.removeAttribute('readonly')"
         style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
@@ -38,7 +40,7 @@
 </div>
 <script>
 (function () {
-  var pass = document.getElementById('password');
+  var pass = document.getElementById('gamellePass');
   var toggle = document.getElementById('togglePass');
   if (toggle && pass) {
     toggle.addEventListener('click', function () {

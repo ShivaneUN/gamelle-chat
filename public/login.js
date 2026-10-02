@@ -1,8 +1,8 @@
 (function () {
   const SESSION_KEY = 'gamelleSession';
   const form = document.getElementById('loginForm');
-  const userEl = document.getElementById('username');
-  const passEl = document.getElementById('password');
+  const userEl = document.getElementById('gamelleUser') || document.getElementById('username');
+  const passEl = document.getElementById('gamellePass') || document.getElementById('password');
   const errEl = document.getElementById('loginError');
   const btn = document.getElementById('loginBtn');
   const toggle = document.getElementById('togglePass');
