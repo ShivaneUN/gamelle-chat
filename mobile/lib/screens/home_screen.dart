@@ -191,6 +191,18 @@ class _HomeScreenState extends State<HomeScreen> {
     await _bridge.shutdown();
   }
 
+  Future<void> _joinTablet() async {
+    await [Permission.camera, Permission.microphone].request();
+    if (!mounted) return;
+    final base = Uri.parse(_bridge.localUrl);
+    final url = base.replace(path: '/scan.html').toString();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReceiverWebView(url: url),
+      ),
+    );
+  }
+
   Future<void> _openReceiver() async {
     await [Permission.camera, Permission.microphone].request();
     try {
@@ -435,6 +447,12 @@ class _HomeScreenState extends State<HomeScreen> {
           highlighted: true,
           onTap: _applying ? null : _openReceiver,
         ),
+      _ActionTile(
+        icon: Icons.qr_code_scanner_rounded,
+        title: 'Rejoindre une tablette',
+        subtitle: 'Devenir la caméra 2',
+        onTap: _applying ? null : _joinTablet,
+      ),
       _ActionTile(
         icon: Icons.settings_rounded,
         title: 'Réglages',

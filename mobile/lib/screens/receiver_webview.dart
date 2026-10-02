@@ -111,6 +111,18 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             if (context.mounted) Navigator.of(context).maybePop();
             return;
           }
+          if (m.startsWith('join|')) {
+            final next = m.substring('join|'.length).trim();
+            if (next.startsWith('http')) {
+              unawaited(_web?.loadRequest(Uri.parse(next)));
+            }
+            return;
+          }
+          if (m.startsWith('pairqr|')) {
+            final raw = m.substring('pairqr|'.length).trim();
+            _showPairQr(raw);
+            return;
+          }
           if (m == 'qr' || m.startsWith('qr|')) {
             final fromJs = m.startsWith('qr|') ? m.substring(3).trim() : '';
             _showScanQr(fromJs.isEmpty ? null : fromJs);
@@ -286,6 +298,33 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         }
       ''');
     } catch (_) {}
+  }
+
+  void _showPairQr(String url) {
+    final data = url.trim();
+    if (data.isEmpty || !mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierColor: const Color(0xEE000000),
+      builder: (ctx) {
+        final side = (MediaQuery.sizeOf(ctx).shortestSide * 0.72).clamp(240.0, 340.0);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF151821),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ScanQr(data: data, size: side),
+              const SizedBox(height: 12),
+              const Text(
+                'L’autre récepteur scanne ce QR',
+                style: TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _showScanQr([String? preferredUrl]) {

@@ -1080,6 +1080,9 @@ nodejs-project/public/message-library-ui.js
 nodejs-project/public/qr.js
 nodejs-project/public/receiver.html
 nodejs-project/public/receiver.js
+nodejs-project/public/satellite.html
+nodejs-project/public/satellite.js
+nodejs-project/public/scan.html
 nodejs-project/public/schedule-ui.js
 nodejs-project/public/style.css
 nodejs-project/public/talk-capture-worklet.js

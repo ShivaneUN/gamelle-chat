@@ -603,7 +603,7 @@ async function startMicTalk(stream, ownsStream) {
   talkSendOwnsStream = !!ownsStream;
   talkCapture = await startTalkCapture(stream, ({ rate, samples }) => {
     if (!micOn) return;
-    socket.emit('talk-audio', { rate, samples });
+    socket.emit('talk-audio', { rate, samples, target: window.__gamelleTarget || '' });
   });
 }
 
@@ -1236,4 +1236,208 @@ function startBatteryWatch() {
     emitBattery({ level: null, charging: false, unsupported: true });
   });
 }
+
+(function setupDevicesPanel() {
+  const openBtn = document.getElementById('openDevicesBtn');
+  const openTile = document.getElementById('openDevicesTile');
+  const codeEl = document.getElementById('linkCode');
+  const urlEl = document.getElementById('linkUrl');
+  const listEl = document.getElementById('deviceList');
+  const preview = document.getElementById('cam2Preview');
+  let linkUrl = '';
+  let ensemble = false;
+  let simult = false;
+  let mediaSync = false;
+  let devices = { main: true, satellite: false, pending: [], names: { main: 'Tablette', cam2: 'Caméra 2' } };
+  const flags = { torch: false, screen: true };
+  function targetFor(which) {
+    if (ensemble) return 'all';
+    return which;
+  }
+  function hitsMain(target) {
+    return target === 'all' || target === 'main';
+  }
+  function paint() {
+    if (!listEl) return;
+    const names = devices.names || {};
+    const rows = [{ id: 'main', name: names.main || 'Tablette', on: devices.main !== false }];
+    if (devices.satellite || devices.satelliteKnown) {
+      rows.push({ id: 'cam2', name: names.cam2 || 'Caméra 2', on: !!devices.satellite });
+    }
+    const pencil = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/></svg>';
+    listEl.innerHTML = rows.map((r) => (
+      '<div class="device-row"><div class="device-name"><b>' + r.name + '</b>' +
+      '<button type="button" class="rename-btn" data-act="rename" data-id="' + r.id + '" title="Renommer">' + pencil + '</button>' +
+      '<span class="status-dot' + (r.on ? ' on' : '') + '" title="' + (r.on ? 'En ligne' : 'Hors ligne') + '"></span></div>' +
+      '<div class="link-row">' +
+      '<button type="button" class="' + (flags.torch ? 'sync-on' : 'sync-off') + '" data-act="torch" data-id="' + r.id + '">Lampe</button>' +
+      '<button type="button" class="' + (flags.screen ? 'sync-on' : 'sync-off') + '" data-act="screen" data-id="' + r.id + '">Écran</button>' +
+      '<button type="button" class="' + (micOn ? 'sync-on' : 'sync-off') + '" data-act="mic" data-id="' + r.id + '">Micro</button>' +
+      (r.id === 'cam2' ? '<button type="button" class="sync-off" data-act="drop" data-id="cam2">Retirer</button>' : '') +
+      '</div></div>'
+    )).join('');
+    const live2 = document.getElementById('cam2Live');
+    if (preview) preview.classList.toggle('on', simult && !!preview.getAttribute('src'));
+    if (live2) live2.classList.toggle('on', simult && !!live2.getAttribute('src'));
+    document.body.classList.toggle('simult', simult);
+    const simBtn = document.getElementById('simultBtn');
+    const ensBtn = document.getElementById('ensembleBtn');
+    const tile = document.getElementById('openDevicesTile');
+    if (simBtn) simBtn.className = 'chip-btn ' + (simult ? 'sync-on' : 'sync-off');
+    if (tile) tile.className = 'tile-btn ' + (simult ? 'toggle-on' : 'toggle-off');
+    if (ensBtn) ensBtn.className = 'chip-btn ' + (ensemble ? 'sync-on' : 'sync-off');
+    const mediaBtn = document.getElementById('mediaSyncBtn');
+    if (mediaBtn) mediaBtn.className = 'chip-btn ' + (mediaSync ? 'sync-on' : 'sync-off');
+  }
+  function rName(id) {
+    const names = devices.names || {};
+    return names[id] || (id === 'cam2' ? 'Caméra 2' : 'Tablette');
+  }
+  if (listEl && !listEl.dataset.bound) {
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-act]');
+      if (!b) return;
+      ev.preventDefault();
+      const id = b.getAttribute('data-id');
+      const act = b.getAttribute('data-act');
+      const target = targetFor(id);
+      if (act === 'rename') {
+        const nameEl = b.parentElement && b.parentElement.querySelector('b');
+        if (!nameEl || nameEl.dataset.editing) return;
+        nameEl.dataset.editing = '1';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rename-input';
+        input.value = rName(id);
+        input.maxLength = 24;
+        nameEl.replaceWith(input);
+        input.focus();
+        input.select();
+        let saved = false;
+        const save = () => {
+          if (saved) return;
+          saved = true;
+          const next = input.value.trim();
+          if (next) {
+            if (!devices.names) devices.names = {};
+            devices.names[id] = next;
+            socket.emit('rename-device', { id: id, name: next });
+          }
+          paint();
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            save();
+          }
+        });
+        input.addEventListener('blur', save);
+        return;
+      }
+      if (act === 'torch') {
+        flags.torch = !flags.torch;
+        if (hitsMain(target)) applyTorch(flags.torch);
+        socket.emit('torch', { on: flags.torch, target: target });
+        paint();
+        return;
+      }
+      if (act === 'screen') {
+        flags.screen = !flags.screen;
+        if (hitsMain(target)) {
+          screenOn = flags.screen;
+          nativeHost(flags.screen ? 'on' : 'off');
+          renderScreenOffBtn();
+        }
+        socket.emit(flags.screen ? 'screen-on' : 'screen-off', { target: target });
+        paint();
+        return;
+      }
+      if (act === 'mic') {
+        window.__gamelleTarget = target === 'all' ? 'all' : id;
+        if (hitsMain(target) && unlockMicBtn) unlockMicBtn.click();
+        paint();
+        return;
+      }
+      if (act === 'drop') socket.emit('drop-satellite');
+    });
+  }
+  async function loadLink() {
+    try {
+      const j = await fetch('/api/link').then((r) => r.json());
+      if (!j || !j.ok) return;
+      if (codeEl) codeEl.textContent = j.code || '------';
+      linkUrl = j.url || '';
+      if (urlEl) urlEl.textContent = linkUrl;
+    } catch (e) {}
+  }
+  function openDevices() {
+    const img = document.getElementById('linkQrImg');
+    if (img) {
+      img.hidden = true;
+      img.removeAttribute('src');
+    }
+    openModal('devicesModal');
+    loadLink();
+  }
+  if (openBtn) openBtn.onclick = openDevices;
+  if (openTile) {
+    openTile.onclick = () => {
+      simult = !simult;
+      paint();
+    };
+  }
+  function showLinkQrImg() {
+    const img = document.getElementById('linkQrImg');
+    if (!img || !linkUrl) return;
+    try {
+      img.src = makeQrDataUrl(linkUrl, 8, 4);
+      img.hidden = false;
+    } catch (e) {
+      img.hidden = true;
+    }
+    if (window.GamelleHost && GamelleHost.postMessage) {
+      GamelleHost.postMessage('pairqr|' + linkUrl);
+    }
+  }
+  const showQr = document.getElementById('showLinkQr');
+  if (showQr) showQr.onclick = showLinkQrImg;
+  const guestOk = document.getElementById('guestOk');
+  if (guestOk) {
+    guestOk.onclick = () => {
+      const guest = (document.getElementById('guestInput').value || '').trim();
+      if (guest) socket.emit('accept-guest', { guest });
+    };
+  }
+  const simBtn = document.getElementById('simultBtn');
+  if (simBtn) simBtn.onclick = () => { simult = !simult; paint(); };
+  const ensBtn = document.getElementById('ensembleBtn');
+  if (ensBtn) ensBtn.onclick = () => { ensemble = !ensemble; paint(); };
+  const mediaBtn = document.getElementById('mediaSyncBtn');
+  if (mediaBtn) mediaBtn.onclick = () => {
+    mediaSync = !mediaSync;
+    socket.emit('set-media-sync', { on: mediaSync });
+    paint();
+  };
+  socket.on('media-sync', (msg) => {
+    mediaSync = !!(msg && msg.on);
+    paint();
+  });
+  socket.on('devices', (snap) => {
+    devices = snap || devices;
+    if (snap && typeof snap.mediaSync === 'boolean') mediaSync = snap.mediaSync;
+    paint();
+  });
+  socket.on('live-frame', (data) => {
+    if (!preview || !data || data.deviceId !== 'cam2' || typeof data.jpeg !== 'string') return;
+    preview.src = 'data:image/jpeg;base64,' + data.jpeg;
+    const live2 = document.getElementById('cam2Live');
+    if (live2) live2.src = preview.src;
+    if (simult) {
+      preview.classList.add('on');
+      if (live2) live2.classList.add('on');
+    }
+  });
+  paint();
+})();
 
