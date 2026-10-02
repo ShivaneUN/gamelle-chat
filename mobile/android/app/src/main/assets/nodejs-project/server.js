@@ -364,7 +364,10 @@ function touchSession(token) {
   const sessions = readSessions();
   const s = sessions.sessions.find((x) => x && x.token === token);
   if (!s) return;
-  s.lastSeen = Date.now();
+  const now = Date.now();
+  // Evite d'écrire le JSON à chaque join/ping (flash Android / crash IO).
+  if (s.lastSeen && now - Number(s.lastSeen) < 60 * 1000) return;
+  s.lastSeen = now;
   writeSessions(sessions);
 }
 
