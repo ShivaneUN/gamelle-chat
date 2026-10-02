@@ -482,24 +482,41 @@ function htmlWithAbsoluteLogo(html, req) {
     .replace(/href="\/(favicon-[^"]+|apple-touch-icon\.png)"/g, `href="${base}/$1"`);
 }
 
-function sendHtml(res, req, file) {
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function sendHtml(res, req, file, extra) {
   const full = path.join(__dirname, 'public', file);
   fs.readFile(full, 'utf8', (err, html) => {
     if (err) {
       res.status(404).send('Not found');
       return;
     }
-    res.set('Cache-Control', 'no-store');
-    res.type('html').send(htmlWithAbsoluteLogo(html, req));
+    const info = extra || {};
+    let out = htmlWithAbsoluteLogo(html, req)
+      .replace('<!--LOGIN_ERROR-->', escapeHtml(info.error || ''))
+      .replace('<!--SERVER_VER-->', escapeHtml(info.version || updater.pkgVersion()));
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.type('html').send(out);
   });
 }
 
-app.get(['/', '/index.html'], (req, res) => {
-  const user = getSessionUser(req);
-  if (user) {
-    return res.redirect(302, '/controller.html');
+app.get(['/', '/index.html', '/login'], (req, res) => {
+  let user = null;
+  try { user = getSessionUser(req); } catch (e) { user = null; }
+  if (user && !req.query.e) {
+    return res.redirect(302, '/controller.html?access=' + encodeURIComponent(user.token));
   }
-  sendHtml(res, req, 'index.html');
+  sendHtml(res, req, 'index.html', {
+    error: String(req.query.e || ''),
+    version: updater.pkgVersion(),
+  });
 });
 
 app.get('/controller.html', (req, res) => {
@@ -594,73 +611,78 @@ function findSessionsForUser(userId) {
   return sessions.sessions.filter((s) => s && s.userId === userId);
 }
 
+function wantsJsonLogin(req) {
+  const ct = String((req.headers && req.headers['content-type']) || '');
+  const accept = String((req.headers && req.headers.accept) || '');
+  return ct.includes('application/json') || accept.includes('application/json');
+}
+
+function sendLoginFail(req, res, status, error, code) {
+  if (wantsJsonLogin(req)) return res.status(status).json({ ok: false, error, code: code || '' });
+  return res.redirect(302, '/login?e=' + encodeURIComponent(error));
+}
+
+function sendLoginOk(req, res, user, token, replaced) {
+  try { setSessionCookie(res, token, req); } catch (e) {}
+  if (wantsJsonLogin(req)) {
+    return res.json({ ok: true, user: publicUser(user), token, replaced: !!replaced });
+  }
+  return res.redirect(302, '/controller.html?access=' + encodeURIComponent(token));
+}
+
 app.post('/api/auth/login', (req, res) => {
-  const username = String((req.body && req.body.username) || '').trim();
-  const password = String((req.body && req.body.password) || '');
-  const accounts = readAccounts();
-  if (!accounts.users.length) {
-    return res.status(401).json({
-      ok: false,
-      code: 'no-accounts',
-      error: 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.',
-    });
-  }
-  const user = findUserByName(accounts, username);
-  const known = accountNames(accounts);
-  if (!user || !user.salt || !user.passHash) {
-    return res.status(401).json({
-      ok: false,
-      code: 'unknown-user',
-      error: known.length
-        ? `Pas de compte « ${username} ». Comptes sur la tablette : ${known.join(', ')}.`
-        : 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.',
-    });
-  }
-  let ok = false;
   try {
-    ok = passwordMatches(user, password);
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const username = String(body.username || body['gamelle-user'] || '').trim();
+    const password = String(body.password || body['gamelle-pass'] || '');
+    const accounts = readAccounts();
+    if (!username || !password) {
+      return sendLoginFail(req, res, 401, 'Identifiant et mot de passe requis.', 'empty');
+    }
+    if (!accounts.users.length) {
+      return sendLoginFail(req, res, 401, 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.', 'no-accounts');
+    }
+    const user = findUserByName(accounts, username);
+    const known = accountNames(accounts);
+    if (!user || !user.salt || !user.passHash) {
+      const error = known.length
+        ? `Pas de compte « ${username} ». Comptes sur la tablette : ${known.join(', ')}.`
+        : 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.';
+      return sendLoginFail(req, res, 401, error, 'unknown-user');
+    }
+    let ok = false;
+    try {
+      ok = passwordMatches(user, password);
+    } catch (e) {
+      return sendLoginFail(req, res, 500, 'Vérification impossible. Sur la tablette : Comptes → clé → Nouveau mot de passe.', 'verify-failed');
+    }
+    if (!ok) {
+      return sendLoginFail(req, res, 401, `Mot de passe incorrect pour « ${user.username} ».`, 'bad-password');
+    }
+
+    let current = null;
+    try { current = getSessionUser(req); } catch (e) { current = null; }
+    if (current && current.id === user.id) {
+      try { touchSession(current.token); } catch (e) {}
+      return sendLoginOk(req, res, user, current.token, false);
+    }
+
+    const existing = findSessionsForUser(user.id);
+    if (existing.length > 0) {
+      destroySessionsForUser(user.id);
+      disconnectControllersForUser(user.id);
+    }
+
+    const token = createSession(user.id);
+    const check = readSessions().sessions.find((s) => s && s.token === token);
+    if (!check) {
+      return sendLoginFail(req, res, 500, 'Impossible d’enregistrer la session. Réessaie.', 'session');
+    }
+    return sendLoginOk(req, res, user, token, existing.length > 0);
   } catch (e) {
-    return res.status(500).json({
-      ok: false,
-      code: 'verify-failed',
-      error: 'Vérification impossible. Sur la tablette : Comptes → Nouveau mot de passe.',
-    });
+    console.error('login', e && e.message);
+    return sendLoginFail(req, res, 500, 'Connexion impossible. Réessaie.', 'crash');
   }
-  if (!ok) {
-    return res.status(401).json({
-      ok: false,
-      code: 'bad-password',
-      error: `Mot de passe incorrect pour « ${user.username} ». Retape-le, sans laisser le téléphone le changer.`,
-    });
-  }
-
-  // Déjà connecté sur CET appareil (même cookie/token) → OK, pas de nouvelle session.
-  const current = getSessionUser(req);
-  if (current && current.id === user.id) {
-    touchSession(current.token);
-    setSessionCookie(res, current.token, req);
-    return res.json({ ok: true, user: publicUser(user), token: current.token, replaced: false });
-  }
-
-  // Mot de passe validé : on reprend le compte (cookie perdu, autre navigateur,
-  // tunnel/domaine changé, ou session zombie après déco réseau).
-  // Sinon l'utilisateur reste bloqué « déjà connecté ailleurs » sans pouvoir
-  // se déconnecter sur l'ancien appareil.
-  const existing = findSessionsForUser(user.id);
-  if (existing.length > 0) {
-    destroySessionsForUser(user.id);
-    disconnectControllersForUser(user.id);
-  }
-
-  const token = createSession(user.id);
-  // Vérifie que la session est bien disque — sinon le cookie/token serait orphelin.
-  const check = readSessions().sessions.find((s) => s && s.token === token);
-  if (!check) {
-    return res.status(500).json({ ok: false, error: 'Impossible d’enregistrer la session. Réessaie.' });
-  }
-  setSessionCookie(res, token, req);
-  // token aussi dans le JSON : secours si le navigateur refuse le cookie HttpOnly.
-  res.json({ ok: true, user: publicUser(user), token, replaced: existing.length > 0 });
 });
 
 app.post('/api/auth/logout', (req, res) => {
