@@ -11,7 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "cloudflared": "^0.7.3",
     "express": "^5.2.1",
     "selfsigned": "^1.10.14",
     "socket.io": "^4.8.3"
