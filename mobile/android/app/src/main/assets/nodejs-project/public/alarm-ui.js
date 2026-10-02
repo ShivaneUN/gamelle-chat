@@ -170,13 +170,22 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     });
   }
 
+  function authHeadersForMedia() {
+    const h = {};
+    try {
+      const t = localStorage.getItem('gamelleSession') || sessionStorage.getItem('gamelleSession') || '';
+      if (t) h.Authorization = 'Bearer ' + t;
+    } catch (e) {}
+    return h;
+  }
+
   function decodeAudioUrl(url) {
     if (!url) return Promise.reject(new Error('no-url'));
     if (decodedAudioCache.has(url)) return Promise.resolve(decodedAudioCache.get(url));
     if (decodingAudio.has(url)) return decodingAudio.get(url);
     const ctx = getSharedAudioCtx();
     if (!ctx) return Promise.reject(new Error('no-ctx'));
-    const job = fetch(url, { credentials: 'same-origin', cache: 'force-cache' })
+    const job = fetch(url, { credentials: 'same-origin', cache: 'force-cache', headers: authHeadersForMedia() })
       .then((r) => {
         if (!r.ok) throw new Error('http-' + r.status);
         return r.arrayBuffer();

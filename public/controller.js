@@ -6,6 +6,57 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
+const SESSION_KEY = 'gamelleSession';
+function saveSessionToken(token) {
+  if (!token) return;
+  try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
+  try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
+}
+function readSessionToken() {
+  try {
+    return localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+function clearSessionToken() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+// Récupère ?access= (login → contrôleur sans cookie) avant tout fetch/socket.
+(function captureAccessFromUrl() {
+  try {
+    const params = new URLSearchParams(location.search);
+    const access = (params.get('access') || '').trim();
+    if (!access) return;
+    saveSessionToken(access);
+    params.delete('access');
+    const q = params.toString();
+    const next = location.pathname + (q ? '?' + q : '') + (location.hash || '');
+    history.replaceState(null, '', next);
+  } catch (e) {}
+})();
+function authHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  const t = readSessionToken();
+  if (t) h.Authorization = 'Bearer ' + t;
+  return h;
+}
+function authFetch(url, opts) {
+  const o = Object.assign({ credentials: 'same-origin' }, opts || {});
+  o.headers = authHeaders(o.headers || {});
+  return fetch(url, o);
+}
+// <img>/<video> ne peuvent pas envoyer Bearer → access= en query si token local.
+function withAccess(url) {
+  const t = readSessionToken();
+  if (!t || !url) return url;
+  const s = String(url);
+  if (!s.startsWith('/media/')) return s;
+  if (/[?&]access=/.test(s)) return s;
+  return s + (s.includes('?') ? '&' : '?') + 'access=' + encodeURIComponent(t);
+}
+
 const refreshBtn = document.getElementById('refreshBtn');
 if (refreshBtn) {
   refreshBtn.onclick = () => {
@@ -51,8 +102,9 @@ const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
 if (!code) {
-  fetch('/api/active-code', { credentials: 'same-origin' }).then(async (r) => {
+  authFetch('/api/active-code').then(async (r) => {
     if (r.status === 401) {
+      clearSessionToken();
       location.replace('/?next=controller');
       return;
     }
@@ -64,7 +116,6 @@ if (!code) {
       location.replace('/controller.html');
       return;
     }
-    // Pas de code encore (tablette offline) : attendre sans spammer.
     setTimeout(() => location.reload(), 2500);
   }).catch(() => {
     setTimeout(() => location.reload(), 2500);
@@ -72,14 +123,16 @@ if (!code) {
   throw new Error('code-redirect');
 }
 
+const sessionToken = readSessionToken();
 const socket = io({
   withCredentials: true,
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 800,
   reconnectionDelayMax: 5000,
-  // polling d’abord : Cookie HttpOnly toujours envoyé (upgrade WS ensuite).
   transports: ['polling', 'websocket'],
+  auth: sessionToken ? { token: sessionToken } : undefined,
+  query: sessionToken ? { access: sessionToken } : undefined,
 });
 window.__gamelleTarget = 'main';
 window.__gamelleSync = false;
@@ -104,11 +157,10 @@ socket.on('connect', () => {
   socket.emit('join', { code, role: 'controller' });
 });
 socket.on('auth-required', async () => {
-  // Évite la boucle login ↔ contrôleur si le cookie HTTP est OK mais le WS a glitch.
   if (authRetrying || authKicked) return;
   authRetrying = true;
   try {
-    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    const r = await authFetch('/api/auth/me');
     const j = await r.json().catch(() => ({}));
     if (j && j.authenticated) {
       setTimeout(() => {
@@ -120,15 +172,15 @@ socket.on('auth-required', async () => {
   } catch (e) {}
   authKicked = true;
   authRetrying = false;
+  clearSessionToken();
   location.replace('/?next=controller');
 });
 socket.on('session-replaced', () => {
   authKicked = true;
+  clearSessionToken();
   location.replace('/?reason=session');
 });
 socket.on('disconnect', (reason) => {
-  // io server disconnect = kick serveur : Socket.IO ne se reconnecte pas tout seul.
-  // Si ce n'est pas un kick auth, on retente (coupures tunnel / Node restart).
   if (reason === 'io server disconnect' && !authKicked) {
     setTimeout(() => {
       try { socket.connect(); } catch (e) {}
@@ -140,8 +192,9 @@ const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {
   logoutBtn.onclick = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      await authFetch('/api/auth/logout', { method: 'POST' });
     } catch (e) {}
+    clearSessionToken();
     location.replace('/');
   };
 }
@@ -999,12 +1052,13 @@ function renderGallery(media) {
   media.forEach((m) => {
     const div = document.createElement('div');
     div.className = 'item';
+    const mediaUrl = withAccess(m.url);
     const el = m.type === 'video'
-      ? `<video src="${m.url}" controls></video>`
-      : `<img src="${m.url}" alt="">`;
+      ? `<video src="${mediaUrl}" controls></video>`
+      : `<img src="${mediaUrl}" alt="">`;
     div.innerHTML = `${el}
       <div class="gallery-actions">
-        <button type="button" class="save" data-url="${m.url}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer">↓</button>
+        <button type="button" class="save" data-url="${mediaUrl}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer">↓</button>
         <button type="button" class="del" data-name="${m.name}" title="Retirer de ma galerie">✕</button>
       </div>`;
     gallery.appendChild(div);
@@ -1021,7 +1075,8 @@ async function saveMediaToDevice(url, name, type) {
   if (!url) return;
   const fileName = name || ('gamelle_' + Date.now() + (type === 'video' ? '.webm' : '.jpg'));
   try {
-    const res = await fetch(url, { credentials: 'same-origin' });
+    const res = await authFetch(withAccess(url));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

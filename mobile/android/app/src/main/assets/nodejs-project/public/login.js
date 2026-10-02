@@ -1,10 +1,39 @@
 (function () {
+  const SESSION_KEY = 'gamelleSession';
   const form = document.getElementById('loginForm');
   const userEl = document.getElementById('username');
   const passEl = document.getElementById('password');
   const errEl = document.getElementById('loginError');
   const btn = document.getElementById('loginBtn');
   const toggle = document.getElementById('togglePass');
+
+  function saveToken(token) {
+    if (!token) return;
+    try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
+    try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
+  }
+
+  function readToken() {
+    try {
+      return localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function authHeaders() {
+    const t = readToken();
+    const h = { 'Content-Type': 'application/json' };
+    if (t) h.Authorization = 'Bearer ' + t;
+    return h;
+  }
+
+  function goController(token) {
+    if (token) saveToken(token);
+    const t = token || readToken();
+    if (t) location.replace('/controller.html?access=' + encodeURIComponent(t));
+    else location.replace('/controller.html');
+  }
 
   if (toggle && passEl) {
     toggle.addEventListener('click', () => {
@@ -23,10 +52,11 @@
 
   async function alreadyIn() {
     try {
-      const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+      const r = await fetch('/api/auth/me', { credentials: 'same-origin', headers: authHeaders() });
       const j = await r.json();
       if (j && j.authenticated) {
-        location.replace('/controller.html');
+        if (j.token) saveToken(j.token);
+        goController(j.token || readToken());
         return true;
       }
     } catch (e) {}
@@ -54,14 +84,10 @@
         if (errEl) errEl.textContent = (j && j.error) || 'Identifiants incorrects';
         return;
       }
-      // Confirme que le cookie session est bien pris avant d’ouvrir le contrôleur.
-      const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then((x) => x.json()).catch(() => ({}));
-      if (!(me && me.authenticated)) {
-        if (errEl) errEl.textContent = 'Connexion enregistrée mais cookie refusé par le navigateur. Réessaie / autorise les cookies.';
-        return;
-      }
+      if (j.token) saveToken(j.token);
+      // Toujours entrer au contrôleur : cookie OU token local (secours OTA).
       if (passEl) passEl.value = '';
-      location.replace('/controller.html');
+      goController(j.token || readToken());
     } catch (err) {
       if (errEl) errEl.textContent = 'Impossible de joindre le serveur';
     } finally {

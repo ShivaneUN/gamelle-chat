@@ -309,21 +309,49 @@ function publicUser(u) {
   return { id: u.id, username: u.username, createdAt: u.createdAt || null };
 }
 
-function getSessionUser(req) {
-  const token = parseCookies(req)[SESSION_COOKIE];
-  if (!token) return null;
+function getUserByToken(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
   const sessions = readSessions();
-  const s = sessions.sessions.find((x) => x && x.token === token);
+  const s = sessions.sessions.find((x) => x && x.token === t);
   if (!s) return null;
   const ageMs = Date.now() - Number(s.createdAt || 0);
   if (Number.isFinite(ageMs) && ageMs > SESSION_MAX_AGE_SEC * 1000) {
-    destroySession(token);
+    destroySession(t);
     return null;
   }
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x && x.id === s.userId);
   if (!u) return null;
-  return { id: u.id, username: u.username, token };
+  return { id: u.id, username: u.username, token: t };
+}
+
+function extractSessionToken(req) {
+  if (!req) return '';
+  const fromCookie = parseCookies(req)[SESSION_COOKIE];
+  if (fromCookie) return String(fromCookie);
+  const auth = String((req.headers && req.headers.authorization) || '');
+  if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, '').trim();
+  // Fallback query (login → controller quand le navigateur bloque les cookies).
+  try {
+    if (req.query && req.query.access) return String(req.query.access).trim();
+  } catch (e) {}
+  return '';
+}
+
+function getSessionUser(req) {
+  return getUserByToken(extractSessionToken(req));
+}
+
+function getSocketSessionUser(socket) {
+  if (!socket) return null;
+  const fromReq = getSessionUser(socket.request);
+  if (fromReq) return fromReq;
+  const auth = (socket.handshake && socket.handshake.auth) || {};
+  if (auth.token) return getUserByToken(auth.token);
+  const q = (socket.handshake && socket.handshake.query) || {};
+  if (q.access) return getUserByToken(q.access);
+  return null;
 }
 
 function createSession(userId) {
@@ -424,9 +452,17 @@ app.get(['/', '/index.html'], (req, res) => {
 });
 
 app.get('/controller.html', (req, res) => {
-  if (!isLanRequest(req) && !getSessionUser(req)) {
-    return res.redirect(302, '/?next=controller');
+  // access=<token> : pose un cookie si possible, puis sert la page (pas de redirect
+  // qui re-demanderait le cookie — critique quand Safari/CF bloque HttpOnly).
+  const access = String((req.query && req.query.access) || '').trim();
+  if (access) {
+    const user = getUserByToken(access);
+    if (!user) return res.redirect(302, '/?next=controller&reason=session');
+    setSessionCookie(res, access, req);
+    return sendHtml(res, req, 'controller.html');
   }
+  // Page HTML accessible : l’auth réelle est sur le socket + /api (cookie OU Bearer).
+  // Évite le mur « impossible de se connecter » quand le cookie ne tient pas.
   sendHtml(res, req, 'controller.html');
 });
 
@@ -447,7 +483,12 @@ app.use('/media/audio', requireSessionOrLocal, express.static(AUDIO_DIR));
 app.get('/api/auth/me', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.json({ ok: true, authenticated: false });
-  res.json({ ok: true, authenticated: true, user: { id: user.id, username: user.username } });
+  res.json({
+    ok: true,
+    authenticated: true,
+    user: { id: user.id, username: user.username },
+    token: user.token,
+  });
 });
 
 app.get('/api/auth/users', (req, res) => {
@@ -515,11 +556,12 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
   }
 
-  // Déjà connecté sur CET appareil (même cookie) → OK, pas de nouvelle session.
+  // Déjà connecté sur CET appareil (même cookie/token) → OK, pas de nouvelle session.
   const current = getSessionUser(req);
   if (current && current.id === user.id) {
     touchSession(current.token);
-    return res.json({ ok: true, user: publicUser(user) });
+    setSessionCookie(res, current.token, req);
+    return res.json({ ok: true, user: publicUser(user), token: current.token, replaced: false });
   }
 
   // Mot de passe validé : on reprend le compte (cookie perdu, autre navigateur,
@@ -533,14 +575,14 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const token = createSession(user.id);
-  // Vérifie que la session est bien disque — sinon le cookie serait orphelin
-  // et le contrôleur bouclerait sur « Connexion requise ».
+  // Vérifie que la session est bien disque — sinon le cookie/token serait orphelin.
   const check = readSessions().sessions.find((s) => s && s.token === token);
   if (!check) {
     return res.status(500).json({ ok: false, error: 'Impossible d’enregistrer la session. Réessaie.' });
   }
   setSessionCookie(res, token, req);
-  res.json({ ok: true, user: publicUser(user), replaced: existing.length > 0 });
+  // token aussi dans le JSON : secours si le navigateur refuse le cookie HttpOnly.
+  res.json({ ok: true, user: publicUser(user), token, replaced: existing.length > 0 });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -695,7 +737,6 @@ app.get('/api/alarm-stop', (_req, res) => {
 app.get('/c/:code', (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
-  if (!isLanRequest(req) && !getSessionUser(req)) return res.redirect(302, '/?next=controller');
   try {
     res.setHeader('Cache-Control', 'no-store');
   } catch (e) {}
@@ -1120,7 +1161,7 @@ io.on('connection', (socket) => {
       return;
     }
     if (role === 'controller') {
-      const user = getSessionUser(socket.request);
+      const user = getSocketSessionUser(socket);
       if (!user && !isLanRequest(socket.request)) {
         socket.emit('auth-required', { error: 'Connexion requise' });
         socket.disconnect(true);
