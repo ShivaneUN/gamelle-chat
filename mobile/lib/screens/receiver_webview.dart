@@ -332,10 +332,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     String? url = preferredUrl?.trim();
     if (url != null && url.isNotEmpty) {
       url = url.replaceAll(RegExp(r'/$'), '');
+      url = url.replaceAll(RegExp(r'[?&]v=[^&]*'), '');
+      url = url.replaceAll(RegExp(r'\?$'), '').replaceAll(RegExp(r'\?&'), '?');
       if (!url.contains('/controller.html')) {
-        url = '$url/controller.html?v=0.1.13';
-      } else if (!url.contains('v=0.1.13')) {
-        url = url.contains('?') ? '$url&v=0.1.13' : '$url?v=0.1.13';
+        url = '$url/controller.html';
       }
     } else {
       url = fromBridge;

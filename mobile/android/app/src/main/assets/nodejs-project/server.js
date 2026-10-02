@@ -513,8 +513,6 @@ function sendHtml(res, req, file, extra) {
       .replace('<!--SERVER_VER-->', escapeHtml(info.version || updater.pkgVersion()));
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.set('Pragma', 'no-cache');
-    // Le domaine fixe reste dans le cache du téléphone ; les liens libres changent d’adresse.
-    res.set('Clear-Site-Data', '"cache"');
     res.type('html').send(out);
   });
 }
@@ -542,7 +540,10 @@ app.get('/controller.html', (req, res) => {
     return sendHtml(res, req, 'controller.html');
   }
   if (!isLanRequest(req) && !getSessionUser(req)) {
-    return res.redirect(302, '/?next=controller');
+    return sendHtml(res, req, 'index.html', {
+      error: '',
+      version: updater.pkgVersion(),
+    });
   }
   sendHtml(res, req, 'controller.html');
 });

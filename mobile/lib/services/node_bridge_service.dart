@@ -55,7 +55,7 @@ class NodeBridgeService {
     if (!_isAllowedPublicHost(host)) return null;
     final base = raw.replaceAll(RegExp(r'/$'), '');
     // Même URL que le QR HTML : ouvre directement le contrôleur.
-    return '$base/controller.html?v=0.1.13';
+    return '$base/controller.html';
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();
