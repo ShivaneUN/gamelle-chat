@@ -213,8 +213,18 @@ function loadJsonFile(file, fallback) {
 function saveJsonFile(file, data) {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-  } catch (e) {}
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    console.error('saveJsonFile', file, e && e.message);
+    try {
+      fs.writeFileSync(file, JSON.stringify(data, null, 2));
+    } catch (e2) {
+      console.error('saveJsonFile.retry', file, e2 && e2.message);
+      throw e2;
+    }
+  }
 }
 
 function isLocalRequest(req) {
@@ -375,14 +385,15 @@ function setSessionCookie(res, token, req) {
   const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
   let c = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SEC}`;
   if (secure) c += '; Secure';
-  res.append('Set-Cookie', c);
+  // setHeader (pas append) : certains reverse-proxy / Express 5 gèrent mal multi Set-Cookie.
+  res.setHeader('Set-Cookie', c);
 }
 
 function clearSessionCookie(res, req) {
   const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
   let c = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   if (secure) c += '; Secure';
-  res.append('Set-Cookie', c);
+  res.setHeader('Set-Cookie', c);
 }
 
 function htmlWithAbsoluteLogo(html, req) {
@@ -522,6 +533,12 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const token = createSession(user.id);
+  // Vérifie que la session est bien disque — sinon le cookie serait orphelin
+  // et le contrôleur bouclerait sur « Connexion requise ».
+  const check = readSessions().sessions.find((s) => s && s.token === token);
+  if (!check) {
+    return res.status(500).json({ ok: false, error: 'Impossible d’enregistrer la session. Réessaie.' });
+  }
   setSessionCookie(res, token, req);
   res.json({ ok: true, user: publicUser(user), replaced: existing.length > 0 });
 });

@@ -14,6 +14,13 @@
     });
   }
 
+  try {
+    const q = new URLSearchParams(location.search);
+    if (errEl && q.get('reason') === 'session') {
+      errEl.textContent = 'Session reprise ailleurs — reconnecte-toi ici.';
+    }
+  } catch (e) {}
+
   async function alreadyIn() {
     try {
       const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
@@ -45,6 +52,12 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
         if (errEl) errEl.textContent = (j && j.error) || 'Identifiants incorrects';
+        return;
+      }
+      // Confirme que le cookie session est bien pris avant d’ouvrir le contrôleur.
+      const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then((x) => x.json()).catch(() => ({}));
+      if (!(me && me.authenticated)) {
+        if (errEl) errEl.textContent = 'Connexion enregistrée mais cookie refusé par le navigateur. Réessaie / autorise les cookies.';
         return;
       }
       if (passEl) passEl.value = '';

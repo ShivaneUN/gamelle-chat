@@ -51,7 +51,12 @@ const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
 if (!code) {
-  fetch('/api/active-code').then((r) => r.json()).then((j) => {
+  fetch('/api/active-code', { credentials: 'same-origin' }).then(async (r) => {
+    if (r.status === 401) {
+      location.replace('/?next=controller');
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
     const c = String((j && j.code) || '').trim();
     if (c.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
@@ -59,9 +64,10 @@ if (!code) {
       location.replace('/controller.html');
       return;
     }
-    setTimeout(() => location.reload(), 800);
+    // Pas de code encore (tablette offline) : attendre sans spammer.
+    setTimeout(() => location.reload(), 2500);
   }).catch(() => {
-    setTimeout(() => location.reload(), 800);
+    setTimeout(() => location.reload(), 2500);
   });
   throw new Error('code-redirect');
 }
@@ -72,6 +78,8 @@ const socket = io({
   reconnectionAttempts: Infinity,
   reconnectionDelay: 800,
   reconnectionDelayMax: 5000,
+  // polling d’abord : Cookie HttpOnly toujours envoyé (upgrade WS ensuite).
+  transports: ['polling', 'websocket'],
 });
 window.__gamelleTarget = 'main';
 window.__gamelleSync = false;
@@ -88,12 +96,31 @@ let peerControllerCount = 0;
 let webrtcLive = false;
 let camWanted = false;
 let authKicked = false;
+let authRetrying = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
-socket.on('auth-required', () => {
+socket.on('connect', () => {
+  authKicked = false;
+  socket.emit('join', { code, role: 'controller' });
+});
+socket.on('auth-required', async () => {
+  // Évite la boucle login ↔ contrôleur si le cookie HTTP est OK mais le WS a glitch.
+  if (authRetrying || authKicked) return;
+  authRetrying = true;
+  try {
+    const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (j && j.authenticated) {
+      setTimeout(() => {
+        authRetrying = false;
+        try { socket.connect(); } catch (e) { authRetrying = false; }
+      }, 600);
+      return;
+    }
+  } catch (e) {}
   authKicked = true;
-  location.replace('/');
+  authRetrying = false;
+  location.replace('/?next=controller');
 });
 socket.on('session-replaced', () => {
   authKicked = true;
