@@ -333,7 +333,9 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     if (url != null && url.isNotEmpty) {
       url = url.replaceAll(RegExp(r'/$'), '');
       if (!url.contains('/controller.html')) {
-        url = '$url/controller.html';
+        url = '$url/controller.html?v=0.1.11';
+      } else if (!url.contains('v=0.1.11')) {
+        url = url.contains('?') ? '$url&v=0.1.11' : '$url?v=0.1.11';
       }
     } else {
       url = fromBridge;

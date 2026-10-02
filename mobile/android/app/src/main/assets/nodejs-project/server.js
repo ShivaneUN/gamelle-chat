@@ -529,8 +529,9 @@ app.get('/controller.html', (req, res) => {
     setSessionCookie(res, access, req);
     return sendHtml(res, req, 'controller.html');
   }
-  // Page HTML accessible : l’auth réelle est sur le socket + /api (cookie OU Bearer).
-  // Évite le mur « impossible de se connecter » quand le cookie ne tient pas.
+  if (!isLanRequest(req) && !getSessionUser(req)) {
+    return res.redirect(302, '/?next=controller');
+  }
   sendHtml(res, req, 'controller.html');
 });
 
@@ -633,8 +634,8 @@ function sendLoginOk(req, res, user, token, replaced) {
 app.post('/api/auth/login', (req, res) => {
   try {
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
-    const username = String(body.username || body['gamelle-user'] || '').trim();
-    const password = String(body.password || body['gamelle-pass'] || '');
+    const username = String(body['gamelle-id'] || body['gamelle-user'] || body.username || '').trim();
+    const password = String(body['gamelle-secret'] || body['gamelle-pass'] || body.password || '');
     const accounts = readAccounts();
     if (!username || !password) {
       return sendLoginFail(req, res, 401, 'Identifiant et mot de passe requis.', 'empty');
@@ -855,6 +856,9 @@ app.get('/api/alarm-stop', (_req, res) => {
 app.get('/c/:code', (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
+  if (!isLanRequest(req) && !getSessionUser(req)) {
+    return res.redirect(302, '/?next=controller&code=' + encodeURIComponent(code));
+  }
   try {
     res.setHeader('Cache-Control', 'no-store');
   } catch (e) {}

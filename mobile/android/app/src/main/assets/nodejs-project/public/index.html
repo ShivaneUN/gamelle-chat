@@ -21,14 +21,12 @@
   <p class="muted">Connexion contrôleur</p>
   <form id="loginForm" method="POST" action="/api/auth/login" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
     <label class="hint" for="gamelleUser">Identifiant</label>
-    <input id="gamelleUser" name="gamelle-user" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" readonly required
-      onfocus="this.removeAttribute('readonly')"
+    <input id="gamelleUser" name="gamelle-id" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
     <label class="hint" for="gamellePass">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="gamellePass" name="gamelle-pass" type="password" autocomplete="off" autocorrect="off" spellcheck="false" readonly required
-        onfocus="this.removeAttribute('readonly')"
-        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+      <input id="gamellePass" name="gamelle-secret" type="text" autocomplete="one-time-code" autocorrect="off" spellcheck="false" required
+        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;-webkit-text-security:disc;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
     </div>
@@ -44,9 +42,9 @@
   var toggle = document.getElementById('togglePass');
   if (toggle && pass) {
     toggle.addEventListener('click', function () {
-      var show = pass.type === 'password';
-      pass.type = show ? 'text' : 'password';
-      toggle.textContent = show ? 'ABC' : '•••';
+      var hidden = pass.style.webkitTextSecurity !== 'none';
+      pass.style.webkitTextSecurity = hidden ? 'none' : 'disc';
+      toggle.textContent = hidden ? 'ABC' : '•••';
     });
   }
   try {
