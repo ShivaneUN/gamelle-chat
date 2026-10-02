@@ -322,13 +322,24 @@ function passwordVariants(password) {
   return out;
 }
 
+function normUser(s) {
+  return String(s || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .normalize('NFC')
+    .toLowerCase();
+}
+
 function findUserByName(accounts, username) {
-  const want = String(username || '').trim().normalize('NFC').toLowerCase();
+  const want = normUser(username);
   if (!want || !accounts || !Array.isArray(accounts.users)) return null;
-  return accounts.users.find((u) => {
-    if (!u || !u.username) return false;
-    return String(u.username).trim().normalize('NFC').toLowerCase() === want;
-  }) || null;
+  return accounts.users.find((u) => u && u.username && normUser(u.username) === want) || null;
+}
+
+function accountNames(accounts) {
+  return (accounts && accounts.users || [])
+    .map((u) => (u && u.username ? String(u.username) : ''))
+    .filter(Boolean);
 }
 
 function passwordMatches(user, password) {
@@ -595,11 +606,14 @@ app.post('/api/auth/login', (req, res) => {
     });
   }
   const user = findUserByName(accounts, username);
+  const known = accountNames(accounts);
   if (!user || !user.salt || !user.passHash) {
     return res.status(401).json({
       ok: false,
       code: 'unknown-user',
-      error: 'Cet identifiant n’existe pas. Vérifie le nom dans Comptes sur la tablette.',
+      error: known.length
+        ? `Pas de compte « ${username} ». Comptes sur la tablette : ${known.join(', ')}.`
+        : 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.',
     });
   }
   let ok = false;
@@ -616,7 +630,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({
       ok: false,
       code: 'bad-password',
-      error: 'Mot de passe incorrect. Sur la tablette : Comptes → l’identifiant → Nouveau mot de passe.',
+      error: `Mot de passe incorrect pour « ${user.username} ». Retape-le, sans laisser le téléphone le changer.`,
     });
   }
 

@@ -65,15 +65,18 @@
 
   alreadyIn();
 
+  fetch('/api/info').then((r) => r.json()).then((j) => {
+    const el = document.getElementById('serverVer');
+    if (el && j && j.version) el.textContent = 'Serveur ' + j.version;
+  }).catch(() => {});
+
   if (!form) return;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (errEl) errEl.textContent = '';
-    // iPhone : le mot de passe auto-rempli n’est pas encore dans le champ au clic.
-    await new Promise((r) => setTimeout(r, 60));
-    const fd = new FormData(form);
-    const username = String((userEl && userEl.value) || fd.get('username') || '').trim();
-    const password = String((passEl && passEl.value) || fd.get('password') || '');
+    // Lire tout de suite : un délai laisse le trousseau iPhone écraser le mot de passe tapé.
+    const username = String(userEl && userEl.value || '').trim();
+    const password = String(passEl && passEl.value || '');
     if (!username || !password) {
       if (errEl) errEl.textContent = 'Identifiant et mot de passe requis.';
       return;

@@ -19,13 +19,13 @@
 <div class="wrap center">
   <h1>Gamelle Chat</h1>
   <p class="muted">Connexion contrôleur</p>
-  <form id="loginForm" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
+  <form id="loginForm" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
     <label class="hint" for="username">Identifiant</label>
-    <input id="username" name="username" autocomplete="username" required
+    <input id="username" name="gamelle-user" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
     <label class="hint" for="password">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="password" name="password" type="password" autocomplete="current-password" required
+      <input id="password" name="gamelle-pass" type="password" autocomplete="off" autocorrect="off" spellcheck="false" required
         style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
@@ -33,8 +33,9 @@
     <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"></p>
     <button id="loginBtn" class="chip-btn toggle-on" type="submit" style="width:100%;justify-content:center;">Se connecter</button>
   </form>
-  <p class="muted" style="font-size:13px;">L’identifiant est celui de la tablette : Accueil → Comptes (pas le lien du QR). Si le mot de passe est refusé, appuie sur le compte puis « Nouveau mot de passe ».</p>
+  <p class="muted" style="font-size:13px;">Même identifiant et mot de passe que dans Comptes sur la tablette. Le téléphone ne doit pas les remplacer tout seul.</p>
+  <p id="serverVer" class="muted" style="font-size:12px;"></p>
 </div>
-<script src="/login.js?v=0.1.7"></script>
+<script src="/login.js?v=0.1.8"></script>
 </body>
 </html>
