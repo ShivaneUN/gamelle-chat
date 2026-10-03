@@ -159,31 +159,16 @@ let authKicked = false;
 let authRetrying = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-let receiverOnline = false;
-function joinControllerRoom() {
-  if (!socket.connected) return;
-  socket.emit('join', { code, role: 'controller' });
-}
 socket.on('connect', () => {
   authKicked = false;
-  joinControllerRoom();
+  socket.emit('join', { code, role: 'controller' });
 });
-socket.on('join-error', () => {
-  authFetch('/api/active-code').then(async (r) => {
-    const j = await r.json().catch(() => ({}));
-    const c = String((j && j.code) || '').trim();
-    if (c.length >= 4 && socket.connected) socket.emit('join', { code: c, role: 'controller' });
-  }).catch(() => {});
-});
-setInterval(() => {
-  if (!receiverOnline) joinControllerRoom();
-}, 3000);
 socket.on('auth-required', async () => {
   if (authRetrying || authKicked) return;
   authRetrying = true;
   try {
     const r = await authFetch('/api/auth/me');
-    const j = await r.json().catch(() => null);
+    const j = await r.json().catch(() => ({}));
     if (j && j.authenticated) {
       setTimeout(() => {
         authRetrying = false;
@@ -191,17 +176,7 @@ socket.on('auth-required', async () => {
       }, 600);
       return;
     }
-    // Coupure du lien (HTML Cloudflare, 502) : le compte est encore bon.
-    if (!j || r.status >= 500) {
-      authRetrying = false;
-      setTimeout(() => { try { socket.connect(); } catch (e) {} }, 1500);
-      return;
-    }
-  } catch (e) {
-    authRetrying = false;
-    setTimeout(() => { try { socket.connect(); } catch (e2) {} }, 1500);
-    return;
-  }
+  } catch (e) {}
   authKicked = true;
   authRetrying = false;
   clearSessionToken();
@@ -234,7 +209,6 @@ socket.on('peers', ({ receiver, controllers, names }) => {
   const list = Array.isArray(names) ? names.filter(Boolean) : [];
   window.__GAMELLE_PEER_NAMES__ = list;
   peerControllerCount = Number(controllers) || 0;
-  receiverOnline = !!receiver;
   if (receiver) {
     const n = peerControllerCount;
     let extra = '';

@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const https = require('https');
-const net = require('net');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -395,37 +394,16 @@ function getUserByToken(token) {
   return { id: u.id, username: u.username, token: t };
 }
 
-function pushToken(out, value) {
-  const t = String(value || '').trim();
-  if (t && !out.includes(t)) out.push(t);
-}
-
-/** Cookie, Bearer, puis ?access=. Un cookie périmé ne doit pas cacher un jeton encore valide. */
-function sessionTokenCandidates(req) {
-  const out = [];
-  if (!req) return out;
-  const raw = String(req.headers && req.headers.cookie || '');
-  raw.split(';').forEach((part) => {
-    const i = part.indexOf('=');
-    if (i < 0) return;
-    const k = part.slice(0, i).trim();
-    if (k !== SESSION_COOKIE) return;
-    let v = part.slice(i + 1).trim();
-    try { v = decodeURIComponent(v); } catch (e) {}
-    pushToken(out, v);
-  });
-  const auth = String((req.headers && req.headers.authorization) || '');
-  if (/^bearer\s+/i.test(auth)) pushToken(out, auth.replace(/^bearer\s+/i, ''));
-  try {
-    if (req.query && req.query.access) pushToken(out, req.query.access);
-  } catch (e) {}
-  return out;
-}
-
 function extractSessionToken(req) {
-  for (const t of sessionTokenCandidates(req)) {
-    if (getUserByToken(t)) return t;
-  }
+  if (!req) return '';
+  const fromCookie = parseCookies(req)[SESSION_COOKIE];
+  if (fromCookie) return String(fromCookie);
+  const auth = String((req.headers && req.headers.authorization) || '');
+  if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, '').trim();
+  // Fallback query (login → controller quand le navigateur bloque les cookies).
+  try {
+    if (req.query && req.query.access) return String(req.query.access).trim();
+  } catch (e) {}
   return '';
 }
 
@@ -544,19 +522,13 @@ function htmlFreshnessGuard(version) {
   if (!ver) return '';
   const meta = `<meta name="gamelle-version" content="${ver.replace(/"/g, '')}">`;
   const script = `<script>(function(){var pageVer=${JSON.stringify(ver)};` +
-    `function tok(){try{return localStorage.getItem("gamelleSession")||sessionStorage.getItem("gamelleSession")||""}catch(e){return ""}}` +
     `fetch("/api/info",{cache:"no-store",credentials:"same-origin"})` +
     `.then(function(r){return r.json()})` +
     `.then(function(info){var live=info&&String(info.version||"");if(!live||live===pageVer)return;` +
     `try{if(sessionStorage.getItem("gamelle-html-reload")===live)return;sessionStorage.setItem("gamelle-html-reload",live)}catch(e){}` +
-    `var url=location.pathname+location.search;var t=tok();` +
-    `if(t&&url.indexOf("access=")<0)url+=(url.indexOf("?")<0?"?":"&")+"access="+encodeURIComponent(t);` +
-    `var headers={Accept:"text/html"};if(t)headers.Authorization="Bearer "+t;` +
-    `return fetch(url,{cache:"reload",credentials:"same-origin",headers:headers})` +
+    `fetch(location.pathname+location.search,{cache:"reload",credentials:"same-origin",headers:{Accept:"text/html"}})` +
     `.then(function(r){return r.text()})` +
-    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;` +
-    `if(location.pathname.indexOf("controller")>=0&&html.indexOf('id="loginForm"')>=0)return;` +
-    `document.open();document.write(html);document.close()})` +
+    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;document.open();document.write(html);document.close()})` +
     `}).catch(function(){})})();</script>`;
   return meta + script;
 }
@@ -1356,46 +1328,6 @@ function broadcastRoomState(code, room) {
   });
 }
 
-function sendControllerSnapshot(sock, pair, room) {
-  const vol = Number(room.outputVolume);
-  sock.emit('room-state', {
-    schedules: room.schedules,
-    messages: room.messages,
-    media: controllerMedia(),
-    manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
-    screenOn: room.screenOn !== false,
-    camOn: !!room.camOn,
-    outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
-  });
-  sock.emit(room.screenOn === false ? 'screen-off' : 'screen-on');
-  if (room.camOn) sock.emit('cam-status', { on: true });
-}
-
-/** Le téléphone peut avoir mémorisé un ancien code : on le ramène sur le récepteur. */
-function pullControllersTo(pair) {
-  if (!pair || !io || !io.sockets || !io.sockets.sockets) return;
-  for (const s of io.sockets.sockets.values()) {
-    if (!s || !s.data || s.data.role !== 'controller' || s.data.code === pair) continue;
-    const prev = s.data.code;
-    if (prev) {
-      try { s.leave(prev); } catch (e) {}
-      const old = rooms[prev];
-      if (old && old.controllerIds) {
-        old.controllerIds.delete(s.id);
-        emitPeers(prev, old);
-      }
-    }
-    let room;
-    try { room = getRoom(pair); } catch (e) { continue; }
-    s.join(pair);
-    s.data.code = pair;
-    room.controllerIds.add(s.id);
-    sendControllerSnapshot(s, pair, room);
-    emitPeers(pair, room);
-    emitDevices(pair);
-  }
-}
-
 io.on('connection', (socket) => {
   socket.on('join', ({ code, role }) => {
     if (role !== 'controller' && role !== 'receiver') {
@@ -1422,14 +1354,7 @@ io.on('connection', (socket) => {
       socket.disconnect(true);
       return;
     }
-    let pair = String(code || '').trim();
-    if (role === 'controller') {
-      const active = String(readActiveCode() || '').trim();
-      if (active.length >= 4) pair = active;
-      else {
-        try { pair = ensureActiveCode(); } catch (e) {}
-      }
-    }
+    const pair = String(code || '').trim();
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
       return;
@@ -1449,8 +1374,8 @@ io.on('connection', (socket) => {
     if (role === 'receiver') {
       room.receiverId = socket.id;
       writeActiveCode(pair);
-      pullControllersTo(pair);
     }
+
     emitPeers(pair, room);
     if (role === 'receiver' || role === 'controller') emitDevices(pair);
 
@@ -2016,19 +1941,6 @@ function checkScheduledAlarms() {
 }
 
 setInterval(checkScheduledAlarms, 5000);
-// Le téléphone peut être dans un autre salon : on le ramène sur le récepteur vivant.
-setInterval(() => {
-  const active = String(readActiveCode() || '').trim();
-  if (active.length < 4) return;
-  const room = rooms[active];
-  if (!room || !room.receiverId) return;
-  if (!io.sockets.sockets.get(room.receiverId)) {
-    room.receiverId = null;
-    return;
-  }
-  pullControllersTo(active);
-  emitPeers(active, room);
-}, 2000);
 // Premier passage tôt après démarrage (hydratation déjà faite).
 setTimeout(checkScheduledAlarms, 2000);
 
@@ -2063,54 +1975,22 @@ function getLocalIp() {
 
 const TUNNEL_PORT = Number(process.env.TUNNEL_PORT) || (PORT + 1);
 const httpOrigin = http.createServer(app);
-const httpOrigin6 = http.createServer(app);
-const httpOnMain = http.createServer(app);
 io.attach(httpOrigin);
-io.attach(httpOrigin6);
-io.attach(httpOnMain);
 httpOrigin.on('error', (err) => {
   console.warn('Origine tunnel HTTP:', err.message || err);
 });
-httpOrigin6.on('error', (err) => {
-  console.warn('Origine tunnel HTTP v6:', err.message || err);
+httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
+  console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
 });
-httpOnMain.on('error', (err) => {
-  console.warn('HTTP port principal:', err.message || err);
-});
+
 server.on('error', (err) => {
   console.error('Serveur HTTPS:', err && err.message ? err.message : err);
 });
-
-// Le domaine Cloudflare peut parler HTTP ou HTTPS vers le port 3000.
-// Premier octet 0x16 = TLS (tablette), sinon HTTP (ingress déjà réglé). Pas de --url.
-function routeFirstBytes(socket) {
-  socket.on('error', () => {});
-  socket.once('data', (buf) => {
-    socket.pause();
-    try { socket.unshift(buf); } catch (e) {}
-    const tls = !!(buf && buf.length && buf[0] === 22);
-    (tls ? server : httpOnMain).emit('connection', socket);
-    process.nextTick(() => { try { socket.resume(); } catch (e) {} });
-  });
-}
-
-function listenFront(port, host, onListening) {
-  const front = net.createServer(routeFirstBytes);
-  front.on('error', (err) => {
-    console.warn(`Écoute ${host}:${port}:`, err.message || err);
-  });
-  front.listen(port, host, () => {
-    if (onListening) onListening();
-  });
-  return front;
-}
-
-function logReady() {
+server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
   console.log(`Sur la tablette (récepteur) : https://localhost:${PORT}`);
   console.log(`Même WiFi                   : https://${ip}:${PORT}`);
-  console.log(`Origine tunnel              : http://127.0.0.1:${TUNNEL_PORT} et http://[::1]:${TUNNEL_PORT}`);
   console.log('⚠️  En local : le navigateur affichera un avertissement (certificat auto-signé).');
   console.log('   Clique sur "Avancé" puis "Continuer" — normal.');
   if (process.env.TUNNEL === '0') {
@@ -2120,13 +2000,7 @@ function logReady() {
     console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
     startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
-}
-
-// Le tunnel nommé ne reçoit pas --url : le domaine reste celui configuré dans Cloudflare.
-httpOrigin.listen(TUNNEL_PORT, '127.0.0.1');
-httpOrigin6.listen(TUNNEL_PORT, '::1');
-listenFront(PORT, '::1');
-listenFront(PORT, '0.0.0.0', logReady);
+});
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
@@ -2150,7 +2024,6 @@ async function ensureCloudflaredBin() {
 async function startNamedTunnel(bin, token, fixedUrl) {
   console.log(`Tunnel nommé Cloudflare → ${fixedUrl}`);
   markPublicUrl(fixedUrl);
-  // Pas de --url : l'ingress du domaine reste celui du tableau Cloudflare.
   const child = spawn(bin, ['tunnel', '--no-autoupdate', 'run', '--token', token], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

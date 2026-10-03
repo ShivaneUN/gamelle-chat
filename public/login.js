@@ -89,10 +89,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j || !j.ok) {
-        const down = !j || r.status >= 500 || r.status === 0;
-        if (errEl) errEl.textContent = (j && j.error) || (down ? 'Le lien a coupé. Réessaie.' : 'Identifiants incorrects');
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        if (errEl) errEl.textContent = (j && j.error) || 'Identifiants incorrects';
         return;
       }
       if (j.token) saveToken(j.token);

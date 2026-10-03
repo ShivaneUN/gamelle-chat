@@ -35,7 +35,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _applying = false;
   bool _updateAvailable = false;
   bool _allowBackground = false;
-  bool _receiverOpen = false;
   _LeftMode _leftMode = _LeftMode.qr;
   double _updatePct = 0;
   String _updateText = 'Vérifie les releases GitHub.';
@@ -204,11 +203,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  String get _receiverUrl {
-    final base = Uri.parse(_bridge.localUrl);
-    return base.replace(path: '/receiver.html').toString();
-  }
-
   Future<void> _openReceiver() async {
     await [Permission.camera, Permission.microphone].request();
     try {
@@ -217,7 +211,13 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (_) {}
     if (!mounted) return;
-    setState(() => _receiverOpen = true);
+    final base = Uri.parse(_bridge.localUrl);
+    final url = base.replace(path: '/receiver.html').toString();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReceiverWebView(url: url),
+      ),
+    );
   }
 
   void _toggleSettings() {
@@ -251,10 +251,6 @@ class _HomeScreenState extends State<HomeScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (_receiverOpen) {
-          setState(() => _receiverOpen = false);
-          return;
-        }
         if (_leftMode != _LeftMode.qr) {
           _closeLeftPanel();
           return;
@@ -264,74 +260,53 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
         backgroundColor: _bg,
-        body: Stack(
-          children: [
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Gamelle Chat',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final wide = constraints.maxWidth >= 720;
-                          final Widget left;
-                          switch (_leftMode) {
-                            case _LeftMode.settings:
-                              left = _settingsPanel(expand: wide);
-                            case _LeftMode.accounts:
-                              left = _accountsPanel(expand: wide);
-                            case _LeftMode.qr:
-                              left = _pairingPanel(expand: wide);
-                          }
-                          if (wide) {
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(child: left),
-                                const SizedBox(width: 16),
-                                Expanded(child: _actionsPanel(expand: true)),
-                              ],
-                            );
-                          }
-                          return ListView(
-                            children: [
-                              left,
-                              const SizedBox(height: 16),
-                              _actionsPanel(expand: false),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              children: [
+                const Text(
+                  'Gamelle Chat',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
                 ),
-              ),
-            ),
-            if (_bridge.status == NodeStatus.running)
-              Positioned(
-                left: _receiverOpen ? 0 : -4000,
-                top: 0,
-                bottom: 0,
-                width: MediaQuery.sizeOf(context).width,
-                child: IgnorePointer(
-                  ignoring: !_receiverOpen,
-                  child: ReceiverWebView(
-                    key: const ValueKey('gamelle-receiver'),
-                    url: _receiverUrl,
-                    onHome: () {
-                      if (mounted) setState(() => _receiverOpen = false);
+                const SizedBox(height: 16),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final wide = constraints.maxWidth >= 720;
+                      final Widget left;
+                      switch (_leftMode) {
+                        case _LeftMode.settings:
+                          left = _settingsPanel(expand: wide);
+                        case _LeftMode.accounts:
+                          left = _accountsPanel(expand: wide);
+                        case _LeftMode.qr:
+                          left = _pairingPanel(expand: wide);
+                      }
+                      if (wide) {
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: left),
+                            const SizedBox(width: 16),
+                            Expanded(child: _actionsPanel(expand: true)),
+                          ],
+                        );
+                      }
+                      return ListView(
+                        children: [
+                          left,
+                          const SizedBox(height: 16),
+                          _actionsPanel(expand: false),
+                        ],
+                      );
                     },
                   ),
                 ),
-              ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );

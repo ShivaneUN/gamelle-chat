@@ -18,12 +18,10 @@ class ReceiverWebView extends StatefulWidget {
     super.key,
     required this.url,
     this.onChangeUrl,
-    this.onHome,
   });
 
   final String url;
   final Future<void> Function(String url)? onChangeUrl;
-  final VoidCallback? onHome;
 
   @override
   State<ReceiverWebView> createState() => _ReceiverWebViewState();
@@ -110,10 +108,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         onMessageReceived: (JavaScriptMessage message) {
           final m = message.message.trim();
           if (m == 'home') {
-            if (widget.onHome != null) {
-              widget.onHome!();
-              return;
-            }
             if (context.mounted) Navigator.of(context).maybePop();
             return;
           }
@@ -175,14 +169,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             if (!mounted) return;
             if (error.isForMainFrame ?? true) {
               setState(() => _failed = true);
-              Future<void>.delayed(const Duration(seconds: 2), () {
-                if (!mounted || !_failed) return;
-                setState(() {
-                  _failed = false;
-                  _generation++;
-                  _createController();
-                });
-              });
             }
           },
           onSslAuthError: (error) {
