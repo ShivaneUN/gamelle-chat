@@ -6,41 +6,20 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
-const SESSION_KEY = 'gamelleSession';
-function saveSessionToken(token) {
-  if (!token) return;
-  try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-  try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-}
-function readSessionToken() {
-  try {
-    const q = new URLSearchParams(location.search).get('access');
-    if (q && String(q).trim()) return String(q).trim();
-  } catch (e) {}
-  try {
-    const a = localStorage.getItem(SESSION_KEY);
-    if (a) return a;
-  } catch (e) {}
-  try {
-    return sessionStorage.getItem(SESSION_KEY) || '';
-  } catch (e) {}
-  return '';
-}
+function saveSessionToken() {}
+function readSessionToken() { return ''; }
 function clearSessionToken() {
-  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
-  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { localStorage.removeItem('gamelleSession'); } catch (e) {}
+  try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
 }
-// Récupère ?access= (login → contrôleur sans cookie) avant tout fetch/socket.
-(function captureAccessFromUrl() {
+clearSessionToken();
+(function dropAccessFromUrl() {
   try {
     const params = new URLSearchParams(location.search);
-    const access = (params.get('access') || '').trim();
-    if (!access) return;
-    saveSessionToken(access);
+    if (!params.has('access')) return;
     params.delete('access');
     const q = params.toString();
-    const next = location.pathname + (q ? '?' + q : '') + (location.hash || '');
-    history.replaceState(null, '', next);
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + (location.hash || ''));
   } catch (e) {}
 })();
 function authHeaders(extra) {
@@ -56,12 +35,7 @@ function authFetch(url, opts) {
 }
 // <img>/<video> ne peuvent pas envoyer Bearer → access= en query si token local.
 function withAccess(url) {
-  const t = readSessionToken();
-  if (!t || !url) return url;
-  const s = String(url);
-  if (!s.startsWith('/media/')) return s;
-  if (/[?&]access=/.test(s)) return s;
-  return s + (s.includes('?') ? '&' : '?') + 'access=' + encodeURIComponent(t);
+  return url;
 }
 
 const refreshBtn = document.getElementById('refreshBtn');
@@ -120,7 +94,7 @@ if (!code) {
     if (c.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
       try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
+      location.replace('/controller.html');
       return;
     }
     setTimeout(() => location.reload(), 2500);

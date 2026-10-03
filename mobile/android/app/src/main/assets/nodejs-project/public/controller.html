@@ -216,50 +216,8 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-/* Pose le jeton AVANT controller.js (même si le téléphone a gardé l’ancien ?v=0.1.4 en cache). */
-(function () {
-  var KEY = 'gamelleSession';
-  function read() {
-    var q = '';
-    try { q = (new URLSearchParams(location.search).get('access') || '').trim(); } catch (e) {}
-    if (q) {
-      try { localStorage.setItem(KEY, q); } catch (e) {}
-      try { sessionStorage.setItem(KEY, q); } catch (e) {}
-      return q;
-    }
-    try { return localStorage.getItem(KEY) || ''; } catch (e) {}
-    try { return sessionStorage.getItem(KEY) || ''; } catch (e) {}
-    return '';
-  }
-  var token = read();
-  if (!token) return;
-  if (window.fetch) {
-    var origFetch = window.fetch;
-    window.fetch = function (input, opts) {
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
-      var same = url.charAt(0) === '/' || url.indexOf(location.origin) === 0;
-      if (!same) return origFetch.apply(this, arguments);
-      var fresh = read() || token;
-      opts = Object.assign({}, opts || {});
-      var headers = new Headers(opts.headers || {});
-      if (fresh && !headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + fresh);
-      opts.headers = headers;
-      if (!opts.credentials) opts.credentials = 'same-origin';
-      return origFetch.call(this, input, opts);
-    };
-  }
-  if (typeof window.io === 'function') {
-    var origIo = window.io;
-    window.io = function (url, opts) {
-      if (url && typeof url === 'object') { opts = url; url = undefined; }
-      opts = Object.assign({}, opts || {});
-      var fresh = read() || token;
-      opts.auth = Object.assign({ token: fresh }, opts.auth || {});
-      opts.query = Object.assign({ access: fresh }, opts.query || {});
-      return url === undefined ? origIo(opts) : origIo(url, opts);
-    };
-  }
-})();
+try { localStorage.removeItem('gamelleSession'); } catch (e) {}
+try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
 </script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>

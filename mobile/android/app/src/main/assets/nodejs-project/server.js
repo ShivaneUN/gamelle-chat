@@ -310,7 +310,7 @@ function writeSessions(data) {
 
 // Une seule fois : la 0.1.28 repart sans les anciens comptes.
 // Les copies APK / trash ne sont plus fusionnées : le fichier du serveur est la seule source.
-const ACCOUNTS_RESET_ID = '0.1.28';
+const ACCOUNTS_RESET_ID = '0.1.29';
 function blankAccountCopy(file, data) {
   try {
     if (!file || !fs.existsSync(file)) return;
@@ -341,7 +341,7 @@ function resetAccountsOnce() {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(marker, JSON.stringify({ id: ACCOUNTS_RESET_ID }));
   } catch (e) {}
-  console.log('Comptes effacés pour la mise à jour 0.1.28.');
+  console.log('Comptes effacés pour la mise à jour 0.1.29.');
 }
 resetAccountsOnce();
 
@@ -572,8 +572,10 @@ function sendHtml(res, req, file, extra) {
     let out = htmlWithAbsoluteLogo(html, req)
       .replace('<!--LOGIN_ERROR-->', escapeHtml(info.error || ''))
       .replace(/<!--SERVER_VER-->/g, escapeHtml(version));
-    if (out.includes('<head>') && !out.includes('name="gamelle-version"')) {
-      out = out.replace('<head>', '<head>' + htmlFreshnessGuard(version));
+    if (out.includes('<head>')) {
+      const purge = '<script>(function(){try{localStorage.removeItem("gamelleSession")}catch(e){}try{sessionStorage.removeItem("gamelleSession")}catch(e){}})();</script>';
+      const guard = out.includes('name="gamelle-version"') ? '' : htmlFreshnessGuard(version);
+      out = out.replace('<head>', '<head>' + purge + guard);
     }
     const assetVer = encodeURIComponent(version);
     out = out.replace(
@@ -581,6 +583,8 @@ function sendHtml(res, req, file, extra) {
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
     setUncached(res);
+    // Le site ne garde aucun compte : seulement le cookie posé par le serveur.
+    res.setHeader('Clear-Site-Data', '"storage"');
     res.type('html').send(out);
   });
 }
@@ -589,7 +593,7 @@ app.get(['/', '/index.html', '/login'], (req, res) => {
   let user = null;
   try { user = getSessionUser(req); } catch (e) { user = null; }
   if (user && !req.query.e) {
-    return res.redirect(302, '/controller.html?access=' + encodeURIComponent(user.token));
+    return res.redirect(302, '/controller.html');
   }
   sendHtml(res, req, 'index.html', {
     error: String(req.query.e || ''),
@@ -641,7 +645,6 @@ app.get('/api/auth/me', (req, res) => {
     ok: true,
     authenticated: true,
     user: { id: user.id, username: user.username },
-    token: user.token,
   });
 });
 
@@ -705,9 +708,9 @@ function sendLoginFail(req, res, status, error, code) {
 function sendLoginOk(req, res, user, token, replaced) {
   try { setSessionCookie(res, token, req); } catch (e) {}
   if (wantsJsonLogin(req)) {
-    return res.json({ ok: true, user: publicUser(user), token, replaced: !!replaced });
+    return res.json({ ok: true, user: publicUser(user), replaced: !!replaced });
   }
-  return res.redirect(302, '/controller.html?access=' + encodeURIComponent(token));
+  return res.redirect(302, '/controller.html');
 }
 
 app.post('/api/auth/login', (req, res) => {

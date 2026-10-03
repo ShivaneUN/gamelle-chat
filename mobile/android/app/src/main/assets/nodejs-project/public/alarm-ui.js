@@ -171,12 +171,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   }
 
   function authHeadersForMedia() {
-    const h = {};
-    try {
-      const t = localStorage.getItem('gamelleSession') || sessionStorage.getItem('gamelleSession') || '';
-      if (t) h.Authorization = 'Bearer ' + t;
-    } catch (e) {}
-    return h;
+    return {};
   }
 
   function decodeAudioUrl(url) {

@@ -7,18 +7,10 @@
   const btn = document.getElementById('loginBtn');
   const toggle = document.getElementById('togglePass');
 
-  function saveToken(token) {
-    if (!token) return;
-    try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-    try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-  }
+  function saveToken() {}
 
   function readToken() {
-    try {
-      return localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || '';
-    } catch (e) {
-      return '';
-    }
+    return '';
   }
 
   function authHeaders() {
@@ -28,11 +20,10 @@
     return h;
   }
 
-  function goController(token) {
-    if (token) saveToken(token);
-    const t = token || readToken();
-    if (t) location.replace('/controller.html?access=' + encodeURIComponent(t));
-    else location.replace('/controller.html');
+  function goController() {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+    location.replace('/controller.html');
   }
 
   if (toggle && passEl) {

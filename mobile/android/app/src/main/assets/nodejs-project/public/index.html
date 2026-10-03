@@ -38,6 +38,8 @@
 </div>
 <script>
 (function () {
+  try { localStorage.removeItem('gamelleSession'); } catch (e) {}
+  try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
   var form = document.getElementById('loginForm');
   var userEl = document.getElementById('gamelleUser');
   var passEl = document.getElementById('gamellePass');
@@ -51,18 +53,6 @@
       toggle.textContent = show ? 'ABC' : '•••';
     });
   }
-  try {
-    var t = localStorage.getItem('gamelleSession') || sessionStorage.getItem('gamelleSession') || '';
-    if (t) {
-      fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + t }, credentials: 'same-origin' })
-        .then(function (r) { return r.json(); })
-        .then(function (j) {
-          if (j && j.authenticated && j.token) {
-            location.replace('/controller.html?access=' + encodeURIComponent(j.token));
-          }
-        });
-    }
-  } catch (e) {}
   if (!form) return;
   form.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -79,18 +69,16 @@
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({ username: username, password: password })
     }).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, j: j }; }).catch(function () { return { ok: false, j: {} }; });
+      return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }).catch(function () { return { ok: false, status: r.status, j: {} }; });
     }).then(function (res) {
       var j = res.j || {};
-      if (!res.ok || !j.ok || !j.token) {
+      if (!res.ok || !j.ok) {
         if (errEl) errEl.textContent = j.error || 'Le serveur a refusé la connexion.';
         if (btn) btn.disabled = false;
         return;
       }
-      try { localStorage.setItem('gamelleSession', j.token); } catch (err) {}
-      try { sessionStorage.setItem('gamelleSession', j.token); } catch (err) {}
       if (passEl) passEl.value = '';
-      location.replace('/controller.html?access=' + encodeURIComponent(j.token));
+      location.replace('/controller.html');
     }).catch(function () {
       if (errEl) errEl.textContent = 'Impossible de joindre le serveur';
       if (btn) btn.disabled = false;
