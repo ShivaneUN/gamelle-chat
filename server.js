@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -2120,6 +2121,107 @@ async function ensureCloudflaredBin() {
   return { cf, bin };
 }
 
+let activeTunnelStop = null;
+let domainWatchTimer = null;
+let domainRetryTimer = null;
+let tunnelStartLock = false;
+let lastDomainBlockLog = '';
+
+function logDomainBlock(message) {
+  if (!message || message === lastDomainBlockLog) return;
+  lastDomainBlockLog = message;
+  console.warn(message);
+  console.warn('Le domaine reste fermé tant que cette installation n’est pas la version publiée.');
+}
+
+function clearDomainWatch() {
+  if (domainWatchTimer) {
+    clearInterval(domainWatchTimer);
+    domainWatchTimer = null;
+  }
+}
+
+function stopActiveTunnel() {
+  const stop = activeTunnelStop;
+  activeTunnelStop = null;
+  publicUrl = null;
+  if (typeof stop === 'function') {
+    try { stop(); } catch (e) {}
+  }
+}
+
+function armDomainWatch() {
+  clearDomainWatch();
+  // Déjà ouvert : un trou de GitHub ne coupe pas. Une release plus récente, si.
+  domainWatchTimer = setInterval(() => {
+    domainGate().then((gate) => {
+      if (gate.gate !== 'behind') return;
+      logDomainBlock(gate.message);
+      console.warn('Tunnel coupé : une version plus récente est publiée.');
+      clearDomainWatch();
+      stopActiveTunnel();
+    }).catch(() => {});
+  }, 2 * 60 * 1000);
+  if (domainWatchTimer.unref) domainWatchTimer.unref();
+}
+
+function scheduleDomainOpen(origin) {
+  if (domainRetryTimer) return;
+  domainRetryTimer = setTimeout(() => {
+    domainRetryTimer = null;
+    startPublicTunnel(origin).catch(() => {});
+  }, 45 * 1000);
+  if (domainRetryTimer.unref) domainRetryTimer.unref();
+}
+
+function httpsGet(url, follow, left) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'GET',
+      headers: { 'User-Agent': 'GamelleChat', Accept: '*/*' },
+      timeout: 20000,
+    }, (res) => {
+      const loc = String(res.headers.location || '');
+      if (follow && res.statusCode >= 300 && res.statusCode < 400 && loc && left > 0) {
+        res.resume();
+        httpsGet(new URL(loc, url).toString(), true, left - 1).then(resolve, reject);
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 0, location: loc, body: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+async function fetchLatestReleaseTag() {
+  const latest = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases/latest', false, 0);
+  const fromLoc = decodeURIComponent((latest.location.split('/releases/tag/')[1] || '').split('/')[0].split('?')[0]).trim();
+  if (fromLoc) return fromLoc;
+  const atom = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases.atom', true, 4);
+  if (atom.status < 200 || atom.status >= 300) throw new Error('releases.atom HTTP ' + atom.status);
+  const match = atom.body.match(/\/releases\/tag\/([^<"\s]+)/);
+  if (match && match[1]) return decodeURIComponent(match[1]).trim();
+  throw new Error('Aucune release GitHub trouvée.');
+}
+
+async function domainGate() {
+  const local = updater.pkgVersion();
+  const forced = process.env.GAMELLE_LATEST_TAG;
+  if (forced === 'unknown') return updater.domainGateFrom('fail', '', local);
+  if (forced) return updater.domainGateFrom('ok', forced, local);
+  try {
+    return updater.domainGateFrom('ok', await fetchLatestReleaseTag(), local);
+  } catch (e) {
+    return updater.domainGateFrom('fail', '', local);
+  }
+}
+
 async function startNamedTunnel(bin, token, fixedUrl) {
   console.log(`Tunnel nommé Cloudflare → ${fixedUrl}`);
   markPublicUrl(fixedUrl);
@@ -2149,6 +2251,8 @@ async function startNamedTunnel(bin, token, fixedUrl) {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  activeTunnelStop = stop;
+  armDomainWatch();
 }
 
 async function startQuickTunnel(cf, origin) {
@@ -2168,6 +2272,8 @@ async function startQuickTunnel(cf, origin) {
   const stop = () => { try { tunnel.stop(); } catch (e) {} };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  activeTunnelStop = stop;
+  armDomainWatch();
 }
 
 async function startPublicTunnel(origin) {
@@ -2175,7 +2281,16 @@ async function startPublicTunnel(origin) {
     console.log('Tunnel Node ignoré : un seul connecteur, celui de l’application.');
     return;
   }
+  if (tunnelStartLock) return;
+  tunnelStartLock = true;
   try {
+    const gate = await domainGate();
+    if (gate.gate !== 'allowed') {
+      logDomainBlock(gate.message);
+      scheduleDomainOpen(origin);
+      return;
+    }
+    lastDomainBlockLog = '';
     const { cf, bin } = await ensureCloudflaredBin();
     const token = readTunnelToken();
     const fixedUrl = tunnelConfig.publicUrl;
@@ -2194,5 +2309,7 @@ async function startPublicTunnel(origin) {
     console.warn('Accès distant indisponible:', e.message);
     console.warn('Les 2 appareils devront être sur le même WiFi (ou relance après npm install).');
     console.log('================================================\n');
+  } finally {
+    tunnelStartLock = false;
   }
 }

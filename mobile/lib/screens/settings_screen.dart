@@ -249,6 +249,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (_domainUrl.isEmpty) return 'Lien manquant';
     final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
     if (!_hasToken) return '$host — token manquant';
+    final err = _bridge.tunnelError;
+    if (err != null && err.isNotEmpty) return err;
     return '$host — Cloudflare libre off';
   }
 

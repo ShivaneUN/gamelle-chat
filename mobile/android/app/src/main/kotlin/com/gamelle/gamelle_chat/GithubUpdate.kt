@@ -26,6 +26,27 @@ object GithubUpdate {
         if (f.exists()) f.delete()
     }
 
+    enum class DomainGate { Allowed, Behind, Unknown }
+
+    /**
+     * Avant d'ouvrir le domaine : Allowed si cette installation est égale ou plus récente,
+     * Behind si GitHub a une release plus récente, Unknown si GitHub ne répond pas.
+     */
+    fun domainGate(installedVersion: String): Pair<DomainGate, String> {
+        val local = installedVersion.trim()
+        return try {
+            val remote = fetchLatestTag()
+            if (isNewer(remote, local)) {
+                DomainGate.Behind to
+                    "Domaine coupé : installe la mise à jour ${display(remote)} pour utiliser le domaine."
+            } else {
+                DomainGate.Allowed to ""
+            }
+        } catch (_: Exception) {
+            DomainGate.Unknown to "Domaine coupé : impossible de vérifier la version."
+        }
+    }
+
     fun localTag(filesDir: File, installedVersion: String): String {
         // Source de vérité = version installée de l’APK. version.json est un cache,
         // jamais plus “avancé” que le package (évite un faux “déjà à jour”).

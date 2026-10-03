@@ -152,4 +152,68 @@ function restartServer() {
   setTimeout(() => process.exit(0), 400);
 }
 
-module.exports = { getStatus, applyUpdate, restartServer, pkgVersion };
+function releaseKey(version) {
+  return String(version || '').trim().replace(/^v/i, '');
+}
+
+function displayRelease(tag) {
+  const t = String(tag || '').trim();
+  if (!t) return t;
+  return /^v/i.test(t) ? t : `v${t}`;
+}
+
+function semverParts(version) {
+  const key = releaseKey(version);
+  const parts = key.split(/[.+-]/);
+  if (!parts.length || !/^\d+$/.test(parts[0])) return null;
+  return [0, 1, 2].map((i) => {
+    const n = parseInt(parts[i], 10);
+    return Number.isFinite(n) ? n : 0;
+  });
+}
+
+/** true seulement si la release distante est strictement plus récente. */
+function isRemoteNewer(remote, local) {
+  if (!String(remote || '').trim()) return false;
+  if (!String(local || '').trim()) return true;
+  const r = semverParts(remote);
+  const l = semverParts(local);
+  if (!r || !l) return releaseKey(remote) !== releaseKey(local);
+  for (let i = 0; i < 3; i++) {
+    if (r[i] !== l[i]) return r[i] > l[i];
+  }
+  return false;
+}
+
+/**
+ * fetchResult 'ok' + tag, ou 'fail' si GitHub ne répond pas.
+ * allowed : cette installation est égale ou plus récente.
+ * behind : une release plus récente existe.
+ * unknown : on ne sait pas (au démarrage, ça ferme le domaine).
+ */
+function domainGateFrom(fetchResult, remote, local) {
+  if (fetchResult !== 'ok') {
+    return {
+      gate: 'unknown',
+      remote: '',
+      message: 'Domaine coupé : impossible de vérifier la version.',
+    };
+  }
+  if (isRemoteNewer(remote, local)) {
+    return {
+      gate: 'behind',
+      remote: String(remote || ''),
+      message: `Domaine coupé : installe la mise à jour ${displayRelease(remote)} pour utiliser le domaine.`,
+    };
+  }
+  return { gate: 'allowed', remote: String(remote || ''), message: '' };
+}
+
+module.exports = {
+  getStatus,
+  applyUpdate,
+  restartServer,
+  pkgVersion,
+  isRemoteNewer,
+  domainGateFrom,
+};

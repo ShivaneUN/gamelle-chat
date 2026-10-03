@@ -1104,6 +1104,68 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun installedVersionName(): String {
+        return try {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun announceDomainCut(message: String) {
+        lastTunnelError = message
+        lastPublicUrl = null
+        gotTunnelUrl = false
+        try {
+            File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
+        } catch (_: Exception) {
+        }
+        emit("url", "")
+        emit("error", message)
+    }
+
+    /** true seulement quand GitHub confirme que cette version peut ouvrir le domaine. */
+    private fun waitUntilDomainAllowed(): Boolean {
+        while (!shuttingDown) {
+            val (gate, message) = GithubUpdate.domainGate(installedVersionName())
+            if (gate == GithubUpdate.DomainGate.Allowed) return true
+            announceDomainCut(message)
+            try {
+                Thread.sleep(30_000L)
+            } catch (_: InterruptedException) {
+                return false
+            }
+        }
+        return false
+    }
+
+    /** Tunnel déjà ouvert : on ne coupe que si une release plus récente existe vraiment. */
+    private fun watchDomainWhileUp(proc: java.lang.Process) {
+        val watcher = Thread {
+            while (!shuttingDown && isJavaProcessAlive(proc)) {
+                try {
+                    Thread.sleep(2 * 60 * 1000L)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                if (shuttingDown || !isJavaProcessAlive(proc)) return@Thread
+                val (gate, message) = try {
+                    GithubUpdate.domainGate(installedVersionName())
+                } catch (_: Exception) {
+                    continue
+                }
+                if (gate != GithubUpdate.DomainGate.Behind) continue
+                announceDomainCut(message)
+                stopCloudflaredProcess(proc)
+                return@Thread
+            }
+        }
+        watcher.isDaemon = true
+        watcher.name = "gamelle-domain-gate"
+        watcher.start()
+    }
+
     private fun startTunnel() {
         if (isJavaProcessAlive(tunnel)) {
             val keep = cloudflaredPid()
@@ -1152,6 +1214,7 @@ class MainActivity : FlutterActivity() {
         var lastErr = "cloudflared n’a pas démarré"
         var i = 0
         while (!shuttingDown) {
+            if (!waitUntilDomainAllowed()) return
             gotTunnelUrl = false
             val protocol = protocols[i % protocols.size]
             lastErr = runTunnelOnce(bin, home, logFile, protocol)
@@ -1250,6 +1313,7 @@ class MainActivity : FlutterActivity() {
             return e.message ?: "impossible de lancer cloudflared"
         }
         tunnel = proc
+        watchDomainWhileUp(proc)
         val lines = mutableListOf<String>()
         try {
             proc.inputStream.bufferedReader().use { reader ->

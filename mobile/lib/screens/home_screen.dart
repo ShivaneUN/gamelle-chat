@@ -406,7 +406,9 @@ class _HomeScreenState extends State<HomeScreen> {
             _StatusPill(label: _localOk ? 'Local OK' : 'Local…', ok: _localOk),
             _StatusPill(
               label: _bridge.customDomainActive
-                  ? (_cloudflareOk ? 'Domaine OK' : 'Domaine…')
+                  ? (_cloudflareOk
+                      ? 'Domaine OK'
+                      : ((_bridge.tunnelError ?? '').isNotEmpty ? 'Domaine coupé' : 'Domaine…'))
                   : (!_bridge.tunnelEnabled
                       ? 'Cloudflare off'
                       : (_cloudflareOk
@@ -416,6 +418,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+        if (!_cloudflareOk && (_bridge.tunnelError ?? '').isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            _bridge.tunnelError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.35),
+          ),
+        ],
       ],
     );
 
