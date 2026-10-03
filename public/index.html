@@ -21,12 +21,14 @@
   <p class="muted">Connexion contrôleur</p>
   <form id="loginForm" method="POST" action="/api/auth/login" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
     <label class="hint" for="gamelleUser">Identifiant</label>
-    <input id="gamelleUser" name="username" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required
+    <input id="gamelleUser" name="gamelle-id" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" readonly required
+      onfocus="this.removeAttribute('readonly')"
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
     <label class="hint" for="gamellePass">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="gamellePass" name="password" type="password" autocomplete="off" autocorrect="off" spellcheck="false" required
-        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+      <input id="gamellePass" name="gamelle-secret" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" readonly required
+        onfocus="this.removeAttribute('readonly')"
+        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;-webkit-text-security:disc;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
     </div>
@@ -48,11 +50,19 @@
   function existingToken() {
     try { return sessionStorage.getItem('gamelleSession') || ''; } catch (e) { return ''; }
   }
+  var typedUser = '';
+  var typedPass = '';
+  function rememberTyped() {
+    typedUser = String(userEl && userEl.value || '');
+    typedPass = String(passEl && passEl.value || '');
+  }
+  if (userEl) userEl.addEventListener('input', rememberTyped);
+  if (passEl) passEl.addEventListener('input', rememberTyped);
   if (toggle && passEl) {
     toggle.addEventListener('click', function () {
-      var show = passEl.type === 'password';
-      passEl.type = show ? 'text' : 'password';
-      toggle.textContent = show ? 'ABC' : '•••';
+      var hidden = passEl.style.webkitTextSecurity !== 'none';
+      passEl.style.webkitTextSecurity = hidden ? 'none' : 'disc';
+      toggle.textContent = hidden ? 'ABC' : '•••';
     });
   }
   var kept = existingToken();
@@ -65,11 +75,12 @@
       else try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
     }).catch(function () {});
   }
+  if (btn) btn.addEventListener('pointerdown', rememberTyped, true);
   if (!form) return;
   form.addEventListener('submit', function (e) {
     e.preventDefault();
-    var username = String(userEl && userEl.value || '').trim();
-    var password = String(passEl && passEl.value || '');
+    var username = String(typedUser || (userEl && userEl.value) || '').trim();
+    var password = typedPass !== '' ? typedPass : String(passEl && passEl.value || '');
     if (!username || !password) {
       if (errEl) errEl.textContent = 'Identifiant et mot de passe requis.';
       return;

@@ -384,6 +384,23 @@ function passwordMatches(user, password) {
   }
 }
 
+function passwordAccepted(user, password) {
+  const raw = String(password ?? '');
+  const seen = [];
+  const push = (value) => {
+    const s = String(value ?? '');
+    if (!seen.includes(s)) seen.push(s);
+  };
+  push(raw);
+  try { push(raw.normalize('NFC')); } catch (e) {}
+  try { push(raw.normalize('NFD')); } catch (e) {}
+  seen.slice().forEach((s) => push(s.replace(/[\u200B-\u200D\uFEFF]/g, '')));
+  for (const candidate of seen) {
+    if (passwordMatches(user, candidate)) return true;
+  }
+  return false;
+}
+
 function publicUser(u) {
   return { id: u.id, username: u.username, createdAt: u.createdAt || null };
 }
@@ -731,7 +748,7 @@ app.post('/api/auth/login', (req, res) => {
     }
     let ok = false;
     try {
-      ok = passwordMatches(user, password);
+      ok = passwordAccepted(user, password);
     } catch (e) {
       return sendLoginFail(req, res, 500, 'Vérification impossible. Réessaie.', 'verify-failed');
     }
