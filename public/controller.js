@@ -168,7 +168,7 @@ socket.on('auth-required', async () => {
   authRetrying = true;
   try {
     const r = await authFetch('/api/auth/me');
-    const j = await r.json().catch(() => ({}));
+    const j = await r.json().catch(() => null);
     if (j && j.authenticated) {
       setTimeout(() => {
         authRetrying = false;
@@ -176,7 +176,17 @@ socket.on('auth-required', async () => {
       }, 600);
       return;
     }
-  } catch (e) {}
+    // Coupure du lien (HTML Cloudflare, 502) : le compte est encore bon.
+    if (!j || r.status >= 500) {
+      authRetrying = false;
+      setTimeout(() => { try { socket.connect(); } catch (e) {} }, 1500);
+      return;
+    }
+  } catch (e) {
+    authRetrying = false;
+    setTimeout(() => { try { socket.connect(); } catch (e2) {} }, 1500);
+    return;
+  }
   authKicked = true;
   authRetrying = false;
   clearSessionToken();

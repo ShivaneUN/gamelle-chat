@@ -1041,6 +1041,7 @@ class MainActivity : FlutterActivity() {
 
     private var tunnelThread: Thread? = null
     @Volatile private var gotTunnelUrl = false
+    @Volatile private var lastRunRegistered = false
     @Volatile private var shuttingDown = false
     @Volatile private var lastTunnelError: String? = null
 
@@ -1095,17 +1096,19 @@ class MainActivity : FlutterActivity() {
 
         val protocols = listOf("http2", "quic", "auto")
         var lastErr = "cloudflared n’a pas démarré"
-        var i = 0
+        var protocolIndex = 0
         while (!shuttingDown) {
             gotTunnelUrl = false
-            val protocol = protocols[i % protocols.size]
+            lastRunRegistered = false
+            val protocol = protocols[protocolIndex % protocols.size]
             lastErr = runTunnelOnce(bin, home, logFile, protocol)
             if (shuttingDown) return
             if (!gotTunnelUrl) {
                 lastTunnelError = lastErr
                 emit("error", lastErr)
             }
-            i++
+            // Un tunnel qui a déjà marché reste en http2. Passer en QUIC coupe le websocket du téléphone.
+            if (!lastRunRegistered) protocolIndex++
             try {
                 Thread.sleep(if (gotTunnelUrl) 1500L else 2500L)
             } catch (_: InterruptedException) {
@@ -1163,6 +1166,9 @@ class MainActivity : FlutterActivity() {
         )
         if (named) {
             args.add("run")
+            if (!useHttp) args.add("--no-tls-verify")
+            args.add("--url")
+            args.add(if (useHttp) "http://127.0.0.1:3001" else "https://127.0.0.1:3000")
             args.add("--token")
             args.add(tunnelToken!!)
         } else {
@@ -1206,6 +1212,7 @@ class MainActivity : FlutterActivity() {
                     if (named) {
                         if (namedReadyPattern.matcher(text).find()) {
                             val url = fixedPublicUrl!!
+                            lastRunRegistered = true
                             gotTunnelUrl = true
                             lastPublicUrl = url
                             lastTunnelError = null
@@ -1217,6 +1224,7 @@ class MainActivity : FlutterActivity() {
                         if (matcher.find()) {
                             val url = matcher.group()
                             if (isAllowedPublicUrl(url)) {
+                                lastRunRegistered = true
                                 gotTunnelUrl = true
                                 lastPublicUrl = url
                                 lastTunnelError = null

@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -394,16 +395,37 @@ function getUserByToken(token) {
   return { id: u.id, username: u.username, token: t };
 }
 
-function extractSessionToken(req) {
-  if (!req) return '';
-  const fromCookie = parseCookies(req)[SESSION_COOKIE];
-  if (fromCookie) return String(fromCookie);
+function pushToken(out, value) {
+  const t = String(value || '').trim();
+  if (t && !out.includes(t)) out.push(t);
+}
+
+/** Cookie, Bearer, puis ?access=. Un cookie périmé ne doit pas cacher un jeton encore valide. */
+function sessionTokenCandidates(req) {
+  const out = [];
+  if (!req) return out;
+  const raw = String(req.headers && req.headers.cookie || '');
+  raw.split(';').forEach((part) => {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    const k = part.slice(0, i).trim();
+    if (k !== SESSION_COOKIE) return;
+    let v = part.slice(i + 1).trim();
+    try { v = decodeURIComponent(v); } catch (e) {}
+    pushToken(out, v);
+  });
   const auth = String((req.headers && req.headers.authorization) || '');
-  if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, '').trim();
-  // Fallback query (login → controller quand le navigateur bloque les cookies).
+  if (/^bearer\s+/i.test(auth)) pushToken(out, auth.replace(/^bearer\s+/i, ''));
   try {
-    if (req.query && req.query.access) return String(req.query.access).trim();
+    if (req.query && req.query.access) pushToken(out, req.query.access);
   } catch (e) {}
+  return out;
+}
+
+function extractSessionToken(req) {
+  for (const t of sessionTokenCandidates(req)) {
+    if (getUserByToken(t)) return t;
+  }
   return '';
 }
 
@@ -522,13 +544,19 @@ function htmlFreshnessGuard(version) {
   if (!ver) return '';
   const meta = `<meta name="gamelle-version" content="${ver.replace(/"/g, '')}">`;
   const script = `<script>(function(){var pageVer=${JSON.stringify(ver)};` +
+    `function tok(){try{return localStorage.getItem("gamelleSession")||sessionStorage.getItem("gamelleSession")||""}catch(e){return ""}}` +
     `fetch("/api/info",{cache:"no-store",credentials:"same-origin"})` +
     `.then(function(r){return r.json()})` +
     `.then(function(info){var live=info&&String(info.version||"");if(!live||live===pageVer)return;` +
     `try{if(sessionStorage.getItem("gamelle-html-reload")===live)return;sessionStorage.setItem("gamelle-html-reload",live)}catch(e){}` +
-    `fetch(location.pathname+location.search,{cache:"reload",credentials:"same-origin",headers:{Accept:"text/html"}})` +
+    `var url=location.pathname+location.search;var t=tok();` +
+    `if(t&&url.indexOf("access=")<0)url+=(url.indexOf("?")<0?"?":"&")+"access="+encodeURIComponent(t);` +
+    `var headers={Accept:"text/html"};if(t)headers.Authorization="Bearer "+t;` +
+    `return fetch(url,{cache:"reload",credentials:"same-origin",headers:headers})` +
     `.then(function(r){return r.text()})` +
-    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;document.open();document.write(html);document.close()})` +
+    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;` +
+    `if(location.pathname.indexOf("controller")>=0&&html.indexOf('id="loginForm"')>=0)return;` +
+    `document.open();document.write(html);document.close()})` +
     `}).catch(function(){})})();</script>`;
   return meta + script;
 }
@@ -1979,18 +2007,40 @@ io.attach(httpOrigin);
 httpOrigin.on('error', (err) => {
   console.warn('Origine tunnel HTTP:', err.message || err);
 });
-httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
-  console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
-});
-
 server.on('error', (err) => {
   console.error('Serveur HTTPS:', err && err.message ? err.message : err);
 });
-server.listen(PORT, '0.0.0.0', () => {
+
+// cloudflared (tunnel nommé) dial souvent localhost → ::1, ou http:// vers le port 3000.
+// On accepte HTTP et HTTPS sur 3000 et 3001, en IPv4 et en IPv6 loopback.
+function routeFirstBytes(socket) {
+  socket.on('error', () => {});
+  socket.once('data', (buf) => {
+    socket.pause();
+    try { socket.unshift(buf); } catch (e) {}
+    const tls = !!(buf && buf.length && buf[0] === 0x16);
+    (tls ? server : httpOrigin).emit('connection', socket);
+    setImmediate(() => { try { socket.resume(); } catch (e) {} });
+  });
+}
+
+function listenRouted(port, host, onListening) {
+  const front = net.createServer(routeFirstBytes);
+  front.on('error', (err) => {
+    console.warn(`Écoute ${host}:${port}:`, err.message || err);
+  });
+  front.listen(port, host, () => {
+    if (onListening) onListening();
+  });
+  return front;
+}
+
+function logReady() {
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
   console.log(`Sur la tablette (récepteur) : https://localhost:${PORT}`);
   console.log(`Même WiFi                   : https://${ip}:${PORT}`);
+  console.log(`Origine tunnel              : http://127.0.0.1:${TUNNEL_PORT} et http://[::1]:${TUNNEL_PORT}`);
   console.log('⚠️  En local : le navigateur affichera un avertissement (certificat auto-signé).');
   console.log('   Clique sur "Avancé" puis "Continuer" — normal.');
   if (process.env.TUNNEL === '0') {
@@ -2000,7 +2050,12 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
     startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
-});
+}
+
+listenRouted(TUNNEL_PORT, '127.0.0.1');
+listenRouted(TUNNEL_PORT, '::1');
+listenRouted(PORT, '::1');
+listenRouted(PORT, '0.0.0.0', logReady);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
@@ -2021,10 +2076,12 @@ async function ensureCloudflaredBin() {
   return { cf, bin };
 }
 
-async function startNamedTunnel(bin, token, fixedUrl) {
+async function startNamedTunnel(bin, token, fixedUrl, origin) {
   console.log(`Tunnel nommé Cloudflare → ${fixedUrl}`);
   markPublicUrl(fixedUrl);
-  const child = spawn(bin, ['tunnel', '--no-autoupdate', 'run', '--token', token], {
+  const args = ['tunnel', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', token];
+  if (origin) args.splice(args.indexOf('run') + 1, 0, '--url', String(origin));
+  const child = spawn(bin, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -2077,7 +2134,7 @@ async function startPublicTunnel(origin) {
     const token = readTunnelToken();
     const fixedUrl = tunnelConfig.publicUrl;
     if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
-      await startNamedTunnel(bin, token, fixedUrl);
+      await startNamedTunnel(bin, token, fixedUrl, origin);
       return;
     }
     if (token && !fixedUrl) {
