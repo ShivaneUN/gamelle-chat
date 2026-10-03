@@ -74,7 +74,16 @@ let webrtcLive = false;
 let camWanted = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
+function rememberPairCode(next) {
+  const c = String(next || '').trim();
+  if (c.length < 4) return;
+  try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
+  try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
+}
 socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
+socket.on('active-code', (payload) => {
+  rememberPairCode(payload && payload.code);
+});
 socket.on('auth-required', () => {
   location.replace('/');
 });

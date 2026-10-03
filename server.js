@@ -897,6 +897,16 @@ function emitLiveFrame(code, payload) {
   });
 }
 
+function sharedPairCode() {
+  const live = liveReceiverCode();
+  if (live) return live;
+  try {
+    const active = ensureActiveCode();
+    if (active && String(active).trim().length >= 4) return String(active).trim();
+  } catch (e) {}
+  return '';
+}
+
 function liveReceiverCode() {
   if (!io || !io.sockets || !io.sockets.sockets) return '';
   for (const code of Object.keys(rooms)) {
@@ -994,11 +1004,9 @@ io.on('connection', (socket) => {
       socket.data.userId = user.id;
       socket.data.username = user.username;
     }
-    let pair = String(code || '').trim();
-    if (role === 'controller') {
-      const live = liveReceiverCode();
-      if (live) pair = live;
-    }
+    let pair = sharedPairCode();
+    if (!pair) pair = String(code || '').trim();
+    writeActiveCode(pair);
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
       return;
@@ -1015,6 +1023,7 @@ io.on('connection', (socket) => {
     socket.data.role = role;
 
     if (role === 'controller') room.controllerIds.add(socket.id);
+    socket.emit('active-code', { code: pair });
     if (role === 'receiver') {
       room.receiverId = socket.id;
       writeActiveCode(pair);

@@ -133,6 +133,11 @@ let talkSoundOn = true;
 let alarmSoundOn = true;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
+socket.on('active-code', (payload) => {
+  const live = String((payload && payload.code) || '').trim();
+  if (live.length < 4) return;
+  code = commitPairCode(live);
+});
 socket.on('connect', () => {
   resolvePairCode().then((c) => {
     socket.emit('join', { code: c, role: 'receiver' });
