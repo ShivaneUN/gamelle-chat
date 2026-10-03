@@ -456,15 +456,6 @@ function disconnectControllersForUser(userId, exceptSocketId) {
   }
 }
 
-function userHasLiveController(userId) {
-  if (!userId || !io || !io.sockets || !io.sockets.sockets) return false;
-  for (const s of io.sockets.sockets.values()) {
-    if (!s || !s.connected) continue;
-    if (s.data && s.data.role === 'controller' && s.data.userId === userId) return true;
-  }
-  return false;
-}
-
 function touchSession(token) {
   if (!token) return;
   const sessions = readSessions();
@@ -717,7 +708,7 @@ app.post('/api/auth/login', (req, res) => {
     }
 
     const existing = findSessionsForUser(user.id);
-    if (userHasLiveController(user.id)) {
+    if (existing.length > 0) {
       return sendLoginFail(
         req,
         res,
@@ -726,7 +717,6 @@ app.post('/api/auth/login', (req, res) => {
         'SESSION_ACTIVE'
       );
     }
-    if (existing.length > 0) destroySessionsForUser(user.id);
 
     const token = createSession(user.id);
     const check = readSessions().sessions.find((s) => s && s.token === token);
