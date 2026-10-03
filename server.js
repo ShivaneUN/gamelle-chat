@@ -897,6 +897,39 @@ function emitLiveFrame(code, payload) {
   });
 }
 
+function liveReceiverCode() {
+  if (!io || !io.sockets || !io.sockets.sockets) return '';
+  for (const code of Object.keys(rooms)) {
+    const room = rooms[code];
+    if (!room || !room.receiverId) continue;
+    const sock = io.sockets.sockets.get(room.receiverId);
+    if (sock && sock.connected && sock.data && sock.data.role === 'receiver') return code;
+  }
+  return '';
+}
+
+function pullControllersTo(pair) {
+  if (!pair || !io || !io.sockets || !io.sockets.sockets) return;
+  for (const s of io.sockets.sockets.values()) {
+    if (!s || !s.data || s.data.role !== 'controller' || s.data.code === pair) continue;
+    const prev = s.data.code;
+    if (prev) {
+      try { s.leave(prev); } catch (e) {}
+      const old = rooms[prev];
+      if (old && old.controllerIds) {
+        old.controllerIds.delete(s.id);
+        emitPeers(prev, old);
+      }
+    }
+    let room;
+    try { room = getRoom(pair); } catch (e) { continue; }
+    s.join(pair);
+    s.data.code = pair;
+    room.controllerIds.add(s.id);
+    emitPeers(pair, room);
+  }
+}
+
 function emitPeers(code, room) {
   for (const id of [...room.controllerIds]) {
     if (!io.sockets.sockets.get(id)) room.controllerIds.delete(id);
@@ -961,7 +994,11 @@ io.on('connection', (socket) => {
       socket.data.userId = user.id;
       socket.data.username = user.username;
     }
-    const pair = String(code || '').trim();
+    let pair = String(code || '').trim();
+    if (role === 'controller') {
+      const live = liveReceiverCode();
+      if (live) pair = live;
+    }
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
       return;
@@ -981,6 +1018,7 @@ io.on('connection', (socket) => {
     if (role === 'receiver') {
       room.receiverId = socket.id;
       writeActiveCode(pair);
+      pullControllersTo(pair);
     }
 
     emitPeers(pair, room);
@@ -1451,6 +1489,13 @@ function getLocalIp() {
   } catch (e) {}
   return 'localhost';
 }
+
+setInterval(() => {
+  const live = liveReceiverCode();
+  if (!live || !rooms[live]) return;
+  pullControllersTo(live);
+  emitPeers(live, rooms[live]);
+}, 2000);
 
 const TUNNEL_PORT = Number(process.env.TUNNEL_PORT) || (PORT + 1);
 const httpOrigin = http.createServer(app);
