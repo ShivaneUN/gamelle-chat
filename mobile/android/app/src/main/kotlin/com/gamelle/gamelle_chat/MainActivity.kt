@@ -1054,9 +1054,62 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun cloudflaredPid(): Int? {
+        val proc = tunnel ?: return null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        return try {
+            val pid = proc.pid()
+            if (pid > 0L && pid <= Int.MAX_VALUE) pid.toInt() else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Un seul cloudflared. Les anciens processus (redémarrage) sont fermés. */
+    private fun killOtherCloudflared(keepPid: Int? = cloudflaredPid()) {
+        val dirs = File("/proc").listFiles() ?: return
+        for (dir in dirs) {
+            val pid = dir.name.toIntOrNull() ?: continue
+            if (pid == AndroidProcess.myPid()) continue
+            if (keepPid != null && pid == keepPid) continue
+            val cmd = try {
+                File(dir, "cmdline").readBytes().toString(Charsets.UTF_8)
+            } catch (_: Exception) {
+                continue
+            }
+            if (!cmd.contains("cloudflared")) continue
+            try {
+                AndroidProcess.killProcess(pid)
+            } catch (_: Exception) {
+            }
+            try {
+                AndroidProcess.sendSignal(pid, 9)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun stopCloudflaredProcess(proc: java.lang.Process?) {
+        if (proc == null) return
+        try {
+            proc.destroy()
+        } catch (_: Exception) {
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                proc.destroyForcibly()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun startTunnel() {
-        if (isJavaProcessAlive(tunnel)) return
+        if (isJavaProcessAlive(tunnel)) {
+            killOtherCloudflared()
+            return
+        }
         if (tunnelThread?.isAlive == true) return
+        killOtherCloudflared(keepPid = null)
         tunnelThread = Thread { runTunnelLoop() }
         tunnelThread?.start()
     }
@@ -1169,6 +1222,10 @@ class MainActivity : FlutterActivity() {
             args.add("--url")
             args.add(if (useHttp) "http://127.0.0.1:3001" else "http://127.0.0.1:3000")
         }
+        val previous = tunnel
+        tunnel = null
+        stopCloudflaredProcess(previous)
+        killOtherCloudflared(keepPid = null)
         val builder = ProcessBuilder(args)
         builder.redirectErrorStream(true)
         builder.directory(home)
@@ -1272,17 +1329,8 @@ class MainActivity : FlutterActivity() {
         tunnelThread = null
         val proc = tunnel
         tunnel = null
-        if (proc == null) return
-        try {
-            proc.destroy()
-        } catch (_: Exception) {
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                proc.destroyForcibly()
-            }
-        } catch (_: Exception) {
-        }
+        stopCloudflaredProcess(proc)
+        killOtherCloudflared(keepPid = null)
     }
 
     private fun stopNodeService() {

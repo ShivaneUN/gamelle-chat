@@ -36,7 +36,7 @@ function copyDirIfMissing(src, dest) {
     let st;
     try { st = fs.statSync(from); } catch (e) { continue; }
     if (st.isDirectory()) copyDirIfMissing(from, to);
-    else if (name === 'public-url.json' || name === 'accounts.json' || name === 'sessions.json' || name === 'accounts-wipe.json') continue;
+    else if (name === 'public-url.json' || name === 'accounts.json' || name === 'sessions.json' || name === 'accounts-wipe.json' || name === 'sessions-close.json') continue;
     else if (!fs.existsSync(to)) {
       try { fs.copyFileSync(from, to); } catch (e) {}
     }
@@ -157,43 +157,9 @@ function mergeSchedulesFrom(srcFile) {
 mergeSchedulesFrom(path.join(__dirname, 'data', 'schedules.json'));
 mergeSchedulesFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'schedules.json'));
 
-/** Reunion des comptes (par id puis username) — évite la perte à l’OTA. */
-function mergeAccountsFrom(srcFile) {
-  if (!srcFile || srcFile === ACCOUNTS_FILE || !fs.existsSync(srcFile)) return;
-  let incoming = null;
-  try { incoming = JSON.parse(fs.readFileSync(srcFile, 'utf8')); } catch (e) { return; }
-  if (!incoming || !Array.isArray(incoming.users) || !incoming.users.length) return;
-  let current = { users: [] };
-  try {
-    if (fs.existsSync(ACCOUNTS_FILE)) current = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
-  } catch (e) {}
-  if (!current || typeof current !== 'object') current = { users: [] };
-  if (!Array.isArray(current.users)) current.users = [];
-  const byId = new Map();
-  const byName = new Map();
-  current.users.forEach((u) => {
-    if (!u || typeof u !== 'object') return;
-    if (u.id) byId.set(String(u.id), u);
-    if (u.username) byName.set(String(u.username).toLowerCase(), u);
-  });
-  let changed = false;
-  incoming.users.forEach((u) => {
-    if (!u || typeof u !== 'object' || !u.username || !u.passHash || !u.salt) return;
-    const id = u.id ? String(u.id) : '';
-    const name = String(u.username).toLowerCase();
-    if (id && byId.has(id)) return;
-    if (byName.has(name)) return;
-    current.users.push(u);
-    if (id) byId.set(id, u);
-    byName.set(name, u);
-    changed = true;
-  });
-  if (changed) {
-    try {
-      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(current, null, 2));
-    } catch (e) {}
-  }
+/** Les copies ne réimportent plus de comptes : un identifiant déjà présent n’est jamais doublé. */
+function mergeAccountsFrom() {
+  return;
 }
 
 console.log('Stockage persistant :', STORE);
@@ -344,6 +310,55 @@ function resetAccountsOnce() {
   console.log('Comptes effacés pour la mise à jour 0.1.29.');
 }
 resetAccountsOnce();
+
+// Un identifiant = un compte. On garde le premier (celui qui existait déjà)
+// et on retire les lignes recopiées ensuite.
+function dedupeAccounts() {
+  const accounts = readAccounts();
+  const kept = [];
+  const seenName = new Set();
+  const seenId = new Set();
+  const droppedIds = [];
+  for (const u of accounts.users) {
+    if (!u || typeof u !== 'object') continue;
+    const name = normUser(u.username);
+    const id = u.id ? String(u.id) : '';
+    if (!name || seenName.has(name) || (id && seenId.has(id))) {
+      if (id) droppedIds.push(id);
+      continue;
+    }
+    seenName.add(name);
+    if (id) seenId.add(id);
+    kept.push(u);
+  }
+  if (kept.length === accounts.users.length && droppedIds.length === 0) return;
+  writeAccounts({ users: kept });
+  if (droppedIds.length) {
+    const sessions = readSessions();
+    const next = sessions.sessions.filter((s) => s && !droppedIds.includes(String(s.userId)));
+    if (next.length !== sessions.sessions.length) writeSessions({ sessions: next });
+  }
+  console.log('Comptes en double retirés :', accounts.users.length - kept.length);
+}
+dedupeAccounts();
+
+// Ferme les sessions encore ouvertes une fois : plus personne n'est « déjà connecté ».
+const SESSIONS_CLOSE_ID = '0.1.32';
+function closeOpenSessionsOnce() {
+  const marker = path.join(DATA_DIR, 'sessions-close.json');
+  let done = '';
+  try {
+    done = String(JSON.parse(fs.readFileSync(marker, 'utf8')).id || '');
+  } catch (e) {}
+  if (done === SESSIONS_CLOSE_ID) return;
+  writeSessions({ sessions: [] });
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(marker, JSON.stringify({ id: SESSIONS_CLOSE_ID }));
+  } catch (e) {}
+  console.log('Sessions ouvertes fermées.');
+}
+closeOpenSessionsOnce();
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64).toString('hex');
@@ -685,13 +700,17 @@ app.post('/api/auth/register', (req, res) => {
     return res.status(400).json({ ok: false, error: 'Mot de passe trop court' });
   }
   const accounts = readAccounts();
-  if (accounts.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
+  const wanted = normUser(username);
+  if (accounts.users.some((u) => u && normUser(u.username) === wanted)) {
     return res.status(409).json({ ok: false, error: 'Identifiant déjà pris' });
   }
   const salt = crypto.randomBytes(16).toString('hex');
   const passHash = hashPassword(password, salt);
+  const usedIds = new Set(accounts.users.map((u) => (u && u.id ? String(u.id) : '')).filter(Boolean));
+  let id = crypto.randomBytes(8).toString('hex');
+  while (usedIds.has(id)) id = crypto.randomBytes(8).toString('hex');
   const user = {
-    id: crypto.randomBytes(8).toString('hex'),
+    id,
     username,
     salt,
     passHash,
@@ -2068,8 +2087,11 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Sur la tablette (récepteur) : http://127.0.0.1:${PORT}`);
   console.log(`Même WiFi                   : http://${ip}:${PORT}`);
   console.log('Domaine : le tunnel nommé parle en HTTP à ce serveur (ingress Cloudflare inchangé).');
-  if (process.env.TUNNEL === '0') {
-    console.log('Tunnel distant désactivé (TUNNEL=0). Hors WiFi, ça ne marchera pas.');
+  // Sur la tablette, Android ouvre le seul cloudflared. Node n'en lance pas un second.
+  if (process.env.TUNNEL === '0' || isMobileBundle()) {
+    console.log(isMobileBundle()
+      ? 'Tunnel : un seul connecteur, ouvert par l’application.'
+      : 'Tunnel distant désactivé (TUNNEL=0). Hors WiFi, ça ne marchera pas.');
     console.log('================================================\n');
   } else {
     console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
@@ -2147,6 +2169,10 @@ async function startQuickTunnel(cf, origin) {
 }
 
 async function startPublicTunnel(origin) {
+  if (isMobileBundle() || process.env.TUNNEL === '0') {
+    console.log('Tunnel Node ignoré : un seul connecteur, celui de l’application.');
+    return;
+  }
   try {
     const { cf, bin } = await ensureCloudflaredBin();
     const token = readTunnelToken();
