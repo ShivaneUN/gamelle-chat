@@ -385,17 +385,28 @@ function getUserByToken(token) {
   return { id: u.id, username: u.username, token: t };
 }
 
-function extractSessionToken(req) {
-  if (!req) return '';
-  const fromCookie = parseCookies(req)[SESSION_COOKIE];
-  if (fromCookie) return String(fromCookie);
-  const auth = String((req.headers && req.headers.authorization) || '');
-  if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, '').trim();
-  // Fallback query (login → controller quand le navigateur bloque les cookies).
+function sessionTokenCandidates(req) {
+  const out = [];
+  const push = (value) => {
+    const token = String(value || '').trim();
+    if (token && !out.includes(token)) out.push(token);
+  };
+  // Le Bearer est le jeton réel du téléphone. Un vieux cookie ne doit pas le masquer.
+  const auth = String((req && req.headers && req.headers.authorization) || '');
+  if (/^bearer\s+/i.test(auth)) push(auth.replace(/^bearer\s+/i, ''));
   try {
-    if (req.query && req.query.access) return String(req.query.access).trim();
+    if (req && req.query && req.query.access) push(req.query.access);
   } catch (e) {}
-  return '';
+  if (req) push(parseCookies(req)[SESSION_COOKIE]);
+  return out;
+}
+
+function extractSessionToken(req) {
+  const candidates = sessionTokenCandidates(req);
+  for (const token of candidates) {
+    if (getUserByToken(token)) return token;
+  }
+  return candidates[0] || '';
 }
 
 function getSessionUser(req) {
@@ -454,6 +465,15 @@ function disconnectControllersForUser(userId, exceptSocketId) {
       try { s.disconnect(true); } catch (e) {}
     }
   }
+}
+
+function userHasLiveController(userId) {
+  if (!userId || !io || !io.sockets || !io.sockets.sockets) return false;
+  for (const s of io.sockets.sockets.values()) {
+    if (!s || !s.connected) continue;
+    if (s.data && s.data.role === 'controller' && s.data.userId === userId) return true;
+  }
+  return false;
 }
 
 function touchSession(token) {
@@ -707,8 +727,7 @@ app.post('/api/auth/login', (req, res) => {
       return sendLoginOk(req, res, user, current.token, false);
     }
 
-    const existing = findSessionsForUser(user.id);
-    if (existing.length > 0) {
+    if (userHasLiveController(user.id)) {
       return sendLoginFail(
         req,
         res,
@@ -717,6 +736,7 @@ app.post('/api/auth/login', (req, res) => {
         'SESSION_ACTIVE'
       );
     }
+    destroySessionsForUser(user.id);
 
     const token = createSession(user.id);
     const check = readSessions().sessions.find((s) => s && s.token === token);
@@ -732,10 +752,12 @@ app.post('/api/auth/login', (req, res) => {
 
 app.post('/api/auth/logout', (req, res) => {
   const user = getSessionUser(req);
-  if (user && user.token) destroySession(user.token);
+  if (user && user.id) {
+    destroySessionsForUser(user.id);
+    disconnectControllersForUser(user.id);
+  }
   clearSessionCookie(res, req);
-  if (user && user.id) disconnectControllersForUser(user.id);
-  res.json({ ok: true });
+  res.json({ ok: true, loggedOut: true });
 });
 
 app.post('/api/auth/users/:id/password', (req, res) => {
