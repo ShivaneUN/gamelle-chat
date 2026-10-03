@@ -1165,10 +1165,8 @@ class MainActivity : FlutterActivity() {
             "4",
         )
         if (named) {
+            // Le domaine reste lié à l'ingress Cloudflare. --url le décrocherait.
             args.add("run")
-            if (!useHttp) args.add("--no-tls-verify")
-            args.add("--url")
-            args.add(if (useHttp) "http://127.0.0.1:3001" else "https://127.0.0.1:3000")
             args.add("--token")
             args.add(tunnelToken!!)
         } else {

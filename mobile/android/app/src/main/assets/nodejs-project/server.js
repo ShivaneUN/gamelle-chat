@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const https = require('https');
-const net = require('net');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -1367,7 +1366,6 @@ function sendControllerSnapshot(sock, pair, room) {
     camOn: !!room.camOn,
     outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
   });
-  sock.emit('active-code', { code: pair });
   sock.emit(room.screenOn === false ? 'screen-off' : 'screen-on');
   if (room.camOn) sock.emit('cam-status', { on: true });
 }
@@ -1425,8 +1423,9 @@ io.on('connection', (socket) => {
     }
     let pair = String(code || '').trim();
     if (role === 'controller') {
-      const active = readActiveCode();
-      if (active && String(active).trim().length >= 4) pair = String(active).trim();
+      const active = String(readActiveCode() || '').trim();
+      const live = active && rooms[active];
+      if (live && live.receiverId) pair = active;
     }
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
@@ -1449,8 +1448,6 @@ io.on('connection', (socket) => {
       writeActiveCode(pair);
       pullControllersTo(pair);
     }
-    if (role === 'controller') socket.emit('active-code', { code: pair });
-
     emitPeers(pair, room);
     if (role === 'receiver' || role === 'controller') emitDevices(pair);
 
@@ -2050,37 +2047,23 @@ function getLocalIp() {
 
 const TUNNEL_PORT = Number(process.env.TUNNEL_PORT) || (PORT + 1);
 const httpOrigin = http.createServer(app);
+const httpOrigin6 = http.createServer(app);
 io.attach(httpOrigin);
+io.attach(httpOrigin6);
 httpOrigin.on('error', (err) => {
   console.warn('Origine tunnel HTTP:', err.message || err);
 });
+httpOrigin6.on('error', (err) => {
+  console.warn('Origine tunnel HTTP v6:', err.message || err);
+});
+const server6 = createHttpsServer();
+io.attach(server6);
 server.on('error', (err) => {
   console.error('Serveur HTTPS:', err && err.message ? err.message : err);
 });
-
-// cloudflared (tunnel nommé) dial souvent localhost → ::1, ou http:// vers le port 3000.
-// On accepte HTTP et HTTPS sur 3000 et 3001, en IPv4 et en IPv6 loopback.
-function routeFirstBytes(socket) {
-  socket.on('error', () => {});
-  socket.once('data', (buf) => {
-    socket.pause();
-    try { socket.unshift(buf); } catch (e) {}
-    const tls = !!(buf && buf.length && buf[0] === 0x16);
-    (tls ? server : httpOrigin).emit('connection', socket);
-    setImmediate(() => { try { socket.resume(); } catch (e) {} });
-  });
-}
-
-function listenRouted(port, host, onListening) {
-  const front = net.createServer(routeFirstBytes);
-  front.on('error', (err) => {
-    console.warn(`Écoute ${host}:${port}:`, err.message || err);
-  });
-  front.listen(port, host, () => {
-    if (onListening) onListening();
-  });
-  return front;
-}
+server6.on('error', (err) => {
+  console.warn('HTTPS v6:', err && err.message ? err.message : err);
+});
 
 function logReady() {
   const ip = getLocalIp();
@@ -2099,10 +2082,12 @@ function logReady() {
   }
 }
 
-listenRouted(TUNNEL_PORT, '127.0.0.1');
-listenRouted(TUNNEL_PORT, '::1');
-listenRouted(PORT, '::1');
-listenRouted(PORT, '0.0.0.0', logReady);
+// HTTPS direct sur 3000 (tablette) et HTTP direct sur 3001 (ingress Cloudflare déjà réglé).
+// Le tunnel nommé ne reçoit pas --url : le domaine reste celui configuré dans Cloudflare.
+httpOrigin.listen(TUNNEL_PORT, '127.0.0.1');
+httpOrigin6.listen(TUNNEL_PORT, '::1');
+server6.listen(PORT, '::1');
+server.listen(PORT, '0.0.0.0', logReady);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
@@ -2123,12 +2108,11 @@ async function ensureCloudflaredBin() {
   return { cf, bin };
 }
 
-async function startNamedTunnel(bin, token, fixedUrl, origin) {
+async function startNamedTunnel(bin, token, fixedUrl) {
   console.log(`Tunnel nommé Cloudflare → ${fixedUrl}`);
   markPublicUrl(fixedUrl);
-  const args = ['tunnel', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', token];
-  if (origin) args.splice(args.indexOf('run') + 1, 0, '--url', String(origin));
-  const child = spawn(bin, args, {
+  // Pas de --url : l'ingress du domaine reste celui du tableau Cloudflare.
+  const child = spawn(bin, ['tunnel', '--no-autoupdate', 'run', '--token', token], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -2181,7 +2165,7 @@ async function startPublicTunnel(origin) {
     const token = readTunnelToken();
     const fixedUrl = tunnelConfig.publicUrl;
     if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
-      await startNamedTunnel(bin, token, fixedUrl, origin);
+      await startNamedTunnel(bin, token, fixedUrl);
       return;
     }
     if (token && !fixedUrl) {
