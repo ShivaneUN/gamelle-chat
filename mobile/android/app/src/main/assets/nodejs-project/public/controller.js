@@ -94,13 +94,25 @@ function readControllerCode() {
       throw new Error('code-redirect');
     }
   }
+  return '';
+}
+function savedPairCode() {
   try {
     const saved = sessionStorage.getItem('gamellePairCode') || localStorage.getItem('gamellePairCode');
     if (saved && String(saved).trim().length >= 4) return String(saved).trim();
   } catch (e) {}
   return '';
 }
-const code = readControllerCode();
+function rememberPairCode(c) {
+  try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
+  try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
+}
+function controllerUrl() {
+  const t = readSessionToken();
+  return '/controller.html' + (t ? ('?access=' + encodeURIComponent(t)) : '');
+}
+const explicitCode = readControllerCode();
+const code = explicitCode || savedPairCode();
 const statusEl = document.getElementById('status');
 const remoteVideo = document.getElementById('remoteVideo');
 const remoteRelay = document.getElementById('remoteRelay');
@@ -108,26 +120,38 @@ const liveHint = document.getElementById('liveHint');
 const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
-if (!code) {
-  authFetch('/api/active-code').then(async (r) => {
-    if (r.status === 401) {
-      clearSessionToken();
-      location.replace('/?next=controller');
-      return;
-    }
-    const j = await r.json().catch(() => ({}));
-    const c = String((j && j.code) || '').trim();
-    if (c.length >= 4) {
-      try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
-      try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
-      return;
-    }
-    setTimeout(() => location.reload(), 2500);
-  }).catch(() => {
-    setTimeout(() => location.reload(), 2500);
-  });
-  throw new Error('code-redirect');
+if (!explicitCode) {
+  const stamp = (() => {
+    try { return sessionStorage.getItem('gamelleActiveCode') || ''; } catch (e) { return ''; }
+  })();
+  if (!code || stamp !== 'ready:' + code) {
+    authFetch('/api/active-code').then(async (r) => {
+      if (r.status === 401) {
+        clearSessionToken();
+        location.replace('/?next=controller');
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      const live = String((j && j.code) || '').trim();
+      if (live.length >= 4) {
+        rememberPairCode(live);
+        try { sessionStorage.setItem('gamelleActiveCode', 'ready:' + live); } catch (e) {}
+        if (live !== code) {
+          location.replace(controllerUrl());
+          return;
+        }
+      }
+      if (!code) {
+        setTimeout(() => location.reload(), 2500);
+        return;
+      }
+      try { sessionStorage.setItem('gamelleActiveCode', 'ready:' + code); } catch (e) {}
+      if (stamp !== 'ready:' + code) location.replace(controllerUrl());
+    }).catch(() => {
+      setTimeout(() => location.reload(), 2500);
+    });
+    throw new Error('code-redirect');
+  }
 }
 
 const sessionToken = readSessionToken();
@@ -162,6 +186,13 @@ const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainCont
 socket.on('connect', () => {
   authKicked = false;
   socket.emit('join', { code, role: 'controller' });
+});
+socket.on('active-code', (payload) => {
+  const live = String((payload && payload.code) || '').trim();
+  if (live.length < 4 || live === code) return;
+  rememberPairCode(live);
+  try { sessionStorage.setItem('gamelleActiveCode', 'ready:' + live); } catch (e) {}
+  location.replace(controllerUrl());
 });
 socket.on('auth-required', async () => {
   if (authRetrying || authKicked) return;

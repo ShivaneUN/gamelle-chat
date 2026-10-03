@@ -1356,6 +1356,47 @@ function broadcastRoomState(code, room) {
   });
 }
 
+function sendControllerSnapshot(sock, pair, room) {
+  const vol = Number(room.outputVolume);
+  sock.emit('room-state', {
+    schedules: room.schedules,
+    messages: room.messages,
+    media: controllerMedia(),
+    manualAlarm: room.manualAlarm || { messageId: '', duration: 30 },
+    screenOn: room.screenOn !== false,
+    camOn: !!room.camOn,
+    outputVolume: Number.isFinite(vol) ? Math.max(0, Math.min(100, Math.round(vol))) : 70,
+  });
+  sock.emit('active-code', { code: pair });
+  sock.emit(room.screenOn === false ? 'screen-off' : 'screen-on');
+  if (room.camOn) sock.emit('cam-status', { on: true });
+}
+
+/** Le téléphone peut avoir mémorisé un ancien code : on le ramène sur le récepteur. */
+function pullControllersTo(pair) {
+  if (!pair || !io || !io.sockets || !io.sockets.sockets) return;
+  for (const s of io.sockets.sockets.values()) {
+    if (!s || !s.data || s.data.role !== 'controller' || s.data.code === pair) continue;
+    const prev = s.data.code;
+    if (prev) {
+      try { s.leave(prev); } catch (e) {}
+      const old = rooms[prev];
+      if (old && old.controllerIds) {
+        old.controllerIds.delete(s.id);
+        emitPeers(prev, old);
+      }
+    }
+    let room;
+    try { room = getRoom(pair); } catch (e) { continue; }
+    s.join(pair);
+    s.data.code = pair;
+    room.controllerIds.add(s.id);
+    sendControllerSnapshot(s, pair, room);
+    emitPeers(pair, room);
+    emitDevices(pair);
+  }
+}
+
 io.on('connection', (socket) => {
   socket.on('join', ({ code, role }) => {
     if (role !== 'controller' && role !== 'receiver') {
@@ -1382,7 +1423,11 @@ io.on('connection', (socket) => {
       socket.disconnect(true);
       return;
     }
-    const pair = String(code || '').trim();
+    let pair = String(code || '').trim();
+    if (role === 'controller') {
+      const active = readActiveCode();
+      if (active && String(active).trim().length >= 4) pair = String(active).trim();
+    }
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
       return;
@@ -1402,7 +1447,9 @@ io.on('connection', (socket) => {
     if (role === 'receiver') {
       room.receiverId = socket.id;
       writeActiveCode(pair);
+      pullControllersTo(pair);
     }
+    if (role === 'controller') socket.emit('active-code', { code: pair });
 
     emitPeers(pair, room);
     if (role === 'receiver' || role === 'controller') emitDevices(pair);
