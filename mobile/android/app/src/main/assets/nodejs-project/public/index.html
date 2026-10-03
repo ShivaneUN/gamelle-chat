@@ -86,14 +86,35 @@
       return;
     }
     if (btn) btn.disabled = true;
-    fetch('/api/auth/login', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ username: username, password: password })
-    }).then(function (r) {
-      return r.json().then(function (j) { return { ok: r.ok, j: j }; }).catch(function () { return { ok: false, j: {} }; });
-    }).then(function (res) {
+    function postLogin() {
+      return fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }).catch(function () { return { ok: false, status: r.status, j: {} }; });
+      });
+    }
+    function oldServerAnswer(res) {
+      var j = (res && res.j) || {};
+      var err = String(j.error || '');
+      if (res && res.ok && j.ok && !j.token) return true;
+      if (err === 'Identifiants incorrects') return true;
+      if (j.code === 'SESSION_ACTIVE' || res.status === 409) return true;
+      return false;
+    }
+    var attempt = 0;
+    function tryLogin() {
+      attempt += 1;
+      return postLogin().then(function (res) {
+        var j = res.j || {};
+        if (res.ok && j.ok && j.token) return res;
+        if (attempt < 5 && oldServerAnswer(res)) return tryLogin();
+        return res;
+      });
+    }
+    tryLogin().then(function (res) {
       var j = res.j || {};
       if (!res.ok || !j.ok || !j.token) {
         if (errEl) errEl.textContent = j.error || 'Le serveur a refusé la connexion.';

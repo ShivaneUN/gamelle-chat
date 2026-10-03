@@ -782,7 +782,8 @@ app.post('/api/auth/login', (req, res) => {
       return sendLoginOk(req, res, user, current.token, false);
     }
 
-    if (userHasLiveController(user.id)) {
+    // Une vraie session encore ouverte bloque. Un socket resté après la déconnexion, non.
+    if (userHasLiveController(user.id) && findSessionsForUser(user.id).length) {
       return sendLoginFail(
         req,
         res,
@@ -791,6 +792,7 @@ app.post('/api/auth/login', (req, res) => {
         'SESSION_ACTIVE'
       );
     }
+    disconnectControllersForUser(user.id);
     destroySessionsForUser(user.id);
 
     const token = createSession(user.id);
