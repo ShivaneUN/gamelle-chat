@@ -159,10 +159,25 @@ let authKicked = false;
 let authRetrying = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
+let receiverOnline = false;
+function joinControllerRoom() {
+  if (!socket.connected) return;
+  socket.emit('join', { code, role: 'controller' });
+}
 socket.on('connect', () => {
   authKicked = false;
-  socket.emit('join', { code, role: 'controller' });
+  joinControllerRoom();
 });
+socket.on('join-error', () => {
+  authFetch('/api/active-code').then(async (r) => {
+    const j = await r.json().catch(() => ({}));
+    const c = String((j && j.code) || '').trim();
+    if (c.length >= 4 && socket.connected) socket.emit('join', { code: c, role: 'controller' });
+  }).catch(() => {});
+});
+setInterval(() => {
+  if (!receiverOnline) joinControllerRoom();
+}, 3000);
 socket.on('auth-required', async () => {
   if (authRetrying || authKicked) return;
   authRetrying = true;
@@ -219,6 +234,7 @@ socket.on('peers', ({ receiver, controllers, names }) => {
   const list = Array.isArray(names) ? names.filter(Boolean) : [];
   window.__GAMELLE_PEER_NAMES__ = list;
   peerControllerCount = Number(controllers) || 0;
+  receiverOnline = !!receiver;
   if (receiver) {
     const n = peerControllerCount;
     let extra = '';

@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -1424,8 +1425,10 @@ io.on('connection', (socket) => {
     let pair = String(code || '').trim();
     if (role === 'controller') {
       const active = String(readActiveCode() || '').trim();
-      const live = active && rooms[active];
-      if (live && live.receiverId) pair = active;
+      if (active.length >= 4) pair = active;
+      else {
+        try { pair = ensureActiveCode(); } catch (e) {}
+      }
     }
     if (!pair || pair.length < 4 || pair === 'undefined') {
       socket.emit('join-error', { error: 'Code de jumelage invalide' });
@@ -2013,6 +2016,19 @@ function checkScheduledAlarms() {
 }
 
 setInterval(checkScheduledAlarms, 5000);
+// Le téléphone peut être dans un autre salon : on le ramène sur le récepteur vivant.
+setInterval(() => {
+  const active = String(readActiveCode() || '').trim();
+  if (active.length < 4) return;
+  const room = rooms[active];
+  if (!room || !room.receiverId) return;
+  if (!io.sockets.sockets.get(room.receiverId)) {
+    room.receiverId = null;
+    return;
+  }
+  pullControllersTo(active);
+  emitPeers(active, room);
+}, 2000);
 // Premier passage tôt après démarrage (hydratation déjà faite).
 setTimeout(checkScheduledAlarms, 2000);
 
@@ -2048,22 +2064,46 @@ function getLocalIp() {
 const TUNNEL_PORT = Number(process.env.TUNNEL_PORT) || (PORT + 1);
 const httpOrigin = http.createServer(app);
 const httpOrigin6 = http.createServer(app);
+const httpOnMain = http.createServer(app);
 io.attach(httpOrigin);
 io.attach(httpOrigin6);
+io.attach(httpOnMain);
 httpOrigin.on('error', (err) => {
   console.warn('Origine tunnel HTTP:', err.message || err);
 });
 httpOrigin6.on('error', (err) => {
   console.warn('Origine tunnel HTTP v6:', err.message || err);
 });
-const server6 = createHttpsServer();
-io.attach(server6);
+httpOnMain.on('error', (err) => {
+  console.warn('HTTP port principal:', err.message || err);
+});
 server.on('error', (err) => {
   console.error('Serveur HTTPS:', err && err.message ? err.message : err);
 });
-server6.on('error', (err) => {
-  console.warn('HTTPS v6:', err && err.message ? err.message : err);
-});
+
+// Le domaine Cloudflare peut parler HTTP ou HTTPS vers le port 3000.
+// Premier octet 0x16 = TLS (tablette), sinon HTTP (ingress déjà réglé). Pas de --url.
+function routeFirstBytes(socket) {
+  socket.on('error', () => {});
+  socket.once('data', (buf) => {
+    socket.pause();
+    try { socket.unshift(buf); } catch (e) {}
+    const tls = !!(buf && buf.length && buf[0] === 22);
+    (tls ? server : httpOnMain).emit('connection', socket);
+    process.nextTick(() => { try { socket.resume(); } catch (e) {} });
+  });
+}
+
+function listenFront(port, host, onListening) {
+  const front = net.createServer(routeFirstBytes);
+  front.on('error', (err) => {
+    console.warn(`Écoute ${host}:${port}:`, err.message || err);
+  });
+  front.listen(port, host, () => {
+    if (onListening) onListening();
+  });
+  return front;
+}
 
 function logReady() {
   const ip = getLocalIp();
@@ -2082,12 +2122,11 @@ function logReady() {
   }
 }
 
-// HTTPS direct sur 3000 (tablette) et HTTP direct sur 3001 (ingress Cloudflare déjà réglé).
 // Le tunnel nommé ne reçoit pas --url : le domaine reste celui configuré dans Cloudflare.
 httpOrigin.listen(TUNNEL_PORT, '127.0.0.1');
 httpOrigin6.listen(TUNNEL_PORT, '::1');
-server6.listen(PORT, '::1');
-server.listen(PORT, '0.0.0.0', logReady);
+listenFront(PORT, '::1');
+listenFront(PORT, '0.0.0.0', logReady);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
