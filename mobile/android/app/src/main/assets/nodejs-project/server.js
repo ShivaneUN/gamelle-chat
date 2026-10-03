@@ -43,23 +43,6 @@ const STORE = storageRoot();
 
 const app = express();
 
-function setUncached(res) {
-  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.setHeader('CDN-Cache-Control', 'no-store');
-  res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
-  res.setHeader('Surrogate-Control', 'no-store');
-}
-
-// Le lien public est toujours /controller.html, sans ?v=.
-// Ces en-têtes empêchent le téléphone et Cloudflare de figer cette adresse.
-app.use((req, res, next) => {
-  if (String(req.path || '').startsWith('/media/')) return next();
-  setUncached(res);
-  next();
-});
-
 // --- Certificat HTTPS auto-signé, généré une seule fois et réutilisé ensuite ---
 // Nécessaire pour que le navigateur autorise la caméra et le micro sur une IP locale
 // (Chrome/Android bloque ces accès en http:// sauf sur localhost).
@@ -104,8 +87,7 @@ try {
 }
 const io = new Server(server, {
   maxHttpBufferSize: 5e7,
-  // 4G / tunnel Cloudflare : pings trop serrés → fausse déco contrôleur.
-  pingTimeout: 60000,
+  pingTimeout: 30000,
   pingInterval: 25000,
   cors: { origin: true, credentials: true },
 });
@@ -216,7 +198,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 function loadJsonFile(file, fallback) {
   try {
@@ -231,18 +212,8 @@ function loadJsonFile(file, fallback) {
 function saveJsonFile(file, data) {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, file);
-  } catch (e) {
-    console.error('saveJsonFile', file, e && e.message);
-    try {
-      fs.writeFileSync(file, JSON.stringify(data, null, 2));
-    } catch (e2) {
-      console.error('saveJsonFile.retry', file, e2 && e2.message);
-      throw e2;
-    }
-  }
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  } catch (e) {}
 }
 
 function isLocalRequest(req) {
@@ -259,26 +230,6 @@ function isLocalRequest(req) {
   const raw = String(req.socket && req.socket.remoteAddress || '');
   const ip = raw.replace(/^::ffff:/i, '');
   return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
-}
-
-function isPrivateIp(ip) {
-  const h = String(ip || '').replace(/^::ffff:/i, '').toLowerCase();
-  if (h === '127.0.0.1' || h === '::1' || h === 'localhost') return true;
-  if (/^10\.\d+\.\d+\.\d+$/.test(h)) return true;
-  if (/^192\.168\.\d+\.\d+$/.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(h)) return true;
-  return false;
-}
-
-function isLanRequest(req) {
-  if (!req) return false;
-  const headers = req.headers || {};
-  if (headers['cf-connecting-ip'] || headers['cf-ray'] || headers['cf-visitor']) return false;
-  const host = String(headers.host || '').split(':')[0].toLowerCase();
-  if (host.endsWith('.trycloudflare.com') || host === 'api.trycloudflare.com') return false;
-  if (host && host.includes('.') && host !== 'localhost' && !isPrivateIp(host)) return false;
-  const ip = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/i, '');
-  return isPrivateIp(ip);
 }
 
 function parseCookies(req) {
@@ -323,103 +274,20 @@ function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64).toString('hex');
 }
 
-function passwordVariants(password) {
-  const raw = String(password ?? '');
-  const out = [];
-  const add = (s) => {
-    if (!out.includes(s)) out.push(s);
-  };
-  add(raw);
-  try { add(raw.normalize('NFC')); } catch (e) {}
-  try { add(raw.normalize('NFD')); } catch (e) {}
-  const trimmed = raw.trim();
-  add(trimmed);
-  try { add(trimmed.normalize('NFC')); } catch (e) {}
-  try { add(trimmed.normalize('NFD')); } catch (e) {}
-  return out;
-}
-
-function normUser(s) {
-  return String(s || '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .trim()
-    .normalize('NFC')
-    .toLowerCase();
-}
-
-function findUserByName(accounts, username) {
-  const want = normUser(username);
-  if (!want || !accounts || !Array.isArray(accounts.users)) return null;
-  return accounts.users.find((u) => u && u.username && normUser(u.username) === want) || null;
-}
-
-function accountNames(accounts) {
-  return (accounts && accounts.users || [])
-    .map((u) => (u && u.username ? String(u.username) : ''))
-    .filter(Boolean);
-}
-
-function passwordMatches(user, password) {
-  const hashHex = String(user && user.passHash || '').trim().toLowerCase();
-  const salt = String(user && user.salt || '');
-  if (!/^[0-9a-f]+$/i.test(hashHex) || hashHex.length < 32 || !salt) return false;
-  const expected = Buffer.from(hashHex, 'hex');
-  if (!expected.length) return false;
-  for (const candidate of passwordVariants(password)) {
-    const hash = hashPassword(candidate, salt);
-    const got = Buffer.from(hash, 'hex');
-    if (got.length === expected.length && crypto.timingSafeEqual(got, expected)) return true;
-  }
-  return false;
-}
-
 function publicUser(u) {
   return { id: u.id, username: u.username, createdAt: u.createdAt || null };
 }
 
-function getUserByToken(token) {
-  const t = String(token || '').trim();
-  if (!t) return null;
+function getSessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
   const sessions = readSessions();
-  const s = sessions.sessions.find((x) => x && x.token === t);
+  const s = sessions.sessions.find((x) => x && x.token === token);
   if (!s) return null;
-  const ageMs = Date.now() - Number(s.createdAt || 0);
-  if (Number.isFinite(ageMs) && ageMs > SESSION_MAX_AGE_SEC * 1000) {
-    destroySession(t);
-    return null;
-  }
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x && x.id === s.userId);
   if (!u) return null;
-  return { id: u.id, username: u.username, token: t };
-}
-
-function extractSessionToken(req) {
-  if (!req) return '';
-  const fromCookie = parseCookies(req)[SESSION_COOKIE];
-  if (fromCookie) return String(fromCookie);
-  const auth = String((req.headers && req.headers.authorization) || '');
-  if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, '').trim();
-  // Fallback query (login → controller quand le navigateur bloque les cookies).
-  try {
-    if (req.query && req.query.access) return String(req.query.access).trim();
-  } catch (e) {}
-  return '';
-}
-
-function getSessionUser(req) {
-  return getUserByToken(extractSessionToken(req));
-}
-
-function getSocketSessionUser(socket) {
-  if (!socket) return null;
-  const fromReq = getSessionUser(socket.request);
-  if (fromReq) return fromReq;
-  const auth = (socket.handshake && socket.handshake.auth) || {};
-  if (auth.token) return getUserByToken(auth.token);
-  const q = (socket.handshake && socket.handshake.query) || {};
-  if (q.access) return getUserByToken(q.access);
-  return null;
+  return { id: u.id, username: u.username, token };
 }
 
 function createSession(userId) {
@@ -446,145 +314,49 @@ function destroySession(token) {
   writeSessions(sessions);
 }
 
-function destroySessionsForUser(userId) {
-  if (!userId) return;
-  const sessions = readSessions();
-  sessions.sessions = sessions.sessions.filter((s) => !(s && s.userId === userId));
-  writeSessions(sessions);
-}
-
-/** Déconnecte les sockets contrôleur encore liés à ce compte (session reprise ailleurs). */
-function disconnectControllersForUser(userId, exceptSocketId) {
-  if (!userId || !io || !io.sockets || !io.sockets.sockets) return;
-  for (const s of io.sockets.sockets.values()) {
-    if (!s || s.id === exceptSocketId) continue;
-    if (s.data && s.data.role === 'controller' && s.data.userId === userId) {
-      try { s.emit('session-replaced', { error: 'Compte reconnecté ailleurs' }); } catch (e) {}
-      try { s.disconnect(true); } catch (e) {}
-    }
-  }
-}
-
-function touchSession(token) {
-  if (!token) return;
-  const sessions = readSessions();
-  const s = sessions.sessions.find((x) => x && x.token === token);
-  if (!s) return;
-  const now = Date.now();
-  // Evite d'écrire le JSON à chaque join/ping (flash Android / crash IO).
-  if (s.lastSeen && now - Number(s.lastSeen) < 60 * 1000) return;
-  s.lastSeen = now;
-  writeSessions(sessions);
-}
-
-function requestIsHttps(req) {
-  if (req && req.secure) return true;
-  const xf = String((req && req.headers && req.headers['x-forwarded-proto']) || '');
-  if (xf.includes('https')) return true;
-  const host = String((req && req.headers && req.headers.host) || '').split(':')[0].toLowerCase();
-  // Tunnel nommé : cloudflared parle en HTTP au serveur, le téléphone est en HTTPS.
-  return !!(host && host.includes('.') && host !== 'localhost' && !isPrivateIp(host));
-}
-
 function setSessionCookie(res, token, req) {
-  const secure = requestIsHttps(req);
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
   let c = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SEC}`;
   if (secure) c += '; Secure';
-  // setHeader (pas append) : certains reverse-proxy / Express 5 gèrent mal multi Set-Cookie.
-  res.setHeader('Set-Cookie', c);
+  res.append('Set-Cookie', c);
 }
 
 function clearSessionCookie(res, req) {
-  const secure = requestIsHttps(req);
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
   let c = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   if (secure) c += '; Secure';
-  res.setHeader('Set-Cookie', c);
+  res.append('Set-Cookie', c);
 }
 
 function htmlWithAbsoluteLogo(html, req) {
-  let base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
-  if (base.startsWith('http://') && requestIsHttps(req)) base = 'https://' + base.slice('http://'.length);
+  const base = (publicUrl || `${req.protocol}://${req.get('host') || 'localhost'}`).replace(/\/$/, '');
   return String(html || '')
     .replace(/content="\/logo\.png"/g, `content="${base}/logo.png"`)
     .replace(/href="\/(favicon-[^"]+|apple-touch-icon\.png)"/g, `href="${base}/$1"`);
 }
 
-function escapeHtml(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function htmlFreshnessGuard(version) {
-  const ver = String(version || '');
-  if (!ver) return '';
-  const meta = `<meta name="gamelle-version" content="${ver.replace(/"/g, '')}">`;
-  const script = `<script>(function(){var pageVer=${JSON.stringify(ver)};` +
-    `fetch("/api/info",{cache:"no-store",credentials:"same-origin"})` +
-    `.then(function(r){return r.json()})` +
-    `.then(function(info){var live=info&&String(info.version||"");if(!live||live===pageVer)return;` +
-    `try{if(sessionStorage.getItem("gamelle-html-reload")===live)return;sessionStorage.setItem("gamelle-html-reload",live)}catch(e){}` +
-    `fetch(location.pathname+location.search,{cache:"reload",credentials:"same-origin",headers:{Accept:"text/html"}})` +
-    `.then(function(r){return r.text()})` +
-    `.then(function(html){if(!html||html.indexOf('name="gamelle-version" content="'+live+'"')<0)return;document.open();document.write(html);document.close()})` +
-    `}).catch(function(){})})();</script>`;
-  return meta + script;
-}
-
-function sendHtml(res, req, file, extra) {
+function sendHtml(res, req, file) {
   const full = path.join(__dirname, 'public', file);
   fs.readFile(full, 'utf8', (err, html) => {
     if (err) {
       res.status(404).send('Not found');
       return;
     }
-    const info = extra || {};
-    const version = info.version || updater.pkgVersion();
-    let out = htmlWithAbsoluteLogo(html, req)
-      .replace('<!--LOGIN_ERROR-->', escapeHtml(info.error || ''))
-      .replace(/<!--SERVER_VER-->/g, escapeHtml(version));
-    if (out.includes('<head>') && !out.includes('name="gamelle-version"')) {
-      out = out.replace('<head>', '<head>' + htmlFreshnessGuard(version));
-    }
-    const assetVer = encodeURIComponent(version);
-    out = out.replace(
-      /(src|href)="(\/[^"]+?\.(?:js|css))(?:\?[^"]*)?"/gi,
-      (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
-    );
-    setUncached(res);
-    res.type('html').send(out);
+    res.type('html').send(htmlWithAbsoluteLogo(html, req));
   });
 }
 
-app.get(['/', '/index.html', '/login'], (req, res) => {
-  let user = null;
-  try { user = getSessionUser(req); } catch (e) { user = null; }
-  if (user && !req.query.e) {
-    return res.redirect(302, '/controller.html?access=' + encodeURIComponent(user.token));
+app.get(['/', '/index.html'], (req, res) => {
+  const user = getSessionUser(req);
+  if (user) {
+    return res.redirect(302, '/controller.html');
   }
-  sendHtml(res, req, 'index.html', {
-    error: String(req.query.e || ''),
-    version: updater.pkgVersion(),
-  });
+  sendHtml(res, req, 'index.html');
 });
 
 app.get('/controller.html', (req, res) => {
-  // access=<token> : pose un cookie si possible, puis sert la page (pas de redirect
-  // qui re-demanderait le cookie — critique quand Safari/CF bloque HttpOnly).
-  const access = String((req.query && req.query.access) || '').trim();
-  if (access) {
-    const user = getUserByToken(access);
-    if (!user) return res.redirect(302, '/?next=controller&reason=session');
-    setSessionCookie(res, access, req);
-    return sendHtml(res, req, 'controller.html');
-  }
-  if (!isLanRequest(req) && !getSessionUser(req)) {
-    return sendHtml(res, req, 'index.html', {
-      error: '',
-      version: updater.pkgVersion(),
-    });
+  if (!getSessionUser(req)) {
+    return res.redirect(302, '/?next=controller');
   }
   sendHtml(res, req, 'controller.html');
 });
@@ -593,29 +365,15 @@ app.get('/receiver.html', (req, res) => {
   sendHtml(res, req, 'receiver.html');
 });
 
-app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders(res, filePath) {
-    if (/\.(js|mjs|css|html)$/i.test(String(filePath || ''))) setUncached(res);
-  },
-}));
-
-function requireSessionOrLocal(req, res, next) {
-  if (isLocalRequest(req) || getSessionUser(req)) return next();
-  res.status(401).type('text').send('Connexion requise');
-}
-app.use('/media/receiver', requireSessionOrLocal, express.static(RECEIVER_DIR));
-app.use('/media/controller', requireSessionOrLocal, express.static(CONTROLLER_DIR));
-app.use('/media/audio', requireSessionOrLocal, express.static(AUDIO_DIR));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/media/receiver', express.static(RECEIVER_DIR));
+app.use('/media/controller', express.static(CONTROLLER_DIR));
+app.use('/media/audio', express.static(AUDIO_DIR));
 
 app.get('/api/auth/me', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.json({ ok: true, authenticated: false });
-  res.json({
-    ok: true,
-    authenticated: true,
-    user: { id: user.id, username: user.username },
-    token: user.token,
-  });
+  res.json({ ok: true, authenticated: true, user: { id: user.id, username: user.username } });
 });
 
 app.get('/api/auth/users', (req, res) => {
@@ -664,78 +422,44 @@ function findSessionsForUser(userId) {
   return sessions.sessions.filter((s) => s && s.userId === userId);
 }
 
-function wantsJsonLogin(req) {
-  const ct = String((req.headers && req.headers['content-type']) || '');
-  const accept = String((req.headers && req.headers.accept) || '');
-  return ct.includes('application/json') || accept.includes('application/json');
-}
-
-function sendLoginFail(req, res, status, error, code) {
-  if (wantsJsonLogin(req)) return res.status(status).json({ ok: false, error, code: code || '' });
-  return res.redirect(302, '/login?e=' + encodeURIComponent(error));
-}
-
-function sendLoginOk(req, res, user, token, replaced) {
-  try { setSessionCookie(res, token, req); } catch (e) {}
-  if (wantsJsonLogin(req)) {
-    return res.json({ ok: true, user: publicUser(user), token, replaced: !!replaced });
-  }
-  return res.redirect(302, '/controller.html?access=' + encodeURIComponent(token));
-}
-
 app.post('/api/auth/login', (req, res) => {
-  try {
-    const body = (req.body && typeof req.body === 'object') ? req.body : {};
-    const username = String(body['gamelle-id'] || body['gamelle-user'] || body.username || '').trim();
-    const password = String(body['gamelle-secret'] || body['gamelle-pass'] || body.password || '');
-    const accounts = readAccounts();
-    if (!username || !password) {
-      return sendLoginFail(req, res, 401, 'Identifiant et mot de passe requis.', 'empty');
-    }
-    if (!accounts.users.length) {
-      return sendLoginFail(req, res, 401, 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.', 'no-accounts');
-    }
-    const user = findUserByName(accounts, username);
-    const known = accountNames(accounts);
-    if (!user || !user.salt || !user.passHash) {
-      const error = known.length
-        ? `Pas de compte « ${username} ». Comptes sur la tablette : ${known.join(', ')}.`
-        : 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.';
-      return sendLoginFail(req, res, 401, error, 'unknown-user');
-    }
-    let ok = false;
-    try {
-      ok = passwordMatches(user, password);
-    } catch (e) {
-      return sendLoginFail(req, res, 500, 'Vérification impossible. Sur la tablette : Comptes → clé → Nouveau mot de passe.', 'verify-failed');
-    }
-    if (!ok) {
-      return sendLoginFail(req, res, 401, `Mot de passe incorrect pour « ${user.username} ».`, 'bad-password');
-    }
-
-    let current = null;
-    try { current = getSessionUser(req); } catch (e) { current = null; }
-    if (current && current.id === user.id) {
-      try { touchSession(current.token); } catch (e) {}
-      return sendLoginOk(req, res, user, current.token, false);
-    }
-
-    const existing = findSessionsForUser(user.id);
-    if (existing.length > 0) {
-      destroySessionsForUser(user.id);
-      disconnectControllersForUser(user.id);
-    }
-
-    const token = createSession(user.id);
-    const check = readSessions().sessions.find((s) => s && s.token === token);
-    if (!check) {
-      return sendLoginFail(req, res, 500, 'Impossible d’enregistrer la session. Réessaie.', 'session');
-    }
-    return sendLoginOk(req, res, user, token, existing.length > 0);
-  } catch (e) {
-    console.error('login', e && e.message);
-    return sendLoginFail(req, res, 500, 'Connexion impossible. Réessaie.', 'crash');
+  const username = String((req.body && req.body.username) || '').trim();
+  const password = String((req.body && req.body.password) || '');
+  const accounts = readAccounts();
+  const user = accounts.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+  if (!user || !user.salt || !user.passHash) {
+    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
   }
+  let ok = false;
+  try {
+    const hash = hashPassword(password, user.salt);
+    ok = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passHash, 'hex'));
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
+    return res.status(401).json({ ok: false, error: 'Identifiants incorrects' });
+  }
+
+  // Déjà connecté sur CET appareil (même cookie) → OK, pas de nouvelle session.
+  const current = getSessionUser(req);
+  if (current && current.id === user.id) {
+    return res.json({ ok: true, user: publicUser(user) });
+  }
+
+  // Une session existe déjà ailleurs → refuser (pas de déco auto du 1er device).
+  const existing = findSessionsForUser(user.id);
+  if (existing.length > 0) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Ce compte est déjà connecté sur un autre appareil. Déconnecte-toi là-bas avant de te connecter ici.',
+      code: 'SESSION_ACTIVE',
+    });
+  }
+
+  const token = createSession(user.id);
+  setSessionCookie(res, token, req);
+  res.json({ ok: true, user: publicUser(user) });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -743,24 +467,6 @@ app.post('/api/auth/logout', (req, res) => {
   if (user && user.token) destroySession(user.token);
   clearSessionCookie(res, req);
   res.json({ ok: true });
-});
-
-app.post('/api/auth/users/:id/password', (req, res) => {
-  if (!isLocalRequest(req)) {
-    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
-  }
-  const password = String((req.body && req.body.password) || '');
-  if (password.length < 4 || password.length > 128) {
-    return res.status(400).json({ ok: false, error: 'Mot de passe trop court' });
-  }
-  const accounts = readAccounts();
-  const user = accounts.users.find((u) => u && String(u.id) === String(req.params.id || ''));
-  if (!user) return res.status(404).json({ ok: false, error: 'Compte introuvable' });
-  user.salt = crypto.randomBytes(16).toString('hex');
-  user.passHash = hashPassword(password, user.salt);
-  writeAccounts(accounts);
-  destroySessionsForUser(user.id);
-  res.json({ ok: true, user: publicUser(user) });
 });
 
 app.delete('/api/auth/users/:id', (req, res) => {
@@ -862,38 +568,17 @@ function readNativePublicUrl() {
   return null;
 }
 
-app.get('/api/info', (req, res) => {
-  const trusted = isLocalRequest(req) || !!getSessionUser(req);
-  const body = {
+app.get('/api/info', (_req, res) => {
+  res.json({
     publicUrl: publicUrl || readNativePublicUrl(),
+    localUrl: `https://${getLocalIp()}:${PORT}`,
     version: updater.pkgVersion(),
-  };
-  if (trusted) {
-    body.localUrl = `https://${getLocalIp()}:${PORT}`;
-    body.pairCode = readActiveCode();
-  }
-  res.json(body);
+    pairCode: readActiveCode(),
+  });
 });
 
-app.get('/api/active-code', (req, res) => {
-  if (!isLocalRequest(req) && !getSessionUser(req)) {
-    return res.status(401).json({ ok: false, error: 'Connexion requise' });
-  }
+app.get('/api/active-code', (_req, res) => {
   res.json({ code: readActiveCode() });
-});
-
-const linkState = {
-  code: String(Math.floor(100000 + Math.random() * 900000)),
-};
-const pendingSatellites = new Map();
-
-app.get('/api/link', (req, res) => {
-  if (!isLocalRequest(req)) {
-    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
-  }
-  const room = readActiveCode();
-  const url = `https://${getLocalIp()}:${PORT}/satellite.html?k=${linkState.code}&c=${encodeURIComponent(room)}`;
-  res.json({ ok: true, code: linkState.code, url });
 });
 
 app.post('/api/alarm-stop', (_req, res) => {
@@ -908,9 +593,7 @@ app.get('/api/alarm-stop', (_req, res) => {
 app.get('/c/:code', (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
-  if (!isLanRequest(req) && !getSessionUser(req)) {
-    return res.redirect(302, '/?next=controller&code=' + encodeURIComponent(code));
-  }
+  if (!getSessionUser(req)) return res.redirect(302, '/?next=controller');
   try {
     res.setHeader('Cache-Control', 'no-store');
   } catch (e) {}
@@ -1083,7 +766,7 @@ function normalizeSchedule(s) {
 
 function resolveAlarmSound(room, id) {
   if (!id) return null;
-  if (id === 'beep' || id === 'chime' || id === 'bell' || id === 'siren' || id === 'alert' || id === 'ding' || id === 'whistle' || id === 'knock' || id === 'phone' || id === 'horn') {
+  if (id === 'beep' || id === 'chime') {
     return { type: 'builtin', id };
   }
   const msg = (room.messages || []).find((m) => m.id === id);
@@ -1146,8 +829,6 @@ function getRoom(code) {
       _lastFired: lastFired,
       controllerIds: new Set(),
       receiverId: null,
-      satelliteId: null,
-      names: { main: 'Tablette', cam2: 'Caméra 2' },
       camOn: false,
       screenOn: true,
       cameras: [],
@@ -1195,66 +876,6 @@ function emitToRole(code, role, event, payload) {
     const s = io.sockets.sockets.get(id);
     if (s && s.data.role === role) s.emit(event, payload);
   });
-}
-
-function deviceSnapshot(code) {
-  const room = rooms[code];
-  if (!room) return { main: false, satellite: false, pending: [] };
-  const pending = [];
-  pendingSatellites.forEach((id, guest) => {
-    if (io.sockets.sockets.get(id)) pending.push(String(guest));
-  });
-  if (!room.names) room.names = { main: 'Tablette', cam2: 'Caméra 2' };
-  const satelliteOn = !!(room.satelliteId && io.sockets.sockets.get(room.satelliteId));
-  if (satelliteOn) room.hadSatellite = true;
-  return {
-    main: !!(room.receiverId && io.sockets.sockets.get(room.receiverId)),
-    satellite: satelliteOn,
-    satelliteKnown: !!room.hadSatellite,
-    names: room.names,
-    mediaSync: !!room.mediaSync,
-    pending,
-  };
-}
-
-function emitDevices(code) {
-  if (!code) return;
-  const snap = deviceSnapshot(code);
-  emitToRole(code, 'receiver', 'devices', snap);
-  emitToRole(code, 'controller', 'devices', snap);
-  emitToRole(code, 'satellite', 'devices', snap);
-}
-
-function emitToTargets(code, target, event, payload) {
-  const room = rooms[code];
-  if (!room) return;
-  const all = !target || target === 'all' || target === 'ensemble';
-  if (all || target === 'main') {
-    const s = room.receiverId && io.sockets.sockets.get(room.receiverId);
-    if (s) s.emit(event, payload);
-  }
-  if (all || target === 'cam2') {
-    const s = room.satelliteId && io.sockets.sockets.get(room.satelliteId);
-    if (s) s.emit(event, payload);
-  }
-}
-
-function acceptSatellite(sock, roomCode) {
-  if (!sock || !roomCode) return;
-  const room = getRoom(roomCode);
-  if (room.satelliteId && room.satelliteId !== sock.id) {
-    const prev = io.sockets.sockets.get(room.satelliteId);
-    if (prev) {
-      try { prev.disconnect(true); } catch (e) {}
-    }
-  }
-  sock.join(roomCode);
-  sock.data.code = roomCode;
-  sock.data.role = 'satellite';
-  sock.data.deviceId = 'cam2';
-  room.satelliteId = sock.id;
-  sock.emit('satellite-ok', { name: 'Caméra 2' });
-  emitDevices(roomCode);
 }
 
 /** Relais live JPEG : volatile si dispo (drop sous charge 4G), sinon emit normal. */
@@ -1330,29 +951,15 @@ function broadcastRoomState(code, room) {
 
 io.on('connection', (socket) => {
   socket.on('join', ({ code, role }) => {
-    if (role !== 'controller' && role !== 'receiver') {
-      socket.emit('join-error', { error: 'Rôle invalide' });
-      return;
-    }
     if (role === 'controller') {
-      const user = getSocketSessionUser(socket);
-      if (!user && !isLanRequest(socket.request)) {
+      const user = getSessionUser(socket.request);
+      if (!user) {
         socket.emit('auth-required', { error: 'Connexion requise' });
         socket.disconnect(true);
         return;
       }
-      if (user) {
-        socket.data.userId = user.id;
-        socket.data.username = user.username;
-        touchSession(user.token);
-      } else {
-        socket.data.username = 'Local';
-      }
-    }
-    if (role === 'receiver' && !isLocalRequest(socket.request)) {
-      socket.emit('join-error', { error: 'Récepteur réservé à la tablette' });
-      socket.disconnect(true);
-      return;
+      socket.data.userId = user.id;
+      socket.data.username = user.username;
     }
     const pair = String(code || '').trim();
     if (!pair || pair.length < 4 || pair === 'undefined') {
@@ -1377,7 +984,6 @@ io.on('connection', (socket) => {
     }
 
     emitPeers(pair, room);
-    if (role === 'receiver' || role === 'controller') emitDevices(pair);
 
     const media = role === 'receiver' ? receiverMedia() : controllerMedia();
     const joinVol = Number(room.outputVolume);
@@ -1415,80 +1021,12 @@ io.on('connection', (socket) => {
   // --- Relais WebRTC (signaling) : channel 'cam' (récepteur->contrôleur) ou 'talk' (contrôleur->récepteur) ---
   socket.on('signal', (payload) => {
     if (!socket.data.code) return;
-    if (socket.data.role === 'receiver') {
-      emitToRole(socket.data.code, 'controller', 'signal', payload);
-    } else if (socket.data.role === 'controller') {
-      emitToRole(socket.data.code, 'receiver', 'signal', payload);
-    }
+    socket.to(socket.data.code).emit('signal', payload);
   });
 
   // Relais caméra JPEG : un seul envoi aux contrôleurs (évite le double flux qui tuait les FPS)
-  socket.on('satellite-hello', ({ k } = {}) => {
-    const roomCode = readActiveCode();
-    if (!roomCode) {
-      socket.emit('satellite-wait', { error: 'Tablette principale pas prête' });
-      return;
-    }
-    const key = String(k || '').trim();
-    if (key && key === linkState.code) {
-      acceptSatellite(socket, roomCode);
-      return;
-    }
-    const guest = String(Math.floor(100000 + Math.random() * 900000));
-    pendingSatellites.set(guest, socket.id);
-    socket.data.pendingGuest = guest;
-    socket.emit('satellite-wait', { guest });
-    emitDevices(roomCode);
-  });
-
-  socket.on('accept-guest', ({ guest } = {}) => {
-    if (socket.data.role !== 'receiver' || !isLocalRequest(socket.request)) return;
-    const code = String(guest || '').trim();
-    const id = pendingSatellites.get(code);
-    const other = id && io.sockets.sockets.get(id);
-    if (!other) return;
-    pendingSatellites.delete(code);
-    acceptSatellite(other, socket.data.code);
-  });
-
-  socket.on('rename-device', ({ id, name } = {}) => {
-    if (!socket.data.code) return;
-    if (socket.data.role !== 'receiver' && socket.data.role !== 'controller') return;
-    if (id !== 'main' && id !== 'cam2') return;
-    const clean = String(name || '').trim().slice(0, 24);
-    if (!clean) return;
-    const room = getRoom(socket.data.code);
-    if (!room.names) room.names = { main: 'Tablette', cam2: 'Caméra 2' };
-    room.names[id] = clean;
-    emitDevices(socket.data.code);
-  });
-
-  socket.on('drop-satellite', () => {
-    if (socket.data.role !== 'receiver' || !socket.data.code) return;
-    const room = getRoom(socket.data.code);
-    const other = room.satelliteId && io.sockets.sockets.get(room.satelliteId);
-    if (other) {
-      try { other.disconnect(true); } catch (e) {}
-    }
-    room.satelliteId = null;
-    emitDevices(socket.data.code);
-  });
-
   socket.on('live-frame', (data) => {
-    if (!socket.data.code || (socket.data.role !== 'receiver' && socket.data.role !== 'satellite')) return;
-    if (socket.data.role === 'satellite') {
-      let jpeg = null;
-      if (typeof data === 'string') jpeg = data;
-      else if (data && typeof data.jpeg === 'string') jpeg = data.jpeg;
-      else if (Buffer.isBuffer(data)) jpeg = data.toString('base64');
-      if (!jpeg) return;
-      const packet = { deviceId: 'cam2', jpeg };
-      emitToRole(socket.data.code, 'controller', 'live-frame', packet);
-      const room = rooms[socket.data.code];
-      const main = room && room.receiverId && io.sockets.sockets.get(room.receiverId);
-      if (main) main.emit('live-frame', packet);
-      return;
-    }
+    if (!socket.data.code || socket.data.role !== 'receiver') return;
     let out = null;
     let forApi = null;
     if (typeof data === 'string') {
@@ -1525,25 +1063,9 @@ io.on('connection', (socket) => {
   socket.on('talk-audio', (payload) => {
     if (!socket.data.code || !payload) return;
     if (socket.data.role === 'controller') {
-      const target = (payload && payload.target) || 'main';
-      if (target === 'all' || target === 'main') {
-        emitToRole(socket.data.code, 'receiver', 'talk-audio', payload);
-      }
-      if (target === 'all' || target === 'cam2') {
-        const room = rooms[socket.data.code];
-        const sat = room && room.satelliteId && io.sockets.sockets.get(room.satelliteId);
-        if (sat) sat.emit('talk-audio', payload);
-      }
-    } else if (socket.data.role === 'receiver' || socket.data.role === 'satellite') {
+      emitToRole(socket.data.code, 'receiver', 'talk-audio', payload);
+    } else if (socket.data.role === 'receiver') {
       emitToRole(socket.data.code, 'controller', 'talk-audio', payload);
-      if (socket.data.role === 'receiver') {
-        const target = payload && payload.target;
-        if (target === 'all' || target === 'cam2') {
-          const room = rooms[socket.data.code];
-          const sat = room && room.satelliteId && io.sockets.sockets.get(room.satelliteId);
-          if (sat) sat.emit('talk-audio', payload);
-        }
-      }
     }
   });
 
@@ -1595,7 +1117,7 @@ io.on('connection', (socket) => {
     broadcastRoomState(socket.data.code, room);
   });
 
-  socket.on('update-manual-alarm', ({ messageId, duration, sound1, sound2, title }) => {
+  socket.on('update-manual-alarm', ({ messageId, duration, sound1, sound2 }) => {
     if (!socket.data.code) return;
     const room = getRoom(socket.data.code);
     if (!room.manualAlarm) room.manualAlarm = { messageId: '', sound1: 'beep', sound2: '', duration: 30 };
@@ -1604,10 +1126,6 @@ io.on('connection', (socket) => {
     if (sound2 !== undefined) room.manualAlarm.sound2 = sound2 || '';
     if (sound2 !== undefined && messageId === undefined) room.manualAlarm.messageId = sound2 || '';
     if (duration !== undefined) room.manualAlarm.duration = Math.min(120, Math.max(5, Number(duration) || 30));
-    if (title !== undefined) {
-      const text = String(title || '').trim().slice(0, 40);
-      room.manualAlarm.title = text || "C'est l'heure !";
-    }
     persist();
     broadcastRoomState(socket.data.code, room);
   });
@@ -1716,65 +1234,32 @@ io.on('connection', (socket) => {
     getRoom(socket.data.code).cameras = cams || [];
     emitToRole(socket.data.code, 'controller', 'camera-list', cams);
   });
-  socket.on('switch-camera', (payload) => {
-    if (!socket.data.code) return;
-    emitToTargets(socket.data.code, payload && payload.target, 'switch-camera', payload);
-  });
-  socket.on('torch', (payload) => {
-    if (!socket.data.code) return;
-    emitToTargets(socket.data.code, payload && payload.target, 'torch', payload);
-  });
+  socket.on('switch-camera', (payload) => emitToRole(socket.data.code, 'receiver', 'switch-camera', payload));
+  socket.on('torch', (payload) => emitToRole(socket.data.code, 'receiver', 'torch', payload));
   socket.on('torch-status', (payload) => emitToRole(socket.data.code, 'controller', 'torch-status', payload));
 
-  socket.on('set-media-sync', (payload) => {
+  socket.on('take-photo', () => emitToRole(socket.data.code, 'receiver', 'take-photo'));
+  socket.on('screen-on', () => {
     if (!socket.data.code) return;
-    if (socket.data.role !== 'receiver' && socket.data.role !== 'controller') return;
     const room = getRoom(socket.data.code);
-    room.mediaSync = !!(payload && payload.on);
-    const msg = { on: room.mediaSync };
-    emitToRole(socket.data.code, 'receiver', 'media-sync', msg);
-    emitToRole(socket.data.code, 'controller', 'media-sync', msg);
-  });
-
-  socket.on('take-photo', (payload) => {
-    if (!socket.data.code) return;
-    const target = (payload && payload.target) || 'main';
-    emitToTargets(socket.data.code, target, 'take-photo', payload || {});
-  });
-  socket.on('screen-on', (payload) => {
-    if (!socket.data.code) return;
-    const target = (payload && payload.target) || 'main';
-    const room = getRoom(socket.data.code);
-    if (target === 'all' || target === 'main') {
-      room.screenOn = true;
-      if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
-      notifyFlutter('screen', 'on');
-    }
-    emitToTargets(socket.data.code, target, 'screen-on', payload || {});
+    room.screenOn = true;
+    // Choix explicite pendant une alarme → ne pas forcer le retour off.
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
+    notifyFlutter('screen', 'on');
+    emitToRole(socket.data.code, 'receiver', 'screen-on');
     emitToRole(socket.data.code, 'controller', 'screen-on');
   });
-  socket.on('screen-off', (payload) => {
+  socket.on('screen-off', () => {
     if (!socket.data.code) return;
-    const target = (payload && payload.target) || 'main';
     const room = getRoom(socket.data.code);
-    if (target === 'all' || target === 'main') {
-      room.screenOn = false;
-      if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
-      notifyFlutter('screen', 'off');
-    }
-    emitToTargets(socket.data.code, target, 'screen-off', payload || {});
+    room.screenOn = false;
+    if (room._restoreScreenOff !== undefined) room._restoreScreenOff = false;
+    notifyFlutter('screen', 'off');
+    emitToRole(socket.data.code, 'receiver', 'screen-off');
     emitToRole(socket.data.code, 'controller', 'screen-off');
   });
-  socket.on('start-video', (payload) => {
-    if (!socket.data.code) return;
-    const target = (payload && payload.target) || 'main';
-    emitToTargets(socket.data.code, target, 'start-video', payload || {});
-  });
-  socket.on('stop-video', (payload) => {
-    if (!socket.data.code) return;
-    const target = (payload && payload.target) || 'main';
-    emitToTargets(socket.data.code, target, 'stop-video', payload || {});
-  });
+  socket.on('start-video', () => emitToRole(socket.data.code, 'receiver', 'start-video'));
+  socket.on('stop-video', () => emitToRole(socket.data.code, 'receiver', 'stop-video'));
 
   // --- Réception du média capturé par le récepteur : permanent + copie purgeable ---
   socket.on('media-captured', ({ type, data, ext }) => {
@@ -1815,15 +1300,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    if (socket.data.pendingGuest) pendingSatellites.delete(socket.data.pendingGuest);
     const code = socket.data.code;
     if (!code) return;
     const room = getRoom(code);
     room.controllerIds.delete(socket.id);
-    if (room.satelliteId === socket.id) {
-      room.satelliteId = null;
-      emitDevices(code);
-    }
     if (room.receiverId === socket.id) {
       room.receiverId = null;
       room.camOn = false;
@@ -1858,7 +1338,6 @@ function startRoomAlarm(code, { messageId, duration, text, audioUrl, name, sound
     audioUrl: firstMsg.audioUrl || audioUrl || null,
     duration: dur,
     sequence: seq,
-    title: (room.manualAlarm && room.manualAlarm.title) || "C'est l'heure !",
   };
   room._alarmUntil = Date.now() + dur * 1000;
   // Mémorise si l’écran était off avant l’alarme (pour le remettre après).

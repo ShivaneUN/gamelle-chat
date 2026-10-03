@@ -9,6 +9,7 @@ nodejs-project/node_modules/body-parser
 nodejs-project/node_modules/bytes
 nodejs-project/node_modules/call-bind-apply-helpers
 nodejs-project/node_modules/call-bound
+nodejs-project/node_modules/cloudflared
 nodejs-project/node_modules/content-disposition
 nodejs-project/node_modules/content-type
 nodejs-project/node_modules/cookie
@@ -113,6 +114,9 @@ nodejs-project/node_modules/call-bind-apply-helpers/.github
 nodejs-project/node_modules/call-bind-apply-helpers/test
 nodejs-project/node_modules/call-bound/.github
 nodejs-project/node_modules/call-bound/test
+nodejs-project/node_modules/cloudflared/bin
+nodejs-project/node_modules/cloudflared/lib
+nodejs-project/node_modules/cloudflared/scripts
 nodejs-project/node_modules/cors/lib
 nodejs-project/node_modules/debug/src
 nodejs-project/node_modules/depd/lib

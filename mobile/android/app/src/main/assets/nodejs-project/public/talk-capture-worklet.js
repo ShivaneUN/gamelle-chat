@@ -4,14 +4,8 @@ class TalkCapture extends AudioWorkletProcessor {
     this._buf = new Float32Array(2048);
     this._n = 0;
   }
-  process(inputs, outputs) {
+  process(inputs) {
     const ch = inputs[0] && inputs[0][0];
-    const out = outputs[0] && outputs[0][0];
-    // Sans copie vers la sortie, Chrome / WebView coupe l'entrée (silence).
-    if (out) {
-      if (ch && ch.length) out.set(ch.subarray(0, out.length));
-      else out.fill(0);
-    }
     if (!ch) return true;
     for (let i = 0; i < ch.length; i++) {
       this._buf[this._n++] = ch[i];

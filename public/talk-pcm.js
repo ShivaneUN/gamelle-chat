@@ -73,8 +73,11 @@
     const AC = global.AudioContext || global.webkitAudioContext;
     if (!AC) return null;
     if (!global.__gamelleAudioCtx) {
-      // Pas de sampleRate forcé : sur WebView Android ça rend le micro muet.
-      global.__gamelleAudioCtx = new AC();
+      try {
+        global.__gamelleAudioCtx = new AC({ sampleRate: 48000 });
+      } catch (e) {
+        global.__gamelleAudioCtx = new AC();
+      }
     }
     const ctx = global.__gamelleAudioCtx;
     if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(() => {});
@@ -105,91 +108,55 @@
     return mute;
   }
 
-  function isAndroidWebView() {
-    const ua = (global.navigator && global.navigator.userAgent) || '';
-    return /Android/i.test(ua) && /; wv\)/i.test(ua);
-  }
-
-  function startScriptCapture(ctx, source, emit) {
-    const node = ctx.createScriptProcessor(4096, 1, 1);
-    node.onaudioprocess = (ev) => {
-      emit(ev.inputBuffer.getChannelData(0));
-    };
-    source.connect(node);
-    const mute = connectKeepAlive(ctx, node);
-    return { node, mute, mode: 'script' };
-  }
-
   async function startTalkCapture(stream, onPcm) {
     const ctx = unlockTalkAudio();
     if (!ctx || !stream) return null;
-    try { await ctx.resume(); } catch (e) {}
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
 
     const source = ctx.createMediaStreamSource(stream);
+    let node = null;
+    let mute = null;
+    let mode = 'worklet';
+
     const emit = (floatSamples) => {
-      if (!floatSamples || !floatSamples.length) return;
       const down = downsampleFloat(floatSamples, ctx.sampleRate, TARGET_RATE);
       const pcm = pcmFromFloat(down);
       onPcm({ rate: TARGET_RATE, samples: pcm });
     };
 
-    // WebView Android : AudioWorklet reste souvent silencieux. ScriptProcessor marche.
-    if (isAndroidWebView() || !ctx.audioWorklet) {
-      const cap = startScriptCapture(ctx, source, emit);
-      return { ctx, source, node: cap.node, mute: cap.mute, mode: cap.mode };
-    }
-
-    let node = null;
-    let mute = null;
-    let mode = 'worklet';
-    let frames = 0;
     try {
-      await ctx.audioWorklet.addModule('/talk-capture-worklet.js?v=3');
+      if (!ctx.audioWorklet) throw new Error('no worklet');
+      try {
+        await ctx.audioWorklet.addModule('/talk-capture-worklet.js?v=2');
+      } catch (e) {}
       node = new AudioWorkletNode(ctx, 'talk-capture', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
         channelCount: 1,
-        channelCountMode: 'explicit',
       });
       node.port.onmessage = (e) => {
         const samples = e.data;
         if (!samples || !samples.length) return;
-        frames++;
         emit(samples);
       };
       source.connect(node);
       mute = connectKeepAlive(ctx, node);
     } catch (e) {
-      const cap = startScriptCapture(ctx, source, emit);
-      return { ctx, source, node: cap.node, mute: cap.mute, mode: cap.mode };
+      mode = 'script';
+      node = ctx.createScriptProcessor(2048, 1, 1);
+      node.onaudioprocess = (ev) => {
+        emit(ev.inputBuffer.getChannelData(0));
+      };
+      source.connect(node);
+      mute = connectKeepAlive(ctx, node);
     }
 
-    // Si le worklet n'émet rien, bascule vers ScriptProcessor.
-    const watchdog = setTimeout(() => {
-      if (frames > 0) return;
-      try { if (node) node.disconnect(); } catch (err) {}
-      try { if (mute) mute.disconnect(); } catch (err) {}
-      try { source.disconnect(); } catch (err) {}
-      const cap = startScriptCapture(ctx, source, emit);
-      node = cap.node;
-      mute = cap.mute;
-      mode = cap.mode;
-    }, 900);
-
-    return {
-      ctx,
-      source,
-      get node() { return node; },
-      get mute() { return mute; },
-      get mode() { return mode; },
-      watchdog,
-    };
+    return { ctx, source, node, mute, mode };
   }
 
   function stopTalkCapture(cap) {
     if (!cap) return;
-    try { if (cap.watchdog) clearTimeout(cap.watchdog); } catch (e) {}
     try { if (cap.node) cap.node.disconnect(); } catch (e) {}
     try { if (cap.source) cap.source.disconnect(); } catch (e) {}
     try { if (cap.mute) cap.mute.disconnect(); } catch (e) {}

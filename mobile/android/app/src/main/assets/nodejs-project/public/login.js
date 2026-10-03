@@ -1,39 +1,10 @@
 (function () {
-  const SESSION_KEY = 'gamelleSession';
   const form = document.getElementById('loginForm');
-  const userEl = document.getElementById('gamelleUser') || document.getElementById('username');
-  const passEl = document.getElementById('gamellePass') || document.getElementById('password');
+  const userEl = document.getElementById('username');
+  const passEl = document.getElementById('password');
   const errEl = document.getElementById('loginError');
   const btn = document.getElementById('loginBtn');
   const toggle = document.getElementById('togglePass');
-
-  function saveToken(token) {
-    if (!token) return;
-    try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-    try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-  }
-
-  function readToken() {
-    try {
-      return localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || '';
-    } catch (e) {
-      return '';
-    }
-  }
-
-  function authHeaders() {
-    const t = readToken();
-    const h = { 'Content-Type': 'application/json' };
-    if (t) h.Authorization = 'Bearer ' + t;
-    return h;
-  }
-
-  function goController(token) {
-    if (token) saveToken(token);
-    const t = token || readToken();
-    if (t) location.replace('/controller.html?access=' + encodeURIComponent(t));
-    else location.replace('/controller.html');
-  }
 
   if (toggle && passEl) {
     toggle.addEventListener('click', () => {
@@ -43,20 +14,12 @@
     });
   }
 
-  try {
-    const q = new URLSearchParams(location.search);
-    if (errEl && q.get('reason') === 'session') {
-      errEl.textContent = 'Session reprise ailleurs — reconnecte-toi ici.';
-    }
-  } catch (e) {}
-
   async function alreadyIn() {
     try {
-      const r = await fetch('/api/auth/me', { credentials: 'same-origin', headers: authHeaders() });
+      const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
       const j = await r.json();
       if (j && j.authenticated) {
-        if (j.token) saveToken(j.token);
-        goController(j.token || readToken());
+        location.replace('/controller.html');
         return true;
       }
     } catch (e) {}
@@ -65,22 +28,12 @@
 
   alreadyIn();
 
-  fetch('/api/info').then((r) => r.json()).then((j) => {
-    const el = document.getElementById('serverVer');
-    if (el && j && j.version) el.textContent = 'Serveur ' + j.version;
-  }).catch(() => {});
-
   if (!form) return;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (errEl) errEl.textContent = '';
-    // Lire tout de suite : un délai laisse le trousseau iPhone écraser le mot de passe tapé.
-    const username = String(userEl && userEl.value || '').trim();
-    const password = String(passEl && passEl.value || '');
-    if (!username || !password) {
-      if (errEl) errEl.textContent = 'Identifiant et mot de passe requis.';
-      return;
-    }
+    const username = (userEl && userEl.value || '').trim();
+    const password = (passEl && passEl.value) || '';
     if (btn) btn.disabled = true;
     try {
       const r = await fetch('/api/auth/login', {
@@ -94,10 +47,8 @@
         if (errEl) errEl.textContent = (j && j.error) || 'Identifiants incorrects';
         return;
       }
-      if (j.token) saveToken(j.token);
-      // Toujours entrer au contrôleur : cookie OU token local (secours OTA).
       if (passEl) passEl.value = '';
-      goController(j.token || readToken());
+      location.replace('/controller.html');
     } catch (err) {
       if (errEl) errEl.textContent = 'Impossible de joindre le serveur';
     } finally {

@@ -5,14 +5,6 @@
   const LABELS = {
     beep: '🔔 Bip',
     chime: '✨ Carillon',
-    bell: '🛎️ Cloche',
-    siren: '🚨 Sirène',
-    alert: '⚡ Alerte',
-    ding: '🎵 Ding',
-    whistle: '😗 Sifflet',
-    knock: '🚪 Toc toc',
-    phone: '📞 Téléphone',
-    horn: '📣 Klaxon',
   };
   var alarmVolume = 1;
   var keepAlive = null;
@@ -82,63 +74,14 @@
     return out;
   }
 
-  function silence(rate, sec) {
-    return new Float32Array(Math.floor(rate * sec));
-  }
-
   function buildFloat(id, rate) {
     const vol = 0.55;
-    const gap = silence(rate, 0.06);
     if (id === 'chime') {
+      const gap = new Float32Array(Math.floor(rate * 0.05));
       return concatFloat([
         toneSamples(rate, 523.25, 0.22, vol, 0.02), gap,
         toneSamples(rate, 659.25, 0.22, vol, 0.02), gap,
         toneSamples(rate, 783.99, 0.45, vol, 0.03),
-      ]);
-    }
-    if (id === 'bell') {
-      return concatFloat([
-        toneSamples(rate, 698.46, 0.35, vol, 0.01), gap,
-        toneSamples(rate, 523.25, 0.55, vol * 0.9, 0.02),
-      ]);
-    }
-    if (id === 'siren') {
-      const parts = [];
-      for (let n = 0; n < 4; n++) {
-        parts.push(toneSamples(rate, n % 2 ? 880 : 440, 0.18, vol, 0.01));
-      }
-      return concatFloat(parts);
-    }
-    if (id === 'alert') {
-      const tick = toneSamples(rate, 988, 0.09, vol, 0.005);
-      const pause = silence(rate, 0.07);
-      return concatFloat([tick, pause, tick, pause, tick, pause, tick]);
-    }
-    if (id === 'ding') {
-      return toneSamples(rate, 1046.5, 0.4, vol, 0.015);
-    }
-    if (id === 'whistle') {
-      return concatFloat([
-        toneSamples(rate, 1760, 0.12, vol, 0.01),
-        toneSamples(rate, 2093, 0.28, vol, 0.02),
-      ]);
-    }
-    if (id === 'knock') {
-      const tap = toneSamples(rate, 180, 0.06, vol, 0.004);
-      const pause = silence(rate, 0.12);
-      return concatFloat([tap, pause, tap, pause, tap]);
-    }
-    if (id === 'phone') {
-      const ring = concatFloat([
-        toneSamples(rate, 440, 0.12, vol, 0.01),
-        toneSamples(rate, 480, 0.12, vol, 0.01),
-      ]);
-      return concatFloat([ring, silence(rate, 0.1), ring]);
-    }
-    if (id === 'horn') {
-      return concatFloat([
-        toneSamples(rate, 220, 0.18, vol, 0.01),
-        toneSamples(rate, 196, 0.28, vol, 0.02),
       ]);
     }
     return toneSamples(rate, 880, 0.32, vol, 0.02);
@@ -178,10 +121,11 @@
       b.getChannelData(0).set(floatSamples);
       return b;
     }
-    buffers = { ctx };
-    Object.keys(LABELS).forEach((id) => {
-      buffers[id] = toBuf(buildFloat(id, rate));
-    });
+    buffers = {
+      ctx,
+      beep: toBuf(buildFloat('beep', rate)),
+      chime: toBuf(buildFloat('chime', rate)),
+    };
     return buffers;
   }
 
@@ -239,7 +183,7 @@
   }
 
   function playBuffer(ctx, id) {
-    const kind = LABELS[id] ? id : 'beep';
+    const kind = id === 'chime' ? 'chime' : 'beep';
     const pack = ensureBuffers(ctx);
     const buf = pack[kind] || pack.beep;
     return new Promise((resolve, reject) => {
@@ -272,7 +216,7 @@
   function playViaHtml(id) {
     return new Promise((resolve) => {
       try {
-        const kind = LABELS[id] ? id : 'beep';
+        const kind = id === 'chime' ? 'chime' : 'beep';
         const wav = encodeWav(22050, buildFloat(kind, 22050));
         if (htmlUrl) { try { URL.revokeObjectURL(htmlUrl); } catch (e) {} }
         htmlUrl = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
@@ -292,7 +236,7 @@
         htmlEl.src = htmlUrl;
         const p = htmlEl.play();
         if (p && p.then) p.then(() => {}).catch(done);
-        setTimeout(done, Math.ceil((buildFloat(kind, 22050).length / 22050) * 1000) + 150);
+        setTimeout(done, kind === 'chime' ? 1400 : 500);
       } catch (e) {
         resolve();
       }
@@ -301,7 +245,7 @@
 
   function playBuiltinSound(id) {
     if (alarmVolume <= 0.001) return Promise.resolve();
-    const kind = LABELS[id] ? id : 'beep';
+    const kind = id === 'chime' ? 'chime' : 'beep';
     const ctx = audioCtx();
     if (ctx) {
       // Ne pas abandonner WebAudio : keep-alive + buffers = seule voie fiable en boucle iOS.

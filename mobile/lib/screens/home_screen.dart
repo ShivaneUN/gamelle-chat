@@ -191,18 +191,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _bridge.shutdown();
   }
 
-  Future<void> _joinTablet() async {
-    await [Permission.camera, Permission.microphone].request();
-    if (!mounted) return;
-    final base = Uri.parse(_bridge.localUrl);
-    final url = base.replace(path: '/scan.html').toString();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ReceiverWebView(url: url),
-      ),
-    );
-  }
-
   Future<void> _openReceiver() async {
     await [Permission.camera, Permission.microphone].request();
     try {
@@ -345,9 +333,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _pairingPanel({required bool expand}) {
     final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
     final qrSize = expand ? 260.0 : 220.0;
-    final publicOn = _bridge.tunnelEnabled || _bridge.customDomainActive;
     final Widget qr;
-    if (!publicOn) {
+    if (!_bridge.tunnelEnabled) {
       qr = SizedBox(
         width: qrSize,
         height: qrSize,
@@ -355,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Accès distant désactivé.\nLocal via Réglages.',
+              'Cloudflare désactivé.\nAccès local via Réglages.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _muted, height: 1.4),
             ),
@@ -405,13 +392,11 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _StatusPill(label: _localOk ? 'Local OK' : 'Local…', ok: _localOk),
             _StatusPill(
-              label: _bridge.customDomainActive
-                  ? (_cloudflareOk ? 'Domaine OK' : 'Domaine…')
-                  : (!_bridge.tunnelEnabled
-                      ? 'Cloudflare off'
-                      : (_cloudflareOk
-                          ? 'Cloudflare OK'
-                          : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare'))),
+              label: !_bridge.tunnelEnabled
+                  ? 'Cloudflare off'
+                  : (_cloudflareOk
+                      ? 'Cloudflare OK'
+                      : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare')),
               ok: _cloudflareOk,
             ),
           ],
@@ -447,12 +432,6 @@ class _HomeScreenState extends State<HomeScreen> {
           highlighted: true,
           onTap: _applying ? null : _openReceiver,
         ),
-      _ActionTile(
-        icon: Icons.qr_code_scanner_rounded,
-        title: 'Rejoindre une tablette',
-        subtitle: 'Devenir la caméra 2',
-        onTap: _applying ? null : _joinTablet,
-      ),
       _ActionTile(
         icon: Icons.settings_rounded,
         title: 'Réglages',

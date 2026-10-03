@@ -6,64 +6,6 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
-const SESSION_KEY = 'gamelleSession';
-function saveSessionToken(token) {
-  if (!token) return;
-  try { localStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-  try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
-}
-function readSessionToken() {
-  try {
-    const q = new URLSearchParams(location.search).get('access');
-    if (q && String(q).trim()) return String(q).trim();
-  } catch (e) {}
-  try {
-    const a = localStorage.getItem(SESSION_KEY);
-    if (a) return a;
-  } catch (e) {}
-  try {
-    return sessionStorage.getItem(SESSION_KEY) || '';
-  } catch (e) {}
-  return '';
-}
-function clearSessionToken() {
-  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
-  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
-}
-// Récupère ?access= (login → contrôleur sans cookie) avant tout fetch/socket.
-(function captureAccessFromUrl() {
-  try {
-    const params = new URLSearchParams(location.search);
-    const access = (params.get('access') || '').trim();
-    if (!access) return;
-    saveSessionToken(access);
-    params.delete('access');
-    const q = params.toString();
-    const next = location.pathname + (q ? '?' + q : '') + (location.hash || '');
-    history.replaceState(null, '', next);
-  } catch (e) {}
-})();
-function authHeaders(extra) {
-  const h = Object.assign({}, extra || {});
-  const t = readSessionToken();
-  if (t) h.Authorization = 'Bearer ' + t;
-  return h;
-}
-function authFetch(url, opts) {
-  const o = Object.assign({ credentials: 'same-origin' }, opts || {});
-  o.headers = authHeaders(o.headers || {});
-  return fetch(url, o);
-}
-// <img>/<video> ne peuvent pas envoyer Bearer → access= en query si token local.
-function withAccess(url) {
-  const t = readSessionToken();
-  if (!t || !url) return url;
-  const s = String(url);
-  if (!s.startsWith('/media/')) return s;
-  if (/[?&]access=/.test(s)) return s;
-  return s + (s.includes('?') ? '&' : '?') + 'access=' + encodeURIComponent(t);
-}
-
 const refreshBtn = document.getElementById('refreshBtn');
 if (refreshBtn) {
   refreshBtn.onclick = () => {
@@ -109,89 +51,36 @@ const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
 if (!code) {
-  authFetch('/api/active-code').then(async (r) => {
-    if (r.status === 401) {
-      clearSessionToken();
-      location.replace('/?next=controller');
-      return;
-    }
-    const j = await r.json().catch(() => ({}));
+  fetch('/api/active-code').then((r) => r.json()).then((j) => {
     const c = String((j && j.code) || '').trim();
     if (c.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
       try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
+      location.replace('/controller.html');
       return;
     }
-    setTimeout(() => location.reload(), 2500);
+    setTimeout(() => location.reload(), 800);
   }).catch(() => {
-    setTimeout(() => location.reload(), 2500);
+    setTimeout(() => location.reload(), 800);
   });
   throw new Error('code-redirect');
 }
 
-const sessionToken = readSessionToken();
-const socket = io({
-  withCredentials: true,
-  reconnection: true,
-  reconnectionAttempts: Infinity,
-  reconnectionDelay: 800,
-  reconnectionDelayMax: 5000,
-  transports: ['polling', 'websocket'],
-  auth: sessionToken ? { token: sessionToken } : undefined,
-  query: sessionToken ? { access: sessionToken } : undefined,
-});
-window.__gamelleTarget = 'main';
-window.__gamelleSync = false;
-function controlTarget() {
-  if (window.__gamelleSync) return 'all';
-  return window.__gamelleTarget || 'main';
-}
-function mediaTarget() {
-  return window.__gamelleMediaSync ? 'all' : 'main';
-}
+const socket = io({ withCredentials: true });
 let pcCam = null;   // reçoit la caméra du récepteur (WebRTC si 1 seul ctrl)
 let talkStream = null;
 let peerControllerCount = 0;
 let webrtcLive = false;
 let camWanted = false;
-let authKicked = false;
-let authRetrying = false;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-socket.on('connect', () => {
-  authKicked = false;
-  socket.emit('join', { code, role: 'controller' });
-});
-socket.on('auth-required', async () => {
-  if (authRetrying || authKicked) return;
-  authRetrying = true;
-  try {
-    const r = await authFetch('/api/auth/me');
-    const j = await r.json().catch(() => ({}));
-    if (j && j.authenticated) {
-      setTimeout(() => {
-        authRetrying = false;
-        try { socket.connect(); } catch (e) { authRetrying = false; }
-      }, 600);
-      return;
-    }
-  } catch (e) {}
-  authKicked = true;
-  authRetrying = false;
-  clearSessionToken();
-  location.replace('/?next=controller');
-});
-socket.on('session-replaced', () => {
-  authKicked = true;
-  clearSessionToken();
-  location.replace('/?reason=session');
+socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
+socket.on('auth-required', () => {
+  location.replace('/');
 });
 socket.on('disconnect', (reason) => {
-  if (reason === 'io server disconnect' && !authKicked) {
-    setTimeout(() => {
-      try { socket.connect(); } catch (e) {}
-    }, 1000);
+  if (reason === 'io server disconnect') {
+    // possible kick auth
   }
 });
 
@@ -199,9 +88,8 @@ const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) {
   logoutBtn.onclick = async () => {
     try {
-      await authFetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     } catch (e) {}
-    clearSessionToken();
     location.replace('/');
   };
 }
@@ -330,16 +218,6 @@ function applyFrame(data) {
 }
 
 socket.on('live-frame', (data) => {
-  if (data && typeof data === 'object' && data.deviceId === 'cam2' && typeof data.jpeg === 'string') {
-    const img = document.getElementById('cam2Relay');
-    if (img) {
-      img.src = 'data:image/jpeg;base64,' + data.jpeg;
-      img.classList.add('on');
-    }
-    if (window.__gamelleTarget === 'cam2' && !window.__gamelleSimult) applyFrame(data.jpeg);
-    return;
-  }
-  if (window.__gamelleTarget === 'cam2' && !window.__gamelleSimult) return;
   if (typeof data === 'string') {
     applyFrame(data);
     return;
@@ -382,7 +260,7 @@ function renderFlashBtn() {
 if (flashBtn) {
   flashBtn.onclick = () => {
     flashOn = !flashOn;
-    socket.emit('torch', { on: flashOn, target: controlTarget() });
+    socket.emit('torch', { on: flashOn });
     renderFlashBtn();
   };
 }
@@ -705,7 +583,7 @@ const screenOffBtn = document.getElementById('screenOffBtn');
 if (screenOffBtn) {
   screenOffBtn.onclick = () => {
     recvScreenOn = !recvScreenOn;
-    socket.emit(recvScreenOn ? 'screen-on' : 'screen-off', { target: controlTarget() });
+    socket.emit(recvScreenOn ? 'screen-on' : 'screen-off');
     renderScreenOffBtn();
   };
 }
@@ -844,9 +722,9 @@ if (facingBtn) {
       currentCamIndex = matchIdx;
       const cam = cameraList[currentCamIndex];
       cameraSelect.value = cam.deviceId;
-      socket.emit('switch-camera', { deviceId: cam.deviceId, facingMode, target: controlTarget() });
+      socket.emit('switch-camera', { deviceId: cam.deviceId, facingMode });
     } else {
-      socket.emit('switch-camera', { facingMode, target: controlTarget() });
+      socket.emit('switch-camera', { facingMode });
     }
     renderFacingBtn();
   };
@@ -860,8 +738,7 @@ cameraSelect.onchange = () => {
   }
   socket.emit('switch-camera', {
     deviceId: id,
-    facingMode: facingModeFor(preferredFacing),
-    target: controlTarget(),
+    facingMode: facingModeFor(preferredFacing)
   });
   renderFacingBtn();
 };
@@ -990,11 +867,10 @@ socket.on('signal', async (payload) => {
 });
 
 // --- Capture photo / vidéo ---
-document.getElementById('photoBtn').onclick = () => socket.emit('take-photo', { target: mediaTarget() });
+document.getElementById('photoBtn').onclick = () => socket.emit('take-photo');
 document.getElementById('videoBtn').onclick = () => {
-  const target = mediaTarget();
-  socket.emit('start-video', { target: target });
-  setTimeout(() => socket.emit('stop-video', { target: target }), 5000);
+  socket.emit('start-video');
+  setTimeout(() => socket.emit('stop-video'), 5000);
 };
 
 // --- Parler à distance (clic on/off, pas besoin de maintenir) ---
@@ -1017,7 +893,7 @@ async function startTalk() {
     startMicAckWatch();
     talkCapture = await startTalkCapture(talkStream, ({ rate, samples }) => {
       if (!talking) return;
-      socket.emit('talk-audio', { rate, samples, target: controlTarget() });
+      socket.emit('talk-audio', { rate, samples });
     });
     renderMicStatus('granted');
   } catch (err) {
@@ -1059,13 +935,12 @@ function renderGallery(media) {
   media.forEach((m) => {
     const div = document.createElement('div');
     div.className = 'item';
-    const mediaUrl = withAccess(m.url);
     const el = m.type === 'video'
-      ? `<video src="${mediaUrl}" controls></video>`
-      : `<img src="${mediaUrl}" alt="">`;
+      ? `<video src="${m.url}" controls></video>`
+      : `<img src="${m.url}" alt="">`;
     div.innerHTML = `${el}
       <div class="gallery-actions">
-        <button type="button" class="save" data-url="${mediaUrl}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer">↓</button>
+        <button type="button" class="save" data-url="${m.url}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer">↓</button>
         <button type="button" class="del" data-name="${m.name}" title="Retirer de ma galerie">✕</button>
       </div>`;
     gallery.appendChild(div);
@@ -1082,8 +957,7 @@ async function saveMediaToDevice(url, name, type) {
   if (!url) return;
   const fileName = name || ('gamelle_' + Date.now() + (type === 'video' ? '.webm' : '.jpg'));
   try {
-    const res = await authFetch(withAccess(url));
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const res = await fetch(url, { credentials: 'same-origin' });
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -1098,170 +972,3 @@ async function saveMediaToDevice(url, name, type) {
     alert('Téléchargement impossible : ' + (e && e.message ? e.message : e));
   }
 }
-
-(function setupDeviceBar() {
-  const bar = document.getElementById('deviceBar');
-  if (!bar) return;
-  const buttons = bar.querySelectorAll('[data-target]');
-  function paintBtn(el, on) {
-    if (!el) return;
-    const tile = el.getAttribute('data-kind') === 'tile';
-    el.className = tile
-      ? ('tile-btn' + (on ? ' toggle-on' : ''))
-      : ('chip-btn ' + (on ? 'sync-on' : 'sync-off'));
-  }
-  function paint() {
-    buttons.forEach((b) => {
-      const on = b.getAttribute('data-target') === window.__gamelleTarget;
-      paintBtn(b, on);
-      const lbl = b.querySelector('.lbl');
-      if (lbl && b.getAttribute('data-target') === 'main') lbl.textContent = (window.__deviceNames && window.__deviceNames.main) || 'Tablette';
-      if (lbl && b.getAttribute('data-target') === 'cam2') lbl.textContent = (window.__deviceNames && window.__deviceNames.cam2) || 'Caméra 2';
-    });
-    document.body.classList.toggle('simult', !!window.__gamelleSimult);
-    paintBtn(document.getElementById('simultCtrl'), !!window.__gamelleSimult);
-    paintBtn(document.getElementById('syncCtrl'), !!window.__gamelleSync);
-    const extra = document.getElementById('cam2Relay');
-    if (extra) extra.classList.toggle('on', !!window.__gamelleSimult && !!extra.getAttribute('src'));
-  }
-  buttons.forEach((b) => {
-    b.onclick = () => {
-      window.__gamelleTarget = b.getAttribute('data-target') || 'main';
-      paint();
-    };
-  });
-  const sim = document.getElementById('simultCtrl');
-  if (sim) {
-    sim.onclick = () => {
-      window.__gamelleSimult = !window.__gamelleSimult;
-      paint();
-    };
-  }
-  const sync = document.getElementById('syncCtrl');
-  if (sync) {
-    sync.onclick = () => {
-      window.__gamelleSync = !window.__gamelleSync;
-      paint();
-    };
-  }
-  socket.on('devices', (snap) => {
-    window.__deviceNames = (snap && snap.names) || window.__deviceNames;
-    window.__deviceSnap = snap || window.__deviceSnap;
-    const cam = bar.querySelector('[data-target="cam2"]');
-    if (cam) cam.hidden = !(snap && snap.satellite);
-    paint();
-    if (typeof window.__paintCtrlDevices === 'function') window.__paintCtrlDevices();
-  });
-  paint();
-})();
-
-(function setupCtrlDevices() {
-  const listEl = document.getElementById('ctrlDeviceList');
-  const openBtn = document.getElementById('openDevicesBtn');
-  if (openBtn) openBtn.onclick = () => openModal('devicesModal');
-  window.__paintCtrlDevices = function () {
-    if (!listEl) return;
-    const snap = window.__deviceSnap || { main: true, satellite: false, names: window.__deviceNames || {} };
-    const names = snap.names || {};
-    const pencil = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/></svg>';
-    const rows = [{ id: 'main', name: names.main || 'Tablette', on: snap.main !== false }];
-    if (snap.satellite || snap.satelliteKnown) {
-      rows.push({ id: 'cam2', name: names.cam2 || 'Caméra 2', on: !!snap.satellite });
-    }
-    listEl.innerHTML = rows.map((r) => (
-      '<div class="device-row"><div class="device-name"><b>' + r.name + '</b>' +
-      '<button type="button" class="rename-btn" data-act="rename" data-id="' + r.id + '" title="Renommer">' + pencil + '</button>' +
-      '<span class="status-dot' + (r.on ? ' on' : '') + '" title="' + (r.on ? 'En ligne' : 'Hors ligne') + '"></span></div>' +
-      '<div class="link-row">' +
-      '<button type="button" class="' + (flashOn ? 'sync-on' : 'sync-off') + '" data-act="torch" data-id="' + r.id + '">Lampe</button>' +
-      '<button type="button" class="' + (recvScreenOn ? 'sync-on' : 'sync-off') + '" data-act="screen" data-id="' + r.id + '">Écran</button>' +
-      '<button type="button" class="' + (talking ? 'sync-on' : 'sync-off') + '" data-act="mic" data-id="' + r.id + '">Micro</button>' +
-      '</div></div>'
-    )).join('');
-    const camBtn = document.getElementById('ctrlCamBtn');
-    const syncBtn = document.getElementById('ctrlSyncBtn');
-    if (camBtn) camBtn.className = 'chip-btn ' + (window.__gamelleSimult ? 'sync-on' : 'sync-off');
-    if (syncBtn) syncBtn.className = 'chip-btn ' + (window.__gamelleSync ? 'sync-on' : 'sync-off');
-    const mediaBtn = document.getElementById('ctrlMediaBtn');
-    if (mediaBtn) mediaBtn.className = 'chip-btn ' + (window.__gamelleMediaSync ? 'sync-on' : 'sync-off');
-  };
-  const camBtn = document.getElementById('ctrlCamBtn');
-  if (camBtn) camBtn.onclick = () => {
-    const sim = document.getElementById('simultCtrl');
-    if (sim) sim.click();
-    else window.__gamelleSimult = !window.__gamelleSimult;
-    window.__paintCtrlDevices();
-  };
-  const syncBtn = document.getElementById('ctrlSyncBtn');
-  if (syncBtn) syncBtn.onclick = () => {
-    const sync = document.getElementById('syncCtrl');
-    if (sync) sync.click();
-    else window.__gamelleSync = !window.__gamelleSync;
-    window.__paintCtrlDevices();
-  };
-  const mediaBtn = document.getElementById('ctrlMediaBtn');
-  if (mediaBtn) mediaBtn.onclick = () => {
-    window.__gamelleMediaSync = !window.__gamelleMediaSync;
-    socket.emit('set-media-sync', { on: !!window.__gamelleMediaSync });
-    window.__paintCtrlDevices();
-  };
-  socket.on('media-sync', (msg) => {
-    window.__gamelleMediaSync = !!(msg && msg.on);
-    window.__paintCtrlDevices();
-  });
-  socket.on('devices', (snap) => {
-    if (snap && typeof snap.mediaSync === 'boolean') window.__gamelleMediaSync = snap.mediaSync;
-    window.__paintCtrlDevices();
-  });
-  if (listEl && !listEl.dataset.bound) {
-    listEl.dataset.bound = '1';
-    listEl.addEventListener('click', (ev) => {
-      const b = ev.target.closest('[data-act]');
-      if (!b) return;
-      const act = b.getAttribute('data-act');
-      const id = b.getAttribute('data-id');
-      if (act === 'rename') {
-        const names = (window.__deviceSnap && window.__deviceSnap.names) || {};
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'rename-input';
-        input.value = names[id] || '';
-        input.maxLength = 24;
-        const nameEl = b.parentElement.querySelector('b');
-        if (!nameEl) return;
-        nameEl.replaceWith(input);
-        input.focus();
-        let saved = false;
-        const save = () => {
-          if (saved) return;
-          saved = true;
-          const next = input.value.trim();
-          if (next) socket.emit('rename-device', { id: id, name: next });
-        };
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
-        input.addEventListener('blur', save);
-        return;
-      }
-      const target = window.__gamelleSync ? 'all' : id;
-      if (act === 'torch') {
-        flashOn = !flashOn;
-        socket.emit('torch', { on: flashOn, target: target });
-        if (typeof renderFlashBtn === 'function') renderFlashBtn();
-        window.__paintCtrlDevices();
-      }
-      if (act === 'screen') {
-        recvScreenOn = !recvScreenOn;
-        socket.emit(recvScreenOn ? 'screen-on' : 'screen-off', { target: target });
-        if (typeof renderScreenOffBtn === 'function') renderScreenOffBtn();
-        window.__paintCtrlDevices();
-      }
-      if (act === 'mic') {
-        window.__gamelleTarget = target;
-        const mic = document.getElementById('unlockMicBtn');
-        if (mic) mic.click();
-        setTimeout(function () { window.__paintCtrlDevices(); }, 80);
-      }
-    });
-  }
-  window.__paintCtrlDevices();
-})();

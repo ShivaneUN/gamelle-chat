@@ -13,7 +13,7 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=57">
+<link rel="stylesheet" href="/style.css?v=53">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -46,7 +46,6 @@
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
-      <img id="cam2Relay" class="cam2-relay" alt="Caméra 2">
     </div>
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -86,21 +85,10 @@
           <span class="lbl">Écran</span>
         </button>
       </div>
-      <div id="deviceBar" class="tile-row cols-3">
-        <button type="button" id="simultCtrl" class="tile-btn" data-kind="tile" title="Affiche toutes les caméras">
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
-          <span class="lbl">Caméras</span>
-        </button>
-      </div>
     </div>
   </div>
 
-  <p class="server-ver" style="flex-shrink:0;margin:0;text-align:center;font-size:12px;line-height:1.2;color:#9aa;">Serveur <!--SERVER_VER--></p>
   <nav class="dock">
-    <button id="openDevicesBtn" class="dock-btn" type="button">
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
-      <span class="lbl">Appareils</span>
-    </button>
     <button id="openAlbumBtn" class="dock-btn" type="button">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
       <span class="lbl">Album</span>
@@ -118,24 +106,6 @@
       <span class="lbl">Horaires</span>
     </button>
   </nav>
-</div>
-
-<div id="devicesModal" class="modal" hidden>
-  <div class="modal-backdrop" data-close="devicesModal"></div>
-  <div class="modal-sheet" role="dialog" aria-labelledby="devicesTitle">
-    <div class="modal-head">
-      <h2 id="devicesTitle">Appareils</h2>
-      <button type="button" class="ghost modal-close" data-close="devicesModal">Fermer</button>
-    </div>
-    <p class="hint">Même liste que le récepteur.</p>
-    <p class="sync-legend">Synchronisation</p>
-    <div class="link-row">
-      <button id="ctrlCamBtn" class="chip-btn sync-off" type="button" title="Caméras en même temps">Caméra</button>
-      <button id="ctrlSyncBtn" class="chip-btn sync-off" type="button" title="Lampe, écran et micro ensemble">Bouton</button>
-      <button id="ctrlMediaBtn" class="chip-btn sync-off" type="button" title="Photo et vidéo sur tous les appareils">Média</button>
-    </div>
-    <div id="ctrlDeviceList" class="device-list"></div>
-  </div>
 </div>
 
 <div id="albumModal" class="modal" hidden>
@@ -177,8 +147,6 @@
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
     <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
-    <label class="sched-sound-lab" for="alarmHeadlineInput">Texte affiché</label>
-    <input id="alarmHeadlineInput" type="text" maxlength="40" value="C'est l'heure !">
     <label class="sched-sound-lab">Son 1</label>
     <div id="manualAlarmSound1" class="sound-picker"></div>
     <label class="sched-sound-lab">Son 2 (ensuite)</label>
@@ -209,64 +177,18 @@
 </div>
 
 <div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2 id="alarmHeadline">C'est l'heure !</h2>
+  <h2>Alarme en cours</h2>
   <p id="alarmMsg"></p>
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script>
-/* Pose le jeton AVANT controller.js (même si le téléphone a gardé l’ancien ?v=0.1.4 en cache). */
-(function () {
-  var KEY = 'gamelleSession';
-  function read() {
-    var q = '';
-    try { q = (new URLSearchParams(location.search).get('access') || '').trim(); } catch (e) {}
-    if (q) {
-      try { localStorage.setItem(KEY, q); } catch (e) {}
-      try { sessionStorage.setItem(KEY, q); } catch (e) {}
-      return q;
-    }
-    try { return localStorage.getItem(KEY) || ''; } catch (e) {}
-    try { return sessionStorage.getItem(KEY) || ''; } catch (e) {}
-    return '';
-  }
-  var token = read();
-  if (!token) return;
-  if (window.fetch) {
-    var origFetch = window.fetch;
-    window.fetch = function (input, opts) {
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
-      var same = url.charAt(0) === '/' || url.indexOf(location.origin) === 0;
-      if (!same) return origFetch.apply(this, arguments);
-      var fresh = read() || token;
-      opts = Object.assign({}, opts || {});
-      var headers = new Headers(opts.headers || {});
-      if (fresh && !headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + fresh);
-      opts.headers = headers;
-      if (!opts.credentials) opts.credentials = 'same-origin';
-      return origFetch.call(this, input, opts);
-    };
-  }
-  if (typeof window.io === 'function') {
-    var origIo = window.io;
-    window.io = function (url, opts) {
-      if (url && typeof url === 'object') { opts = url; url = undefined; }
-      opts = Object.assign({}, opts || {});
-      var fresh = read() || token;
-      opts.auth = Object.assign({ token: fresh }, opts.auth || {});
-      opts.query = Object.assign({ access: fresh }, opts.query || {});
-      return url === undefined ? origIo(opts) : origIo(url, opts);
-    };
-  }
-})();
-</script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/alarm-sounds.js?v=0.1.2"></script>
+<script src="/alarm-sounds.js?v=0.0.54"></script>
 <script src="/schedule-ui.js?v=14"></script>
-<script src="/alarm-ui.js?v=0.1.3"></script>
+<script src="/alarm-ui.js?v=0.0.54"></script>
 <script src="/talk-pcm.js?v=3"></script>
-<script src="/controller.js?v=0.1.7"></script>
+<script src="/controller.js?v=34"></script>
 </body>
 </html>

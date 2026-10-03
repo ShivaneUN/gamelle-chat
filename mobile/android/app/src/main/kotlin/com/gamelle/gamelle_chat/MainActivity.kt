@@ -152,14 +152,11 @@ class MainActivity : FlutterActivity() {
         fixedPublicUrl = null
         tunnelToken = null
         allowedSuffixes = listOf("trycloudflare.com")
-        val customOn = readCustomDomainEnabled()
         // 1) Secrets perso dans gamelle-persist (survivent aux OTA publiques).
-        if (customOn) {
-            try {
-                applyTunnelConfigText(readPersistText("tunnel.config.json"))
-                applyTunnelTokenText(readPersistText("tunnel.token"))
-            } catch (_: Exception) {
-            }
+        try {
+            applyTunnelConfigText(readPersistText("tunnel.config.json"))
+            applyTunnelTokenText(readPersistText("tunnel.token"))
+        } catch (_: Exception) {
         }
         // 2) Fallback assets APK (dev / install privée uniquement — releases publiques = vides).
         try {
@@ -175,21 +172,21 @@ class MainActivity : FlutterActivity() {
                 val url = Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"").find(cfgAsset)?.groupValues?.getOrNull(1).orEmpty()
                 if (url.isNotBlank() && !url.contains("TON-")) {
                     writePersistText("tunnel.config.json", cfgAsset)
-                    if (customOn) applyTunnelConfigText(cfgAsset)
+                    applyTunnelConfigText(cfgAsset)
                 }
             }
         } catch (_: Exception) {
         }
         try {
             val tokAsset = readAssetText("tunnel.token")
-            if (customOn && tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
-            if (!tokAsset.isNullOrBlank() &&
+            if (tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
+            if (!tunnelToken.isNullOrBlank() &&
                 readPersistText("tunnel.token").isNullOrBlank() &&
+                !tokAsset.isNullOrBlank() &&
                 tokAsset.trim().length >= 40 &&
                 !tokAsset.contains("REMPLACE")
             ) {
                 writePersistText("tunnel.token", tokAsset.trim() + "\n")
-                if (customOn && tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
             }
         } catch (_: Exception) {
         }
@@ -197,81 +194,6 @@ class MainActivity : FlutterActivity() {
 
     private fun useNamedTunnel(): Boolean {
         return !tunnelToken.isNullOrBlank() && !fixedPublicUrl.isNullOrBlank()
-    }
-
-    /** Préférence UI « Mon domaine » (défaut true si fichier absent — compat anciens installs). */
-    private fun readCustomDomainEnabled(): Boolean {
-        val raw = readPersistText("custom-domain.json") ?: return true
-        return try {
-            Regex("\"enabled\"\\s*:\\s*(true|false)", RegexOption.IGNORE_CASE)
-                .find(raw)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.equals("true", ignoreCase = true)
-                ?: true
-        } catch (_: Exception) {
-            true
-        }
-    }
-
-    private fun writeCustomDomainEnabled(enabled: Boolean) {
-        writePersistText("custom-domain.json", "{\"enabled\":${if (enabled) "true" else "false"}}\n")
-    }
-
-    private fun readPersistPublicUrl(): String {
-        val cfg = readPersistText("tunnel.config.json") ?: return ""
-        return Regex("\"publicUrl\"\\s*:\\s*\"([^\"]+)\"")
-            .find(cfg)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
-            ?.trimEnd('/')
-            .orEmpty()
-    }
-
-    private fun persistHasToken(): Boolean {
-        val t = readPersistText("tunnel.token")?.trim().orEmpty()
-        return t.length >= 40 && !t.contains("REMPLACE")
-    }
-
-    private fun suffixFromPublicUrl(url: String): String {
-        val host = try {
-            java.net.URI(url).host?.lowercase().orEmpty()
-        } catch (_: Exception) {
-            ""
-        }
-        if (host.isEmpty()) return "trycloudflare.com"
-        val parts = host.split('.').filter { it.isNotEmpty() }
-        return if (parts.size >= 2) parts.takeLast(2).joinToString(".") else host
-    }
-
-    private fun writeCustomDomainConfig(publicUrl: String) {
-        val url = publicUrl.trim().trimEnd('/')
-        val suffix = suffixFromPublicUrl(url)
-        val json = """
-            {
-              "publicUrl": "$url",
-              "allowedSuffixes": ["$suffix", "trycloudflare.com"]
-            }
-        """.trimIndent() + "\n"
-        writePersistText("tunnel.config.json", json)
-    }
-
-    private fun clearPersistToken() {
-        try {
-            File(filesDir, "gamelle-persist/tunnel.token").delete()
-        } catch (_: Exception) {
-        }
-        tunnelToken = null
-    }
-
-    private fun customDomainStatusMap(): Map<String, Any?> {
-        return mapOf(
-            "enabled" to readCustomDomainEnabled(),
-            "publicUrl" to readPersistPublicUrl(),
-            "hasToken" to persistHasToken(),
-            // Jamais le token ici.
-        )
     }
 
     private var pendingApkPath: String? = null
@@ -403,86 +325,6 @@ class MainActivity : FlutterActivity() {
                 "stop" -> {
                     stopTunnel()
                     result.success(true)
-                }
-                "getCustomDomain" -> {
-                    result.success(customDomainStatusMap())
-                }
-                "setCustomDomain" -> {
-                    try {
-                        val args = call.arguments as? Map<*, *>
-                        val enabled = args?.get("enabled") as? Boolean ?: readCustomDomainEnabled()
-                        val urlRaw = (args?.get("publicUrl") as? String)?.trim().orEmpty()
-                        val tokenRaw = (args?.get("token") as? String)?.trim().orEmpty()
-                        writeCustomDomainEnabled(enabled)
-                        if (urlRaw.isNotEmpty()) {
-                            val normalized = if (urlRaw.startsWith("http://") || urlRaw.startsWith("https://")) {
-                                urlRaw.trimEnd('/')
-                            } else {
-                                "https://${urlRaw.trimEnd('/')}"
-                            }
-                            val host = try {
-                                java.net.URI(normalized).host?.lowercase().orEmpty()
-                            } catch (_: Exception) {
-                                ""
-                            }
-                            if (host.isEmpty() || host == "localhost" || host == "127.0.0.1" || !host.contains('.')) {
-                                result.error("DOMAIN", "URL invalide", null)
-                                return@setMethodCallHandler
-                            }
-                            writeCustomDomainConfig(normalized)
-                        }
-                        if (tokenRaw.isNotEmpty()) {
-                            if (tokenRaw.length < 40) {
-                                result.error("TOKEN", "Token trop court", null)
-                                return@setMethodCallHandler
-                            }
-                            writePersistText("tunnel.token", tokenRaw + "\n")
-                        }
-                        // Recharge en mémoire ; Flutter relance le tunnel si besoin.
-                        stopTunnel()
-                        loadTunnelSettings()
-                        if (enabled && useNamedTunnel()) {
-                            val url = fixedPublicUrl!!
-                            gotTunnelUrl = true
-                            lastPublicUrl = url
-                            lastTunnelError = null
-                            persistPublicUrl(url)
-                            emit("url", url)
-                        } else if (!enabled) {
-                            // Domaine perso OFF → oublier l’URL fixe ; le quick tunnel
-                            // (trycloudflare) fournira le prochain lien.
-                            gotTunnelUrl = false
-                            lastPublicUrl = null
-                            lastTunnelError = null
-                            try {
-                                File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
-                            } catch (_: Exception) {
-                            }
-                            emit("url", "")
-                        }
-                        result.success(customDomainStatusMap())
-                    } catch (e: Exception) {
-                        result.error("DOMAIN", e.message ?: "erreur", null)
-                    }
-                }
-                "clearCustomDomainToken" -> {
-                    try {
-                        clearPersistToken()
-                        stopTunnel()
-                        loadTunnelSettings()
-                        if (useNamedTunnel()) {
-                            val url = fixedPublicUrl!!
-                            gotTunnelUrl = true
-                            lastPublicUrl = url
-                            emit("url", url)
-                        } else {
-                            lastPublicUrl = null
-                            emit("url", "")
-                        }
-                        result.success(customDomainStatusMap())
-                    } catch (e: Exception) {
-                        result.error("TOKEN", e.message ?: "erreur", null)
-                    }
                 }
                 else -> result.notImplemented()
             }

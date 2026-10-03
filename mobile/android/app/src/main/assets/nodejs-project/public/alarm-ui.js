@@ -3,8 +3,6 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   const sound1El = document.getElementById('manualAlarmSound1');
   const msgPickerContainer = document.getElementById('manualAlarmMsg');
   const durationInput = document.getElementById('manualAlarmDuration');
-  const headlineInput = document.getElementById('alarmHeadlineInput');
-  const headlineEl = document.getElementById('alarmHeadline');
   const startBtn = document.getElementById('startAlarmBtn');
   const stopBtn = document.getElementById('stopAlarmManualBtn');
   const banner = document.getElementById('alarmBanner');
@@ -15,20 +13,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   let alarmSpeakInterval = null;
   let currentAudioEl = null;
   let currentBufferSource = null;
-  let alarmHeadline = "C'est l'heure !";
   let selectedSound1 = 'beep';
-
-  function currentHeadline() {
-    const raw = headlineInput ? headlineInput.value : alarmHeadline;
-    const text = String(raw || '').trim().slice(0, 40);
-    return text || "C'est l'heure !";
-  }
-
-  function applyHeadline(text) {
-    alarmHeadline = String(text || '').trim().slice(0, 40) || "C'est l'heure !";
-    if (headlineEl) headlineEl.textContent = alarmHeadline;
-    if (headlineInput && document.activeElement !== headlineInput) headlineInput.value = alarmHeadline;
-  }
   let selectedMessageId = '';
   let seqToken = 0;
   let playbackRunning = false;
@@ -61,7 +46,6 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
       sound2: selectedMessageId || '',
       messageId: selectedMessageId || '',
       duration: Number(durationInput && durationInput.value) || 30,
-      title: currentHeadline(),
     });
   }
 
@@ -76,7 +60,6 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     if (state.sound2 !== undefined) selectedMessageId = state.sound2 || '';
     else if (state.messageId !== undefined) selectedMessageId = state.messageId || '';
     if (durationInput && state.duration) durationInput.value = state.duration;
-    if (state.title !== undefined) applyHeadline(state.title);
     fillMessages();
   }
 
@@ -170,22 +153,13 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     });
   }
 
-  function authHeadersForMedia() {
-    const h = {};
-    try {
-      const t = localStorage.getItem('gamelleSession') || sessionStorage.getItem('gamelleSession') || '';
-      if (t) h.Authorization = 'Bearer ' + t;
-    } catch (e) {}
-    return h;
-  }
-
   function decodeAudioUrl(url) {
     if (!url) return Promise.reject(new Error('no-url'));
     if (decodedAudioCache.has(url)) return Promise.resolve(decodedAudioCache.get(url));
     if (decodingAudio.has(url)) return decodingAudio.get(url);
     const ctx = getSharedAudioCtx();
     if (!ctx) return Promise.reject(new Error('no-ctx'));
-    const job = fetch(url, { credentials: 'same-origin', cache: 'force-cache', headers: authHeadersForMedia() })
+    const job = fetch(url, { credentials: 'same-origin', cache: 'force-cache' })
       .then((r) => {
         if (!r.ok) throw new Error('http-' + r.status);
         return r.arrayBuffer();
@@ -372,8 +346,6 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
       audioUrl: (payload && payload.audioUrl) || null,
       sequence: (payload && payload.sequence) || [],
     };
-    if (payload && payload.title) applyHeadline(payload.title);
-    else if (headlineEl) headlineEl.textContent = currentHeadline();
     const unlocked = !isAudioUnlocked || isAudioUnlocked();
     getSharedAudioCtx();
     prefetchSequenceAudio(defaultSequenceFromLast());
@@ -444,10 +416,6 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
   if (stopBtn) stopBtn.onclick = requestStop;
   if (bannerStopBtn) bannerStopBtn.onclick = requestStop;
   if (durationInput) durationInput.onchange = emitManual;
-  if (headlineInput) {
-    headlineInput.addEventListener('change', emitManual);
-    headlineInput.addEventListener('blur', () => applyHeadline(headlineInput.value));
-  }
 
   socket.on('alarm', (payload) => startLocal(payload || {}));
   socket.on('alarm-stop', () => stopLocal());
