@@ -36,7 +36,7 @@ function copyDirIfMissing(src, dest) {
     let st;
     try { st = fs.statSync(from); } catch (e) { continue; }
     if (st.isDirectory()) copyDirIfMissing(from, to);
-    else if (name === 'public-url.json') continue;
+    else if (name === 'public-url.json' || name === 'accounts.json' || name === 'sessions.json' || name === 'accounts-wipe.json') continue;
     else if (!fs.existsSync(to)) {
       try { fs.copyFileSync(from, to); } catch (e) {}
     }
@@ -308,8 +308,17 @@ function writeSessions(data) {
   saveJsonFile(SESSIONS_FILE, data);
 }
 
-// Une seule fois : la 0.1.27 repart sans les anciens comptes (identifiants cassés).
-const ACCOUNTS_RESET_ID = '0.1.27';
+// Une seule fois : la 0.1.28 repart sans les anciens comptes.
+// Les copies APK / trash ne sont plus fusionnées : le fichier du serveur est la seule source.
+const ACCOUNTS_RESET_ID = '0.1.28';
+function blankAccountCopy(file, data) {
+  try {
+    if (!file || !fs.existsSync(file)) return;
+    const resolved = path.resolve(file);
+    if (resolved === path.resolve(ACCOUNTS_FILE) || resolved === path.resolve(SESSIONS_FILE)) return;
+    fs.writeFileSync(file, JSON.stringify(data));
+  } catch (e) {}
+}
 function resetAccountsOnce() {
   const marker = path.join(DATA_DIR, 'accounts-wipe.json');
   let done = '';
@@ -319,11 +328,20 @@ function resetAccountsOnce() {
   if (done === ACCOUNTS_RESET_ID) return;
   writeAccounts({ users: [] });
   writeSessions({ sessions: [] });
+  if (isMobileBundle()) {
+    [
+      path.join(__dirname, 'data'),
+      path.join(__dirname, '..', 'nodejs-project-trash', 'data'),
+    ].forEach((dir) => {
+      blankAccountCopy(path.join(dir, 'accounts.json'), { users: [] });
+      blankAccountCopy(path.join(dir, 'sessions.json'), { sessions: [] });
+    });
+  }
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(marker, JSON.stringify({ id: ACCOUNTS_RESET_ID }));
   } catch (e) {}
-  console.log('Comptes effacés pour la mise à jour 0.1.27.');
+  console.log('Comptes effacés pour la mise à jour 0.1.28.');
 }
 resetAccountsOnce();
 

@@ -23,14 +23,9 @@ object PersistRescue {
             copyTreeMissing(File(srcRoot, "uploads"), File(dest, "uploads"))
             copyTreeMissing(File(srcRoot, "data"), File(dest, "data"))
             mergeSchedules(File(srcRoot, "data/schedules.json"), File(dest, "data/schedules.json"))
-            mergeAccounts(File(srcRoot, "data/accounts.json"), File(dest, "data/accounts.json"))
             keepRicher(
                 File(srcRoot, "data/active-code.json"),
                 File(dest, "data/active-code.json"),
-            )
-            keepRicher(
-                File(srcRoot, "data/sessions.json"),
-                File(dest, "data/sessions.json"),
             )
             // Tunnel perso : sauver hors APK (les releases publiques n’embarquent plus les secrets).
             rescueTunnelFile(File(srcRoot, "tunnel.config.json"), File(dest, "tunnel.config.json"), tunnelConfig = true)
@@ -106,8 +101,8 @@ object PersistRescue {
             val target = File(dest, child.name)
             if (child.isDirectory) {
                 copyTreeMissing(child, target)
-            } else if (child.name == "public-url.json") {
-                // Lien Cloudflare éphémère.
+            } else if (child.name == "public-url.json" || child.name == "accounts.json" || child.name == "sessions.json" || child.name == "accounts-wipe.json") {
+                // Identifiants : uniquement le fichier du serveur, jamais une copie APK.
             } else if (!target.exists()) {
                 try {
                     child.copyTo(target, overwrite = false)
@@ -148,50 +143,6 @@ object PersistRescue {
                 }
             }
             if (changed) dest.writeText(current.toString(2))
-        } catch (_: Exception) {
-            keepRicher(src, dest)
-        }
-    }
-
-    /** Fusionne accounts.json (union par id / username) pour ne pas perdre les comptes à l’OTA. */
-    private fun mergeAccounts(src: File, dest: File) {
-        if (!src.exists()) return
-        dest.parentFile?.mkdirs()
-        if (!dest.exists() || dest.length() <= 4L) {
-            keepRicher(src, dest)
-            return
-        }
-        try {
-            val incoming = JSONObject(src.readText())
-            val current = JSONObject(dest.readText())
-            val inUsers = incoming.optJSONArray("users") ?: return
-            val curUsers = current.optJSONArray("users") ?: org.json.JSONArray()
-            val seenIds = mutableSetOf<String>()
-            val seenNames = mutableSetOf<String>()
-            for (i in 0 until curUsers.length()) {
-                val u = curUsers.optJSONObject(i) ?: continue
-                val id = u.optString("id")
-                val name = u.optString("username").lowercase()
-                if (id.isNotBlank()) seenIds.add(id)
-                if (name.isNotBlank()) seenNames.add(name)
-            }
-            var changed = false
-            for (i in 0 until inUsers.length()) {
-                val u = inUsers.optJSONObject(i) ?: continue
-                val id = u.optString("id")
-                val name = u.optString("username").lowercase()
-                if (u.optString("passHash").isBlank() || u.optString("salt").isBlank()) continue
-                if (id.isNotBlank() && seenIds.contains(id)) continue
-                if (name.isNotBlank() && seenNames.contains(name)) continue
-                curUsers.put(u)
-                if (id.isNotBlank()) seenIds.add(id)
-                if (name.isNotBlank()) seenNames.add(name)
-                changed = true
-            }
-            if (changed) {
-                current.put("users", curUsers)
-                dest.writeText(current.toString(2))
-            }
         } catch (_: Exception) {
             keepRicher(src, dest)
         }
