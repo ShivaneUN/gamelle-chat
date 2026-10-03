@@ -1056,10 +1056,11 @@ class MainActivity : FlutterActivity() {
 
     private fun cloudflaredPid(): Int? {
         val proc = tunnel ?: return null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
         return try {
-            val pid = proc.pid()
-            if (pid > 0L && pid <= Int.MAX_VALUE) pid.toInt() else null
+            val field = proc.javaClass.getDeclaredField("pid")
+            field.isAccessible = true
+            val pid = field.getInt(proc)
+            if (pid > 0) pid else null
         } catch (_: Exception) {
             null
         }
@@ -1105,7 +1106,8 @@ class MainActivity : FlutterActivity() {
 
     private fun startTunnel() {
         if (isJavaProcessAlive(tunnel)) {
-            killOtherCloudflared()
+            val keep = cloudflaredPid()
+            if (keep != null) killOtherCloudflared(keep)
             return
         }
         if (tunnelThread?.isAlive == true) return
