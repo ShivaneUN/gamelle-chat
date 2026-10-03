@@ -6,17 +6,29 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
-function saveSessionToken() {}
-function readSessionToken() { return ''; }
-function clearSessionToken() {
+function saveSessionToken(token) {
+  if (!token) return;
+  try { sessionStorage.setItem('gamelleSession', String(token)); } catch (e) {}
   try { localStorage.removeItem('gamelleSession'); } catch (e) {}
-  try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
 }
-clearSessionToken();
+function readSessionToken() {
+  try {
+    const q = new URLSearchParams(location.search).get('access');
+    if (q && String(q).trim()) return String(q).trim();
+  } catch (e) {}
+  try { return sessionStorage.getItem('gamelleSession') || ''; } catch (e) {}
+  return '';
+}
+function clearSessionToken() {
+  try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
+  try { localStorage.removeItem('gamelleSession'); } catch (e) {}
+}
 (function dropAccessFromUrl() {
   try {
     const params = new URLSearchParams(location.search);
-    if (!params.has('access')) return;
+    const access = (params.get('access') || '').trim();
+    if (!access) return;
+    saveSessionToken(access);
     params.delete('access');
     const q = params.toString();
     history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + (location.hash || ''));
@@ -35,7 +47,12 @@ function authFetch(url, opts) {
 }
 // <img>/<video> ne peuvent pas envoyer Bearer → access= en query si token local.
 function withAccess(url) {
-  return url;
+  const t = readSessionToken();
+  if (!t || !url) return url;
+  const s = String(url);
+  if (!s.startsWith('/media/')) return s;
+  if (/[?&]access=/.test(s)) return s;
+  return s + (s.includes('?') ? '&' : '?') + 'access=' + encodeURIComponent(t);
 }
 
 const refreshBtn = document.getElementById('refreshBtn');
@@ -64,7 +81,7 @@ function readControllerCode() {
     if (next.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', next); } catch (e) {}
       try { localStorage.setItem('gamellePairCode', next); } catch (e) {}
-      location.replace('/controller.html');
+      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
       throw new Error('code-redirect');
     }
   }
@@ -94,7 +111,7 @@ if (!code) {
     if (c.length >= 4) {
       try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
       try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html');
+      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
       return;
     }
     setTimeout(() => location.reload(), 2500);

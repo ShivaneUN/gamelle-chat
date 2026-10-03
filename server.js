@@ -572,10 +572,8 @@ function sendHtml(res, req, file, extra) {
     let out = htmlWithAbsoluteLogo(html, req)
       .replace('<!--LOGIN_ERROR-->', escapeHtml(info.error || ''))
       .replace(/<!--SERVER_VER-->/g, escapeHtml(version));
-    if (out.includes('<head>')) {
-      const purge = '<script>(function(){try{localStorage.removeItem("gamelleSession")}catch(e){}try{sessionStorage.removeItem("gamelleSession")}catch(e){}})();</script>';
-      const guard = out.includes('name="gamelle-version"') ? '' : htmlFreshnessGuard(version);
-      out = out.replace('<head>', '<head>' + purge + guard);
+    if (out.includes('<head>') && !out.includes('name="gamelle-version"')) {
+      out = out.replace('<head>', '<head>' + htmlFreshnessGuard(version));
     }
     const assetVer = encodeURIComponent(version);
     out = out.replace(
@@ -583,8 +581,6 @@ function sendHtml(res, req, file, extra) {
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
     setUncached(res);
-    // Le site ne garde aucun compte : seulement le cookie posé par le serveur.
-    res.setHeader('Clear-Site-Data', '"storage"');
     res.type('html').send(out);
   });
 }
@@ -708,9 +704,9 @@ function sendLoginFail(req, res, status, error, code) {
 function sendLoginOk(req, res, user, token, replaced) {
   try { setSessionCookie(res, token, req); } catch (e) {}
   if (wantsJsonLogin(req)) {
-    return res.json({ ok: true, user: publicUser(user), replaced: !!replaced });
+    return res.json({ ok: true, user: publicUser(user), token, replaced: !!replaced });
   }
-  return res.redirect(302, '/controller.html');
+  return res.redirect(302, '/controller.html?access=' + encodeURIComponent(token));
 }
 
 app.post('/api/auth/login', (req, res) => {

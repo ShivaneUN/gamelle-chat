@@ -7,10 +7,14 @@
   const btn = document.getElementById('loginBtn');
   const toggle = document.getElementById('togglePass');
 
-  function saveToken() {}
+  function saveToken(token) {
+    if (!token) return;
+    try { sessionStorage.setItem(SESSION_KEY, String(token)); } catch (e) {}
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  }
 
   function readToken() {
-    return '';
+    try { return sessionStorage.getItem(SESSION_KEY) || ''; } catch (e) { return ''; }
   }
 
   function authHeaders() {
@@ -22,8 +26,9 @@
 
   function goController() {
     try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
-    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
-    location.replace('/controller.html');
+    const t = readToken();
+    if (t) location.replace('/controller.html?access=' + encodeURIComponent(t));
+    else location.replace('/controller.html');
   }
 
   if (toggle && passEl) {
