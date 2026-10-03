@@ -196,8 +196,6 @@ function mergeAccountsFrom(srcFile) {
   }
 }
 
-mergeAccountsFrom(path.join(__dirname, 'data', 'accounts.json'));
-mergeAccountsFrom(path.join(__dirname, '..', 'nodejs-project-trash', 'data', 'accounts.json'));
 console.log('Stockage persistant :', STORE);
 
 app.use((req, res, next) => {
@@ -310,24 +308,27 @@ function writeSessions(data) {
   saveJsonFile(SESSIONS_FILE, data);
 }
 
+// Une seule fois : la 0.1.27 repart sans les anciens comptes (identifiants cassés).
+const ACCOUNTS_RESET_ID = '0.1.27';
+function resetAccountsOnce() {
+  const marker = path.join(DATA_DIR, 'accounts-wipe.json');
+  let done = '';
+  try {
+    done = String(JSON.parse(fs.readFileSync(marker, 'utf8')).id || '');
+  } catch (e) {}
+  if (done === ACCOUNTS_RESET_ID) return;
+  writeAccounts({ users: [] });
+  writeSessions({ sessions: [] });
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(marker, JSON.stringify({ id: ACCOUNTS_RESET_ID }));
+  } catch (e) {}
+  console.log('Comptes effacés pour la mise à jour 0.1.27.');
+}
+resetAccountsOnce();
+
 function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64).toString('hex');
-}
-
-function passwordVariants(password) {
-  const raw = String(password ?? '');
-  const out = [];
-  const add = (s) => {
-    if (!out.includes(s)) out.push(s);
-  };
-  add(raw);
-  try { add(raw.normalize('NFC')); } catch (e) {}
-  try { add(raw.normalize('NFD')); } catch (e) {}
-  const trimmed = raw.trim();
-  add(trimmed);
-  try { add(trimmed.normalize('NFC')); } catch (e) {}
-  try { add(trimmed.normalize('NFD')); } catch (e) {}
-  return out;
 }
 
 function normUser(s) {
@@ -356,12 +357,13 @@ function passwordMatches(user, password) {
   if (!/^[0-9a-f]+$/i.test(hashHex) || hashHex.length < 32 || !salt) return false;
   const expected = Buffer.from(hashHex, 'hex');
   if (!expected.length) return false;
-  for (const candidate of passwordVariants(password)) {
-    const hash = hashPassword(candidate, salt);
-    const got = Buffer.from(hash, 'hex');
-    if (got.length === expected.length && crypto.timingSafeEqual(got, expected)) return true;
+  try {
+    const got = Buffer.from(hashPassword(password, salt), 'hex');
+    if (got.length !== expected.length) return false;
+    return crypto.timingSafeEqual(got, expected);
+  } catch (e) {
+    return false;
   }
-  return false;
 }
 
 function publicUser(u) {
@@ -714,7 +716,7 @@ app.post('/api/auth/login', (req, res) => {
     try {
       ok = passwordMatches(user, password);
     } catch (e) {
-      return sendLoginFail(req, res, 500, 'Vérification impossible. Sur la tablette : Comptes → clé → Nouveau mot de passe.', 'verify-failed');
+      return sendLoginFail(req, res, 500, 'Vérification impossible. Réessaie.', 'verify-failed');
     }
     if (!ok) {
       return sendLoginFail(req, res, 401, `Mot de passe incorrect pour « ${user.username} ».`, 'bad-password');
@@ -758,24 +760,6 @@ app.post('/api/auth/logout', (req, res) => {
   }
   clearSessionCookie(res, req);
   res.json({ ok: true, loggedOut: true });
-});
-
-app.post('/api/auth/users/:id/password', (req, res) => {
-  if (!isLocalRequest(req)) {
-    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
-  }
-  const password = String((req.body && req.body.password) || '');
-  if (password.length < 4 || password.length > 128) {
-    return res.status(400).json({ ok: false, error: 'Mot de passe trop court' });
-  }
-  const accounts = readAccounts();
-  const user = accounts.users.find((u) => u && String(u.id) === String(req.params.id || ''));
-  if (!user) return res.status(404).json({ ok: false, error: 'Compte introuvable' });
-  user.salt = crypto.randomBytes(16).toString('hex');
-  user.passHash = hashPassword(password, user.salt);
-  writeAccounts(accounts);
-  destroySessionsForUser(user.id);
-  res.json({ ok: true, user: publicUser(user) });
 });
 
 app.delete('/api/auth/users/:id', (req, res) => {
