@@ -862,7 +862,7 @@ body.live-page .cam-dot {
   border: none;
 }
 .tile-btn.toggle-on {
-  background: #ff7a6e;
+  background: #1f8a4c;
   color: #fff;
   border: none;
 }
@@ -1032,3 +1032,121 @@ body.live-page .cam-dot {
   .dock-btn { font-size: 9px; padding: 4px 1px; }
   .dock-btn .ico { width: 18px; height: 18px; }
 }
+
+.link-qr {
+  display: block;
+  width: 220px;
+  height: 220px;
+  margin: 12px auto;
+  background: #fff;
+  border-radius: 12px;
+}
+.link-qr[hidden] { display: none !important; }
+.link-code {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #ff7a45;
+  margin: 8px 0;
+}
+.link-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.link-row input {
+  flex: 1;
+  min-width: 120px;
+  background: #1c2030;
+  color: #fff;
+  border: 1px solid #32384a;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.device-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.device-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  background: #1c2030;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d64545;
+  flex-shrink: 0;
+}
+.status-dot.on { background: #1f8a4c; }
+.rename-btn {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 4px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #c5cad6;
+}
+.rename-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.rename-input {
+  width: 140px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.sync-legend {
+  margin: 12px 0 4px;
+  color: #8b93a7;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.device-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+button.chip-btn.sync-off,
+.device-row button.sync-off {
+  background: transparent;
+  color: #c5cad6;
+  border-color: #32384a;
+  box-shadow: none;
+}
+button.chip-btn.sync-on,
+.device-row button.sync-on {
+  background: #1f8a4c;
+  color: #fff;
+  border-color: #1f8a4c;
+  box-shadow: none;
+}
+.cam2-preview, .cam2-relay {
+  display: none;
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-top: 8px;
+  background: #000;
+}
+.cam2-preview.on, .cam2-relay.on { display: block; }
+#schedModal .modal-sheet {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#schedModal .modal-head,
+#schedModal .lib-sync-hint,
+#schedModal #addSched {
+  flex-shrink: 0;
+}
+#schedModal #schedList {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+#schedModal #addSched {
+  margin-top: 8px;
+  background: #1c2030;
+}
+body.simult .live-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+body.simult .live-wrap .live-placeholder { display: none !important; }
+body.simult .cam2-live.on { display: block !important; max-height: none; height: 100%; object-fit: cover; margin: 0; }
+body.simult .cam2-relay { max-height: none; height: 100%; margin: 0; }

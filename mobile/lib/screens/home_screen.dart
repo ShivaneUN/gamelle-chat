@@ -35,7 +35,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _applying = false;
   bool _updateAvailable = false;
   bool _allowBackground = false;
-  bool _receiverOpen = false;
   _LeftMode _leftMode = _LeftMode.qr;
   double _updatePct = 0;
   String _updateText = 'Vérifie les releases GitHub.';
@@ -192,9 +191,16 @@ class _HomeScreenState extends State<HomeScreen> {
     await _bridge.shutdown();
   }
 
-  String get _receiverUrl {
+  Future<void> _joinTablet() async {
+    await [Permission.camera, Permission.microphone].request();
+    if (!mounted) return;
     final base = Uri.parse(_bridge.localUrl);
-    return base.replace(path: '/receiver.html').toString();
+    final url = base.replace(path: '/scan.html').toString();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReceiverWebView(url: url),
+      ),
+    );
   }
 
   Future<void> _openReceiver() async {
@@ -205,7 +211,13 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (_) {}
     if (!mounted) return;
-    setState(() => _receiverOpen = true);
+    final base = Uri.parse(_bridge.localUrl);
+    final url = base.replace(path: '/receiver.html').toString();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReceiverWebView(url: url),
+      ),
+    );
   }
 
   void _toggleSettings() {
@@ -239,10 +251,6 @@ class _HomeScreenState extends State<HomeScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (_receiverOpen) {
-          setState(() => _receiverOpen = false);
-          return;
-        }
         if (_leftMode != _LeftMode.qr) {
           _closeLeftPanel();
           return;
@@ -252,9 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
         backgroundColor: _bg,
-        body: Stack(
-          children: [
-            SafeArea(
+        body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
@@ -301,25 +307,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-            ),
-            if (_bridge.status == NodeStatus.running)
-              Positioned(
-                left: _receiverOpen ? 0 : -4000,
-                top: 0,
-                bottom: 0,
-                width: MediaQuery.sizeOf(context).width,
-                child: IgnorePointer(
-                  ignoring: !_receiverOpen,
-                  child: ReceiverWebView(
-                    key: const ValueKey('gamelle-receiver'),
-                    url: _receiverUrl,
-                    onHome: () {
-                      if (mounted) setState(() => _receiverOpen = false);
-                    },
-                  ),
-                ),
-              ),
-          ],
         ),
       ),
     );
@@ -358,8 +345,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _pairingPanel({required bool expand}) {
     final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
     final qrSize = expand ? 260.0 : 220.0;
+    final publicOn = _bridge.tunnelEnabled || _bridge.customDomainActive;
     final Widget qr;
-    if (!_bridge.tunnelEnabled) {
+    if (!publicOn) {
       qr = SizedBox(
         width: qrSize,
         height: qrSize,
@@ -367,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Cloudflare désactivé.\nAccès local via Réglages.',
+              'Accès distant désactivé.\nLocal via Réglages.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _muted, height: 1.4),
             ),
@@ -417,11 +405,13 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _StatusPill(label: _localOk ? 'Local OK' : 'Local…', ok: _localOk),
             _StatusPill(
-              label: !_bridge.tunnelEnabled
-                  ? 'Cloudflare off'
-                  : (_cloudflareOk
-                      ? 'Cloudflare OK'
-                      : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare')),
+              label: _bridge.customDomainActive
+                  ? (_cloudflareOk ? 'Domaine OK' : 'Domaine…')
+                  : (!_bridge.tunnelEnabled
+                      ? 'Cloudflare off'
+                      : (_cloudflareOk
+                          ? 'Cloudflare OK'
+                          : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare'))),
               ok: _cloudflareOk,
             ),
           ],
@@ -457,6 +447,12 @@ class _HomeScreenState extends State<HomeScreen> {
           highlighted: true,
           onTap: _applying ? null : _openReceiver,
         ),
+      _ActionTile(
+        icon: Icons.qr_code_scanner_rounded,
+        title: 'Rejoindre une tablette',
+        subtitle: 'Devenir la caméra 2',
+        onTap: _applying ? null : _joinTablet,
+      ),
       _ActionTile(
         icon: Icons.settings_rounded,
         title: 'Réglages',

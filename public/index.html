@@ -19,22 +19,44 @@
 <div class="wrap center">
   <h1>Gamelle Chat</h1>
   <p class="muted">Connexion contrôleur</p>
-  <form id="loginForm" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
-    <label class="hint" for="username">Identifiant</label>
-    <input id="username" name="username" autocomplete="username" required
+  <form id="loginForm" method="POST" action="/api/auth/login" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
+    <label class="hint" for="gamelleUser">Identifiant</label>
+    <input id="gamelleUser" name="gamelle-id" autocomplete="one-time-code" autocapitalize="none" autocorrect="off" spellcheck="false" required
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
-    <label class="hint" for="password">Mot de passe</label>
+    <label class="hint" for="gamellePass">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="password" name="password" type="password" autocomplete="current-password" required
-        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+      <input id="gamellePass" name="gamelle-secret" type="text" autocomplete="one-time-code" autocorrect="off" spellcheck="false" required
+        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;-webkit-text-security:disc;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
     </div>
-    <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"></p>
+    <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"><!--LOGIN_ERROR--></p>
     <button id="loginBtn" class="chip-btn toggle-on" type="submit" style="width:100%;justify-content:center;">Se connecter</button>
   </form>
-  <p class="muted" style="font-size:13px;">Les comptes se créent uniquement sur la tablette (Accueil → Comptes).</p>
+  <p class="muted" style="font-size:13px;">Même identifiant et mot de passe que dans Comptes sur la tablette.</p>
+  <p class="muted" style="font-size:12px;">Serveur <!--SERVER_VER--></p>
 </div>
-<script src="/login.js?v=1"></script>
+<script>
+(function () {
+  var pass = document.getElementById('gamellePass');
+  var toggle = document.getElementById('togglePass');
+  if (toggle && pass) {
+    toggle.addEventListener('click', function () {
+      var hidden = pass.style.webkitTextSecurity !== 'none';
+      pass.style.webkitTextSecurity = hidden ? 'none' : 'disc';
+      toggle.textContent = hidden ? 'ABC' : '•••';
+    });
+  }
+  try {
+    var t = localStorage.getItem('gamelleSession') || sessionStorage.getItem('gamelleSession') || '';
+    if (!t) return;
+    fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + t }, credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.authenticated) location.replace('/controller.html?access=' + encodeURIComponent(j.token || t));
+      });
+  } catch (e) {}
+})();
+</script>
 </body>
 </html>

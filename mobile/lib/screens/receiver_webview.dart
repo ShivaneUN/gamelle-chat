@@ -18,12 +18,10 @@ class ReceiverWebView extends StatefulWidget {
     super.key,
     required this.url,
     this.onChangeUrl,
-    this.onHome,
   });
 
   final String url;
   final Future<void> Function(String url)? onChangeUrl;
-  final VoidCallback? onHome;
 
   @override
   State<ReceiverWebView> createState() => _ReceiverWebViewState();
@@ -110,11 +108,19 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         onMessageReceived: (JavaScriptMessage message) {
           final m = message.message.trim();
           if (m == 'home') {
-            if (widget.onHome != null) {
-              widget.onHome!();
-              return;
-            }
             if (context.mounted) Navigator.of(context).maybePop();
+            return;
+          }
+          if (m.startsWith('join|')) {
+            final next = m.substring('join|'.length).trim();
+            if (next.startsWith('http')) {
+              unawaited(_web?.loadRequest(Uri.parse(next)));
+            }
+            return;
+          }
+          if (m.startsWith('pairqr|')) {
+            final raw = m.substring('pairqr|'.length).trim();
+            _showPairQr(raw);
             return;
           }
           if (m == 'qr' || m.startsWith('qr|')) {
@@ -163,14 +169,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             if (!mounted) return;
             if (error.isForMainFrame ?? true) {
               setState(() => _failed = true);
-              Future<void>.delayed(const Duration(seconds: 2), () {
-                if (!mounted || !_failed) return;
-                setState(() {
-                  _failed = false;
-                  _generation++;
-                  _createController();
-                });
-              });
             }
           },
           onSslAuthError: (error) {
@@ -302,11 +300,40 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     } catch (_) {}
   }
 
+  void _showPairQr(String url) {
+    final data = url.trim();
+    if (data.isEmpty || !mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierColor: const Color(0xEE000000),
+      builder: (ctx) {
+        final side = (MediaQuery.sizeOf(ctx).shortestSide * 0.72).clamp(240.0, 340.0);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF151821),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ScanQr(data: data, size: side),
+              const SizedBox(height: 12),
+              const Text(
+                'L’autre récepteur scanne ce QR',
+                style: TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showScanQr([String? preferredUrl]) {
     final fromBridge = NodeBridgeService.instance.scannableQrUrl;
     String? url = preferredUrl?.trim();
     if (url != null && url.isNotEmpty) {
       url = url.replaceAll(RegExp(r'/$'), '');
+      url = url.replaceAll(RegExp(r'[?&]v=[^&]*'), '');
+      url = url.replaceAll(RegExp(r'\?$'), '').replaceAll(RegExp(r'\?&'), '?');
       if (!url.contains('/controller.html')) {
         url = '$url/controller.html';
       }

@@ -13,7 +13,7 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=53">
+<link rel="stylesheet" href="/style.css?v=57">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -33,6 +33,7 @@
     <div class="live-wrap">
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="localVideo" autoplay playsinline muted></video>
+      <img id="cam2Live" class="cam2-live" alt="Caméra 2">
     </div>
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -58,7 +59,7 @@
           <span class="lbl">Alarme</span>
         </button>
       </div>
-      <div class="tile-row cols-2">
+      <div class="tile-row cols-3">
         <button id="bgBtn" class="tile-btn" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
           <span class="lbl">Arrière-plan</span>
@@ -66,6 +67,10 @@
         <button id="screenOffBtn" class="tile-btn toggle-on" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m3 3 18 18"/></svg>
           <span class="lbl">Écran</span>
+        </button>
+        <button id="openDevicesTile" class="tile-btn" type="button">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
+          <span class="lbl">Caméras</span>
         </button>
       </div>
     </div>
@@ -75,6 +80,10 @@
     <button id="homeBtn" class="dock-btn" type="button">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
       <span class="lbl">Accueil</span>
+    </button>
+    <button id="openDevicesBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
+      <span class="lbl">Appareils</span>
     </button>
     <button id="qrBtn" class="dock-btn" type="button">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h4v4h-4zM21 14v7M14 21h4"/></svg>
@@ -97,6 +106,33 @@
       <span class="lbl">Horaires</span>
     </button>
   </nav>
+</div>
+
+<div id="devicesModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="devicesModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="devicesTitle">
+    <div class="modal-head">
+      <h2 id="devicesTitle">Appareils</h2>
+      <button type="button" class="ghost modal-close" data-close="devicesModal">Fermer</button>
+    </div>
+    <p class="hint">Code toujours affiché. L'autre récepteur scanne le QR, ou tu entres ici son code.</p>
+    <p id="linkCode" class="link-code">------</p>
+    <button id="showLinkQr" class="chip-btn" type="button">Afficher le QR</button>
+    <img id="linkQrImg" alt="QR de jumelage" class="link-qr" hidden>
+    <p id="linkUrl" class="pair-link"></p>
+    <div class="link-row">
+      <input id="guestInput" inputmode="numeric" maxlength="6" placeholder="Code reçu" autocomplete="off">
+      <button id="guestOk" type="button">Valider</button>
+    </div>
+    <p class="sync-legend">Synchronisation</p>
+    <div class="link-row">
+      <button id="simultBtn" class="chip-btn sync-off" type="button" title="Caméras en même temps">Caméra</button>
+      <button id="ensembleBtn" class="chip-btn sync-off" type="button" title="Lampe, écran et micro ensemble">Bouton</button>
+      <button id="mediaSyncBtn" class="chip-btn sync-off" type="button" title="Photo et vidéo sur tous les appareils">Média</button>
+    </div>
+    <div id="deviceList" class="device-list"></div>
+    <img id="cam2Preview" alt="Caméra 2" class="cam2-preview">
+  </div>
 </div>
 
 <div id="albumModal" class="modal" hidden>
@@ -138,6 +174,8 @@
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
     <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
+    <label class="sched-sound-lab" for="alarmHeadlineInput">Texte affiché</label>
+    <input id="alarmHeadlineInput" type="text" maxlength="40" value="C'est l'heure !">
     <label class="sched-sound-lab">Son 1</label>
     <div id="manualAlarmSound1" class="sound-picker"></div>
     <label class="sched-sound-lab">Son 2 (ensuite)</label>
@@ -185,7 +223,7 @@
 </div>
 
 <div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2>C'est l'heure !</h2>
+  <h2 id="alarmHeadline">C'est l'heure !</h2>
   <p id="alarmMsg"></p>
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
@@ -193,11 +231,11 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/alarm-sounds.js?v=0.0.54"></script>
+<script src="/alarm-sounds.js?v=0.1.2"></script>
 <script src="/schedule-ui.js?v=14"></script>
-<script src="/alarm-ui.js?v=0.0.54"></script>
+<script src="/alarm-ui.js?v=0.1.3"></script>
 <script src="/qr.js?v=6"></script>
 <script src="/talk-pcm.js?v=3"></script>
-<script src="/receiver.js?v=51"></script>
+<script src="/receiver.js?v=57"></script>
 </body>
 </html>
