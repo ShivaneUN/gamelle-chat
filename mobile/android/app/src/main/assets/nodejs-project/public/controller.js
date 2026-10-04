@@ -238,6 +238,25 @@ socket.on('peers', ({ receiver, controllers, names }) => {
   syncControllerLiveTransport();
 });
 let livePollTimer = null;
+let lastSocketFrameAt = 0;
+
+function noteSocketFrame() {
+  lastSocketFrameAt = Date.now();
+  if (livePollTimer) stopLivePoll();
+}
+
+function ensureLiveFallback() {
+  if (typeof camWanted !== 'undefined' && !camWanted) return;
+  if (webrtcLive) {
+    if (livePollTimer) stopLivePoll();
+    return;
+  }
+  if (Date.now() - lastSocketFrameAt < 1200) {
+    if (livePollTimer) stopLivePoll();
+    return;
+  }
+  if (!livePollTimer) startLivePoll();
+}
 
 function setLivePlaceholder(show) {
   const el = document.getElementById('livePlaceholder');
@@ -339,6 +358,7 @@ function flushRelayFrame() {
 
 function applyFrame(data) {
   if (!data || webrtcLive) return;
+  noteSocketFrame();
   // Garde uniquement la dernière frame (drop le reste = moins de freeze).
   pendingRelayFrame = data;
   flushRelayFrame();
@@ -383,6 +403,9 @@ function startLivePoll() {
 function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
 }
+setInterval(() => {
+  try { ensureLiveFallback(); } catch (e) {}
+}, 1000);
 
 // --- Flash / torche du récepteur ---
 let flashOn = false;
@@ -913,7 +936,7 @@ function onWebrtcRecvState() {
   }
   if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
     webrtcLive = false;
-    if (camWanted && !livePollTimer) startLivePoll();
+    ensureLiveFallback();
     if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
   }
 }
@@ -963,14 +986,15 @@ function syncControllerLiveTransport() {
     return;
   }
   if (preferWebrtcRecv()) {
-    // JPEG en secours tant que le direct WebRTC n’est pas UP.
-    if (!webrtcLive && !livePollTimer) startLivePoll();
+    // 1 contrôleur : direct. Le snapshot lent ne doit pas écraser les images socket.
+    if (!webrtcLive) lastSocketFrameAt = Date.now();
     ensureCamPeer();
   } else {
     stopWebrtcReceiver();
-    if (!livePollTimer) startLivePoll();
-    if (liveHint) liveHint.textContent = webrtcLive ? 'Vue live · direct' : 'Vue live';
+    lastSocketFrameAt = Date.now();
+    if (liveHint) liveHint.textContent = 'Vue live';
   }
+  ensureLiveFallback();
 }
 
 socket.on('signal', async (payload) => {
@@ -989,7 +1013,7 @@ socket.on('signal', async (payload) => {
       socket.emit('signal', { channel: 'cam', type: 'answer', sdp: pc.localDescription });
     } catch (e) {
       webrtcLive = false;
-      if (camWanted && !livePollTimer) startLivePoll();
+      ensureLiveFallback();
     }
     return;
   }

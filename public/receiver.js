@@ -133,7 +133,8 @@ let micOn = false;
 let talkSoundOn = true;
 let alarmSoundOn = true;
 // WebView Android : l'annulation d'écho rend souvent la piste muette.
-const MIC_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
+// Le gain automatique reste allumé, sinon le micro du récepteur part trop bas.
+const MIC_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 };
 
 socket.on('active-code', ({ code: next } = {}) => {
   const c = String(next || '').trim();
@@ -656,7 +657,7 @@ async function enableCamera() {
     const videoConstraints = {
       facingMode: { ideal: 'environment' },
       width: { ideal: 640 },
-      frameRate: { ideal: 24, max: 30 },
+      frameRate: { ideal: 30, max: 30 },
     };
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
@@ -767,12 +768,12 @@ socket.on('switch-camera', async (payload) => {
 
   const videoAttempts = [];
   if (deviceId) {
-    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
   }
-  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-  videoAttempts.push({ width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+  videoAttempts.push({ width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
 
   let newStream = null;
   let lastErr = null;
@@ -792,7 +793,7 @@ socket.on('switch-camera', async (payload) => {
     console.warn('Changement de caméra impossible:', lastErr && (lastErr.name + ' ' + lastErr.message));
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } },
         audio: micOn ? MIC_AUDIO : false,
       });
       localVideo.srcObject = localStream;
@@ -852,7 +853,7 @@ function disableCamera() {
   socket.emit('cam-status', { on: false });
   socket.emit('torch-status', { on: false, unsupported: false });
   if (keepTalking) {
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((s) => {
+    navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false }).then((s) => {
       if (!micOn) { s.getTracks().forEach((t) => t.stop()); return; }
       startMicTalk(s, true).catch(() => {});
     }).catch(() => {});
@@ -938,17 +939,49 @@ function syncLiveTransport() {
     return;
   }
   if (preferWebrtcSend()) {
-    // JPEG en secours tant que le P2P n’est pas UP.
-    if (!webrtcSendReady && !liveRelayTimer) startLiveRelay();
+    // 1 contrôleur : direct d'abord. JPEG seulement tant que le P2P n'est pas là.
+    if (!webrtcSendReady && (!liveRelayTimer || liveRelayMode !== 'single')) startLiveRelay();
     startWebrtcSender(false).catch(() => {});
   } else {
+    // 2 contrôleurs et plus : pas de direct, JPEG allégé pour rester fluide.
     stopWebrtcSender();
-    if (!liveRelayTimer) startLiveRelay();
+    if (!liveRelayTimer || liveRelayMode !== 'multi') startLiveRelay();
   }
 }
 
 // Relais JPEG via le serveur : marche aussi hors WiFi (4G / autre réseau)
 let liveRelayTimer = null;
+let liveRelayMode = '';
+
+function relayMode() {
+  return peerControllerCount > 1 ? 'multi' : 'single';
+}
+
+function liveRelayProfile() {
+  if (relayMode() === 'multi') {
+    return {
+      mode: 'multi',
+      intervalMs: 80,
+      minMs: 70,
+      maxMs: 160,
+      width: 288,
+      quality: 0.34,
+      slowAt: 85,
+      fastAt: 40,
+    };
+  }
+  // 1 contrôleur en secours 4G : proche de 30 fps, même taille d'image.
+  return {
+    mode: 'single',
+    intervalMs: 33,
+    minMs: 33,
+    maxMs: 42,
+    width: 288,
+    quality: 0.34,
+    slowAt: 40,
+    fastAt: 24,
+  };
+}
 let liveGrabber = null;
 let liveGrabberTrack = null;
 let jsAwakeOsc = null;
@@ -983,7 +1016,7 @@ function keepCameraAlive() {
   } catch (e) {}
   // Ne pas forcer le JPEG si le direct WebRTC tourne déjà.
   if (webrtcSendReady) return;
-  if (!liveRelayTimer) startLiveRelay();
+  if (!liveRelayTimer || liveRelayMode !== relayMode()) startLiveRelay();
 }
 
 function startLiveRelay() {
@@ -995,10 +1028,11 @@ function startLiveRelay() {
   liveGrabberTrack = null;
   let busy = false;
   let lastSent = 0;
-  // JPEG via tunnel / 4G : viser ~12 fps fluides, payloads modestes.
-  let intervalMs = 80;
-  const WIDTH = 288;
-  const QUALITY = 0.34;
+  const profile = liveRelayProfile();
+  liveRelayMode = profile.mode;
+  let intervalMs = profile.intervalMs;
+  const WIDTH = profile.width;
+  const QUALITY = profile.quality;
 
   const tick = () => {
     if (!camOn || !localStream || !localVideo) return;
@@ -1026,9 +1060,8 @@ function startLiveRelay() {
     const t0 = now;
     const afterSend = () => {
       const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
-      // Adapter : encode lent → ralentir ; rapide → remonter vers ~12–14 fps.
-      if (dt > 85) intervalMs = Math.min(160, Math.max(intervalMs, Math.round(dt * 1.1)));
-      else if (dt < 40) intervalMs = Math.max(70, intervalMs - 6);
+      if (dt > profile.slowAt) intervalMs = Math.min(profile.maxMs, Math.max(intervalMs, Math.round(dt * 1.05)));
+      else if (dt < profile.fastAt) intervalMs = Math.max(profile.minMs, intervalMs - 2);
       busy = false;
     };
 
@@ -1063,7 +1096,7 @@ function startLiveRelay() {
     afterSend();
   };
 
-  liveRelayTimer = setInterval(tick, 25);
+  liveRelayTimer = setInterval(tick, 16);
   tick();
 }
 function stopLiveRelay() {
