@@ -459,8 +459,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       _ActionTile(
         icon: Icons.qr_code_scanner_rounded,
-        title: 'Rejoindre une tablette',
-        subtitle: 'Devenir la caméra 2',
+        title: 'Jumelage caméra',
+        subtitle: 'Scanner le QR de la tablette',
         onTap: _applying ? null : _joinTablet,
       ),
       _ActionTile(

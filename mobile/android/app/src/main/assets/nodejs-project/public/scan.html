@@ -3,12 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scanner</title>
+<title>Jumelage caméra</title>
 <link rel="stylesheet" href="/style.css?v=53">
 </head>
 <body class="live-page">
 <div class="wrap">
-  <h1>Scanner le QR</h1>
+  <h1>Jumelage caméra</h1>
+  <div class="row">
+    <button id="homeBtn" type="button" class="ghost" style="flex:1;margin-top:0">Accueil</button>
+    <button id="leaveBtn" type="button" class="danger" style="flex:1;margin-top:0">Déconnecté</button>
+  </div>
   <p id="scanHint" class="hint">Vise le QR affiché sur la tablette principale.</p>
   <video id="preview" autoplay playsinline muted style="width:100%;border-radius:12px;background:#000;"></video>
   <p class="hint">Ou colle le lien</p>
@@ -18,6 +22,18 @@
 <script>
 const hint = document.getElementById('scanHint');
 const video = document.getElementById('preview');
+function stopPreview() {
+  const stream = video && video.srcObject;
+  if (stream && stream.getTracks) stream.getTracks().forEach((t) => t.stop());
+  if (video) video.srcObject = null;
+}
+function goHome() {
+  stopPreview();
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('home');
+  else history.back();
+}
+document.getElementById('homeBtn').onclick = goHome;
+document.getElementById('leaveBtn').onclick = goHome;
 function openUrl(url) {
   const clean = String(url || '').trim();
   if (!clean.startsWith('http')) return;

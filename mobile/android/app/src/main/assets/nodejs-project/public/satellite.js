@@ -13,6 +13,29 @@ function setState(text) {
   if (stateEl) stateEl.textContent = text;
 }
 
+function stopCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  camOn = false;
+  if (video) video.srcObject = null;
+}
+
+function goHome() {
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('home');
+  else history.back();
+}
+
+function leavePairing() {
+  stopCam();
+  try { socket.disconnect(); } catch (e) {}
+  goHome();
+}
+
+const homeBtn = document.getElementById('homeBtn');
+const leaveBtn = document.getElementById('leaveBtn');
+if (homeBtn) homeBtn.onclick = () => { stopCam(); goHome(); };
+if (leaveBtn) leaveBtn.onclick = leavePairing;
+
 socket.on('connect', () => {
   socket.emit('satellite-hello', { k: linkKey });
 });
