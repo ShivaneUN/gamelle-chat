@@ -964,6 +964,24 @@ function cleanCamName(raw) {
   return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 24);
 }
 
+function cleanNearby(rows) {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  rows.slice(0, 12).forEach((row) => {
+    const host = String(row && row.host || '').trim().slice(0, 64);
+    if (!isPrivateIp(host)) return;
+    const kind = row && row.kind === 'camera' ? 'camera' : 'gamelle';
+    const port = Math.max(1, Math.min(65535, Number(row && row.port) || (kind === 'camera' ? 80 : 3000)));
+    out.push({
+      kind,
+      name: cleanCamName(row && row.name) || (kind === 'camera' ? 'Caméra Wi-Fi' : 'Caméra'),
+      host,
+      port,
+    });
+  });
+  return out;
+}
+
 function isSatelliteJoinUrl(raw) {
   try {
     const u = new URL(String(raw || '').trim());
@@ -1547,6 +1565,10 @@ io.on('connection', (socket) => {
 
     emitPeers(pair, room);
     if (role === 'receiver' || role === 'controller') emitDevices(pair);
+    if (role === 'controller') {
+      if (Array.isArray(room.nearby)) socket.emit('nearby', room.nearby);
+      if (room.pairUrl) socket.emit('link-share', { url: room.pairUrl });
+    }
 
     const media = role === 'receiver' ? receiverMedia() : controllerMedia();
     const joinVol = Number(room.outputVolume);
@@ -1612,8 +1634,37 @@ io.on('connection', (socket) => {
     emitDevices(roomCode);
   });
 
+  socket.on('nearby-report', (rows) => {
+    if (socket.data.role !== 'receiver' || !socket.data.code || !isLocalRequest(socket.request)) return;
+    const room = getRoom(socket.data.code);
+    room.nearby = cleanNearby(rows);
+    emitToRole(socket.data.code, 'controller', 'nearby', room.nearby);
+  });
+
+  socket.on('link-share', ({ url } = {}) => {
+    if (socket.data.role !== 'receiver' || !socket.data.code || !isLocalRequest(socket.request)) return;
+    const clean = String(url || '').trim();
+    if (!isSatelliteJoinUrl(clean)) return;
+    const room = getRoom(socket.data.code);
+    room.pairUrl = clean;
+    emitToRole(socket.data.code, 'controller', 'link-share', { url: clean });
+  });
+
+  socket.on('pair-nearby', ({ host, port } = {}) => {
+    if (socket.data.role !== 'controller' || !socket.data.code) return;
+    const cleanHost = String(host || '').trim();
+    const cleanPort = Math.max(1, Math.min(65535, Number(port) || 3000));
+    if (!isPrivateIp(cleanHost)) return;
+    emitToRole(socket.data.code, 'receiver', 'pair-nearby', { host: cleanHost, port: cleanPort });
+  });
+
   socket.on('accept-guest', ({ guest } = {}) => {
-    if (socket.data.role !== 'receiver' || !isLocalRequest(socket.request)) return;
+    const role = socket.data.role;
+    if (role === 'receiver') {
+      if (!isLocalRequest(socket.request)) return;
+    } else if (role !== 'controller' || !socket.data.code) {
+      return;
+    }
     const code = String(guest || '').trim();
     const id = pendingSatellites.get(code);
     const other = id && io.sockets.sockets.get(id);

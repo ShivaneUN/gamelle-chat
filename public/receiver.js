@@ -1414,6 +1414,7 @@ function startBatteryWatch() {
       nearbyEl.innerHTML = '<p class="hint">Aucun appareil en jumelage sur le Wi-Fi.</p>';
       return;
     }
+    try { socket.emit('nearby-report', rows); } catch (e) {}
     nearbyEl.innerHTML = rows.map((r, i) => {
       const title = r.kind === 'camera'
         ? (r.name || 'Caméra Wi-Fi')
@@ -1445,8 +1446,15 @@ function startBatteryWatch() {
       if (codeEl) codeEl.textContent = j.code || '------';
       linkUrl = j.url || '';
       if (urlEl) urlEl.textContent = linkUrl;
+      if (linkUrl) socket.emit('link-share', { url: linkUrl });
     } catch (e) {}
   }
+  socket.on('pair-nearby', async ({ host, port } = {}) => {
+    if (!host) return;
+    if (!linkUrl) await loadLink();
+    if (!linkUrl || !window.GamelleHost || !GamelleHost.postMessage) return;
+    GamelleHost.postMessage('pair-device|' + host + '|' + (port || 3000) + '|' + linkUrl);
+  });
   function openDevices() {
     const img = document.getElementById('linkQrImg');
     if (img) {
@@ -1515,5 +1523,6 @@ function startBatteryWatch() {
     }
   });
   paint();
+  loadLink();
 })();
 

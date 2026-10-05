@@ -1228,6 +1228,68 @@ async function saveMediaToDevice(url, name, type) {
   const listEl = document.getElementById('ctrlDeviceList');
   const openBtn = document.getElementById('openDevicesBtn');
   if (openBtn) openBtn.onclick = () => openModal('devicesModal');
+  const nearbyEl = document.getElementById('ctrlNearbyList');
+  const qrImg = document.getElementById('ctrlLinkQrImg');
+  let pairUrl = '';
+  function esc(text) {
+    return String(text || '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+  function paintNearby(list) {
+    if (!nearbyEl) return;
+    const rows = Array.isArray(list) ? list : [];
+    nearbyEl._rows = rows;
+    if (!rows.length) {
+      nearbyEl.innerHTML = '<p class="hint">Aucun appareil en jumelage sur le Wi-Fi.</p>';
+      return;
+    }
+    nearbyEl.innerHTML = rows.map((r, i) => {
+      const title = r.kind === 'camera'
+        ? (r.name || 'Caméra Wi-Fi')
+        : ('Jumelage cam · ' + (r.name || 'Caméra'));
+      const sub = r.kind === 'camera' ? 'Caméra Wi-Fi reconnue' : 'Prête à jumeler';
+      const btn = r.kind === 'camera' ? '' : '<button type="button" data-near="' + i + '">Jumeler</button>';
+      return '<div class="device-row"><div class="device-name"><b>' + esc(title) + '</b><span class="hint">' + esc(sub) + '</span></div>' + btn + '</div>';
+    }).join('');
+  }
+  if (nearbyEl && !nearbyEl.dataset.bound) {
+    nearbyEl.dataset.bound = '1';
+    nearbyEl.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-near]');
+      if (!b) return;
+      const row = (nearbyEl._rows || [])[Number(b.getAttribute('data-near'))];
+      if (!row || !row.host || row.kind === 'camera') return;
+      socket.emit('pair-nearby', { host: row.host, port: row.port || 3000 });
+      b.textContent = 'Envoyé';
+    });
+  }
+  socket.on('nearby', paintNearby);
+  socket.on('link-share', (msg) => {
+    pairUrl = (msg && msg.url) || '';
+    if (qrImg && !qrImg.hidden && pairUrl && typeof makeQrDataUrl === 'function') {
+      try { qrImg.src = makeQrDataUrl(pairUrl, 8, 4); } catch (e) {}
+    }
+  });
+  const showQr = document.getElementById('ctrlShowLinkQr');
+  if (showQr) {
+    showQr.onclick = () => {
+      if (!qrImg || !pairUrl || typeof makeQrDataUrl !== 'function') return;
+      try {
+        qrImg.src = makeQrDataUrl(pairUrl, 8, 4);
+        qrImg.hidden = false;
+      } catch (e) {
+        qrImg.hidden = true;
+      }
+    };
+  }
+  const guestOk = document.getElementById('ctrlGuestOk');
+  if (guestOk) {
+    guestOk.onclick = () => {
+      const guest = (document.getElementById('ctrlGuestInput').value || '').trim();
+      if (guest) socket.emit('accept-guest', { guest: guest });
+    };
+  }
   window.__paintCtrlDevices = function () {
     if (!listEl) return;
     const snap = window.__deviceSnap || { main: true, satellite: false, names: window.__deviceNames || {} };
