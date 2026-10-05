@@ -508,6 +508,22 @@ function destroySessionsForUser(userId) {
   writeSessions(sessions);
 }
 
+/**
+ * Le même compte change de réseau (Wi-Fi → 4G) : la nouvelle prise remplace l’ancienne
+ * tout de suite. Pas de déconnexion du compte, la session reste ouverte.
+ */
+function replaceControllerSockets(userId, keepSocketId) {
+  if (!userId || !io || !io.sockets || !io.sockets.sockets) return;
+  for (const s of [...io.sockets.sockets.values()]) {
+    if (!s || s.id === keepSocketId) continue;
+    if (!s.data || s.data.role !== 'controller' || s.data.userId !== userId) continue;
+    s.data.replaced = true;
+    const code = s.data.code;
+    if (code && rooms[code] && rooms[code].controllerIds) rooms[code].controllerIds.delete(s.id);
+    try { s.disconnect(true); } catch (e) {}
+  }
+}
+
 /** Ferme vraiment les sockets contrôleur de ce compte (déconnexion demandée). */
 function disconnectControllersForUser(userId, exceptSocketId) {
   if (!userId || !io || !io.sockets || !io.sockets.sockets) return;
@@ -1337,14 +1353,20 @@ function emitPeers(code, room) {
   }
   if (room.receiverId && !io.sockets.sockets.get(room.receiverId)) room.receiverId = null;
   const names = [];
+  const seen = new Set();
   for (const id of room.controllerIds) {
     const s = io.sockets.sockets.get(id);
-    const name = s && s.data && s.data.username ? String(s.data.username) : '';
+    if (!s || s.data.replaced) continue;
+    const uid = s.data && s.data.userId ? String(s.data.userId) : '';
+    const key = uid || ('socket:' + id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const name = s.data && s.data.username ? String(s.data.username) : '';
     names.push(name || 'Contrôleur');
   }
   names.sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
   io.to(code).emit('peers', {
-    controllers: room.controllerIds.size,
+    controllers: seen.size,
     receiver: !!room.receiverId,
     names,
   });
@@ -1466,7 +1488,10 @@ io.on('connection', (socket) => {
     socket.data.code = pair;
     socket.data.role = role;
 
-    if (role === 'controller') room.controllerIds.add(socket.id);
+    if (role === 'controller') {
+      if (socket.data.userId) replaceControllerSockets(socket.data.userId, socket.id);
+      room.controllerIds.add(socket.id);
+    }
     if (role === 'receiver') {
       room.receiverId = socket.id;
       writeActiveCode(pair);
@@ -1931,7 +1956,7 @@ io.on('connection', (socket) => {
       emitToRole(code, 'controller', 'cam-status', { on: false });
       emitToRole(code, 'controller', 'battery-status', { level: null, offline: true });
     }
-    emitPeers(code, room);
+    if (!socket.data.replaced) emitPeers(code, room);
   });
 });
 
