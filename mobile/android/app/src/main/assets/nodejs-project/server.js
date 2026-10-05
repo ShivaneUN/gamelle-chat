@@ -957,6 +957,23 @@ const linkState = {
   code: String(Math.floor(100000 + Math.random() * 900000)),
 };
 const pendingSatellites = new Map();
+let pairingMode = { on: false, name: '' };
+let pairOffer = null;
+
+function cleanCamName(raw) {
+  return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 24);
+}
+
+function isSatelliteJoinUrl(raw) {
+  try {
+    const u = new URL(String(raw || '').trim());
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (!u.pathname.endsWith('/satellite.html')) return false;
+    return !!u.searchParams.get('k');
+  } catch (e) {
+    return false;
+  }
+}
 
 app.get('/api/link', (req, res) => {
   if (!isLocalRequest(req)) {
@@ -965,6 +982,32 @@ app.get('/api/link', (req, res) => {
   const room = readActiveCode();
   const url = `http://${getLocalIp()}:${PORT}/satellite.html?k=${linkState.code}&c=${encodeURIComponent(room)}`;
   res.json({ ok: true, code: linkState.code, url });
+});
+
+app.post('/api/pairing', (req, res) => {
+  if (!isLocalRequest(req)) return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  const on = !!(req.body && req.body.on);
+  const name = cleanCamName(req.body && req.body.name);
+  pairingMode = { on, name: name || pairingMode.name };
+  if (!on) pairOffer = null;
+  res.json({ ok: true, on: pairingMode.on, name: pairingMode.name });
+});
+
+app.post('/api/pair-join', (req, res) => {
+  if (!isLanRequest(req)) return res.status(403).json({ ok: false, error: 'Réservé au Wi-Fi' });
+  if (!pairingMode.on) return res.status(409).json({ ok: false, error: 'Pas en jumelage' });
+  const url = String((req.body && req.body.url) || '').trim();
+  if (!isSatelliteJoinUrl(url)) return res.status(400).json({ ok: false, error: 'Lien refusé' });
+  pairOffer = { url, at: Date.now() };
+  res.json({ ok: true });
+});
+
+app.get('/api/pair-offer', (req, res) => {
+  if (!isLocalRequest(req)) return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  const offer = pairOffer;
+  pairOffer = null;
+  const fresh = offer && (Date.now() - offer.at) < 20000;
+  res.json({ ok: true, url: fresh ? offer.url : '' });
 });
 
 app.post('/api/alarm-stop', (_req, res) => {
@@ -1324,7 +1367,10 @@ function acceptSatellite(sock, roomCode) {
   sock.data.role = 'satellite';
   sock.data.deviceId = 'cam2';
   room.satelliteId = sock.id;
-  sock.emit('satellite-ok', { name: 'Caméra 2' });
+  if (!room.names) room.names = { main: 'Tablette', cam2: 'Caméra 2' };
+  const wanted = cleanCamName(sock.data.camName);
+  if (wanted) room.names.cam2 = wanted;
+  sock.emit('satellite-ok', { name: room.names.cam2 || 'Caméra 2' });
   emitDevices(roomCode);
 }
 
@@ -1546,12 +1592,14 @@ io.on('connection', (socket) => {
   });
 
   // Relais caméra JPEG : un seul envoi aux contrôleurs (évite le double flux qui tuait les FPS)
-  socket.on('satellite-hello', ({ k } = {}) => {
+  socket.on('satellite-hello', ({ k, name } = {}) => {
     const roomCode = readActiveCode();
     if (!roomCode) {
       socket.emit('satellite-wait', { error: 'Tablette principale pas prête' });
       return;
     }
+    const wanted = cleanCamName(name);
+    if (wanted) socket.data.camName = wanted;
     const key = String(k || '').trim();
     if (key && key === linkState.code) {
       acceptSatellite(socket, roomCode);
@@ -1576,7 +1624,9 @@ io.on('connection', (socket) => {
 
   socket.on('rename-device', ({ id, name } = {}) => {
     if (!socket.data.code) return;
-    if (socket.data.role !== 'receiver' && socket.data.role !== 'controller') return;
+    const role = socket.data.role;
+    if (role !== 'receiver' && role !== 'controller' && role !== 'satellite') return;
+    if (role === 'satellite' && id !== 'cam2') return;
     if (id !== 'main' && id !== 'cam2') return;
     const clean = String(name || '').trim().slice(0, 24);
     if (!clean) return;

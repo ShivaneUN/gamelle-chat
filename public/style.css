@@ -1060,6 +1060,7 @@ body.live-page .cam-dot {
   padding: 10px 12px;
 }
 .device-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.device-name .hint { display: block; margin: 2px 0 0; }
 .device-row {
   display: flex;
   justify-content: space-between;

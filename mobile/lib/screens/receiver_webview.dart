@@ -32,12 +32,14 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   static const _native = MethodChannel('gamelle/webview');
   static const _events = EventChannel('gamelle/webview_events');
   static const _life = MethodChannel('gamelle/lifecycle');
+  static const _pair = MethodChannel('gamelle/pairing');
 
   WebViewController? _web;
   StreamSubscription<NodeBridgeMessage>? _urlSub;
   StreamSubscription<dynamic>? _rendererSub;
   int? _webId;
   int _generation = 0;
+  Timer? _nearbyTimer;
   double _progress = 0;
 
   bool _isAllowedPublicUrl(String url) {
@@ -58,6 +60,12 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
+    if (widget.url.contains('receiver.html')) {
+      unawaited(_pair.invokeMethod<void>('startBrowse'));
+      _nearbyTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(_pushNearby());
+      });
+    }
     _rendererSub = _events.receiveBroadcastStream().listen((event) {
       final map = event is Map ? Map<String, dynamic>.from(event) : null;
       final type = map?['type']?.toString();
@@ -151,6 +159,30 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             unawaited(_life.invokeMethod<void>('setOutputVolume', {'volume': pct}));
             return;
           }
+          if (m.startsWith('advertise|')) {
+            final name = m.substring('advertise|'.length).trim();
+            unawaited(_pair.invokeMethod<void>('advertise', {'name': name}));
+            return;
+          }
+          if (m == 'advertise-stop') {
+            unawaited(_pair.invokeMethod<void>('stopAdvertise'));
+            return;
+          }
+          if (m.startsWith('pair-device|')) {
+            final rest = m.substring('pair-device|'.length);
+            final parts = rest.split('|');
+            if (parts.length >= 3) {
+              final host = parts[0].trim();
+              final port = int.tryParse(parts[1].trim()) ?? 3000;
+              final url = parts.sublist(2).join('|').trim();
+              unawaited(_pair.invokeMethod<void>('sendLink', {
+                'host': host,
+                'port': port,
+                'url': url,
+              }));
+            }
+            return;
+          }
         },
       )
       ..setBackgroundColor(_bg)
@@ -164,6 +196,12 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             _injectPublicUrl(NodeBridgeService.instance.publicUrl);
             _unlockWebAudio();
             unawaited(_native.invokeMethod<void>('audioFocus'));
+            if (widget.url.contains('scan.html')) {
+              unawaited(_offerDeviceName());
+            }
+            if (widget.url.contains('receiver.html')) {
+              unawaited(_pushNearby());
+            }
           },
           onWebResourceError: (error) {
             if (!mounted) return;
@@ -397,7 +435,28 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   }
 
   @override
+  Future<void> _offerDeviceName() async {
+    try {
+      final label = await _pair.invokeMethod<String>('deviceLabel');
+      final js = 'window.__gamelleDeviceName = ${jsonEncode(label ?? '')};'
+          ' if (window.__applyDeviceName) window.__applyDeviceName();';
+      await _web?.runJavaScript(js);
+    } catch (_) {}
+  }
+
+  Future<void> _pushNearby() async {
+    try {
+      final raw = await _pair.invokeMethod<List<dynamic>>('nearby');
+      final js = 'window.__setNearby && window.__setNearby(${jsonEncode(raw ?? const [])});';
+      await _web?.runJavaScript(js);
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
+    _nearbyTimer?.cancel();
+    unawaited(_pair.invokeMethod<void>('stopAdvertise'));
+    unawaited(_pair.invokeMethod<void>('stopBrowse'));
     _urlSub?.cancel();
     _rendererSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);

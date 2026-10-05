@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jumelage caméra</title>
-<link rel="stylesheet" href="/style.css?v=53">
+<link rel="stylesheet" href="/style.css?v=54">
 </head>
 <body class="live-page">
 <div class="wrap">
@@ -13,14 +13,17 @@
     <button id="homeBtn" type="button" class="ghost" style="flex:1;margin-top:0">Accueil</button>
     <button id="leaveBtn" type="button" class="danger" style="flex:1;margin-top:0">Déconnecté</button>
   </div>
+  <label class="hint" for="camName">Nom</label>
+  <input id="camName" maxlength="24" placeholder="Salon" autocomplete="off" style="width:100%;padding:10px;border-radius:10px;">
+  <p class="hint">Ce nom est le même sur la tablette principale. Les deux côtés peuvent le modifier.</p>
   <p id="satState" class="hint">Connexion…</p>
-  <p id="guestCode" class="link-code">------</p>
-  <p class="hint">Ce code reste affiché. S'il n'est pas accepté tout seul, entre-le sur la tablette principale.</p>
+  <p id="guestCode" class="link-code" hidden>------</p>
+  <p id="guestHint" class="hint" hidden>Ce code reste affiché. S'il n'est pas accepté tout seul, entre-le sur la tablette principale.</p>
   <video id="localVideo" autoplay playsinline muted style="width:100%;border-radius:12px;background:#000;"></video>
   <button id="camBtn" type="button">Caméra</button>
 </div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/talk-pcm.js?v=3"></script>
-<script src="/satellite.js?v=2"></script>
+<script src="/satellite.js?v=3"></script>
 </body>
 </html>

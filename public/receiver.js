@@ -1400,6 +1400,44 @@ function startBatteryWatch() {
       if (act === 'drop') socket.emit('drop-satellite');
     });
   }
+  function esc(text) {
+    return String(text || '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+  const nearbyEl = document.getElementById('nearbyList');
+  window.__setNearby = function (list) {
+    if (!nearbyEl) return;
+    const rows = Array.isArray(list) ? list : [];
+    nearbyEl._rows = rows;
+    if (!rows.length) {
+      nearbyEl.innerHTML = '<p class="hint">Aucun appareil en jumelage sur le Wi-Fi.</p>';
+      return;
+    }
+    nearbyEl.innerHTML = rows.map((r, i) => {
+      const title = r.kind === 'camera'
+        ? (r.name || 'Caméra Wi-Fi')
+        : ('Jumelage cam · ' + (r.name || 'Caméra'));
+      const sub = r.kind === 'camera' ? 'Caméra Wi-Fi reconnue' : 'Prête à jumeler';
+      const btn = r.kind === 'camera'
+        ? ''
+        : '<button type="button" data-near="' + i + '">Jumeler</button>';
+      return '<div class="device-row"><div class="device-name"><b>' + esc(title) + '</b><span class="hint">' + esc(sub) + '</span></div>' + btn + '</div>';
+    }).join('');
+  };
+  if (nearbyEl && !nearbyEl.dataset.bound) {
+    nearbyEl.dataset.bound = '1';
+    nearbyEl.addEventListener('click', async (ev) => {
+      const b = ev.target.closest('[data-near]');
+      if (!b) return;
+      const row = (nearbyEl._rows || [])[Number(b.getAttribute('data-near'))];
+      if (!row || !row.host || row.kind === 'camera') return;
+      if (!linkUrl) await loadLink();
+      if (!linkUrl || !window.GamelleHost || !GamelleHost.postMessage) return;
+      GamelleHost.postMessage('pair-device|' + row.host + '|' + (row.port || 3000) + '|' + linkUrl);
+      b.textContent = 'Envoyé';
+    });
+  }
   async function loadLink() {
     try {
       const j = await fetch('/api/link').then((r) => r.json());

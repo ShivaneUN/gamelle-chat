@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jumelage caméra</title>
-<link rel="stylesheet" href="/style.css?v=53">
+<link rel="stylesheet" href="/style.css?v=54">
 </head>
 <body class="live-page">
 <div class="wrap">
@@ -13,40 +13,120 @@
     <button id="homeBtn" type="button" class="ghost" style="flex:1;margin-top:0">Accueil</button>
     <button id="leaveBtn" type="button" class="danger" style="flex:1;margin-top:0">Déconnecté</button>
   </div>
-  <p id="scanHint" class="hint">Vise le QR affiché sur la tablette principale.</p>
+  <label class="hint" for="camName">Nom</label>
+  <input id="camName" maxlength="24" placeholder="Salon" autocomplete="off" style="width:100%;padding:10px;border-radius:10px;">
+  <p class="hint">Ce nom s’affiche sur la tablette principale. Tu peux le changer ici, elle peut le changer aussi.</p>
+  <p id="scanHint" class="hint">La tablette principale te voit sur le Wi-Fi. Tu peux aussi viser son QR : le jumelage se fait tout seul.</p>
   <video id="preview" autoplay playsinline muted style="width:100%;border-radius:12px;background:#000;"></video>
-  <p class="hint">Ou colle le lien</p>
-  <input id="manualUrl" placeholder="https://…" style="width:100%;padding:10px;border-radius:10px;">
-  <button id="manualGo" type="button">Ouvrir</button>
 </div>
 <script>
 const hint = document.getElementById('scanHint');
 const video = document.getElementById('preview');
+const nameInput = document.getElementById('camName');
+const NAME_KEY = 'gamelle-cam-name';
+let publishTimer = 0;
+
+function savedName() {
+  try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+}
+function storeName(name) {
+  try { localStorage.setItem(NAME_KEY, name); } catch (e) {}
+}
+function currentName() {
+  const typed = (nameInput.value || '').trim().slice(0, 24);
+  return typed || 'Caméra';
+}
+function publish() {
+  const name = currentName();
+  fetch('/api/pairing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: true, name: name }),
+  }).catch(() => {});
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('advertise|' + name);
+}
+function schedulePublish() {
+  clearTimeout(publishTimer);
+  publishTimer = setTimeout(publish, 350);
+}
+window.__applyDeviceName = function () {
+  if (nameInput.value.trim()) return;
+  const offered = String(window.__gamelleDeviceName || '').trim().slice(0, 24);
+  if (!offered) return;
+  nameInput.value = offered;
+  storeName(offered);
+  publish();
+};
+const stored = savedName();
+if (stored) nameInput.value = stored;
+nameInput.addEventListener('input', () => {
+  storeName(nameInput.value.trim().slice(0, 24));
+  schedulePublish();
+});
+nameInput.addEventListener('change', publish);
+
 function stopPreview() {
   const stream = video && video.srcObject;
   if (stream && stream.getTracks) stream.getTracks().forEach((t) => t.stop());
   if (video) video.srcObject = null;
 }
+function stopAnnounce() {
+  clearTimeout(publishTimer);
+  fetch('/api/pairing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on: false }),
+    keepalive: true,
+  }).catch(() => {});
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('advertise-stop');
+}
 function goHome() {
   stopPreview();
+  stopAnnounce();
   if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('home');
   else history.back();
 }
 document.getElementById('homeBtn').onclick = goHome;
 document.getElementById('leaveBtn').onclick = goHome;
+window.addEventListener('pagehide', stopAnnounce);
+
 function openUrl(url) {
   const clean = String(url || '').trim();
   if (!clean.startsWith('http')) return;
-  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('join|' + clean);
-  else location.href = clean;
+  let next = clean;
+  try {
+    const u = new URL(clean);
+    if (u.pathname.endsWith('/satellite.html') && !u.searchParams.get('n')) {
+      u.searchParams.set('n', currentName());
+    }
+    next = u.toString();
+  } catch (e) {}
+  stopPreview();
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('join|' + next);
+  else location.href = next;
 }
-document.getElementById('manualGo').onclick = () => openUrl(document.getElementById('manualUrl').value);
+
+async function pollOffer() {
+  try {
+    const j = await fetch('/api/pair-offer').then((r) => r.json());
+    if (j && j.url) {
+      openUrl(j.url);
+      return;
+    }
+  } catch (e) {}
+  setTimeout(pollOffer, 800);
+}
+
+publish();
+if (window.__gamelleDeviceName) window.__applyDeviceName();
+pollOffer();
+
 (async function () {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
     video.srcObject = stream;
     if (!('BarcodeDetector' in window)) {
-      hint.textContent = 'Scan automatique indisponible. Colle le lien affiché sous le code.';
+      hint.textContent = 'Scan automatique indisponible. La tablette principale peut te trouver sur le Wi-Fi.';
       return;
     }
     const det = new BarcodeDetector({ formats: ['qr_code'] });
@@ -62,7 +142,7 @@ document.getElementById('manualGo').onclick = () => openUrl(document.getElementB
     };
     tick();
   } catch (e) {
-    hint.textContent = 'Caméra refusée. Colle le lien.';
+    hint.textContent = 'Caméra refusée. La tablette principale peut quand même te trouver sur le Wi-Fi.';
   }
 })();
 </script>

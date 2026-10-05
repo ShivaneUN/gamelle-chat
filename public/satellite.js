@@ -3,11 +3,36 @@ const linkKey = params.get('k') || '';
 const socket = io();
 const stateEl = document.getElementById('satState');
 const codeEl = document.getElementById('guestCode');
+const guestHint = document.getElementById('guestHint');
+const nameInput = document.getElementById('camName');
 const video = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
+const NAME_KEY = 'gamelle-cam-name';
 let camOn = false;
+let paired = false;
 let stream = null;
 let facing = 'environment';
+
+function savedName() {
+  const fromUrl = String(params.get('n') || '').trim().slice(0, 24);
+  if (fromUrl) return fromUrl;
+  try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+}
+function storeName(name) {
+  try { localStorage.setItem(NAME_KEY, name); } catch (e) {}
+}
+function pushName(name) {
+  const clean = String(name || '').trim().slice(0, 24);
+  if (!clean) return;
+  storeName(clean);
+  if (paired) socket.emit('rename-device', { id: 'cam2', name: clean });
+  else socket.emit('satellite-hello', { k: linkKey, name: clean });
+}
+if (nameInput) {
+  const initial = savedName();
+  if (initial) nameInput.value = initial;
+  nameInput.addEventListener('change', () => pushName(nameInput.value));
+}
 
 function setState(text) {
   if (stateEl) stateEl.textContent = text;
@@ -37,20 +62,41 @@ if (homeBtn) homeBtn.onclick = () => { stopCam(); goHome(); };
 if (leaveBtn) leaveBtn.onclick = leavePairing;
 
 socket.on('connect', () => {
-  socket.emit('satellite-hello', { k: linkKey });
+  socket.emit('satellite-hello', { k: linkKey, name: savedName() });
 });
 socket.on('satellite-wait', (payload) => {
   if (payload && payload.error) {
     setState(payload.error);
     return;
   }
-  if (payload && payload.guest && codeEl) codeEl.textContent = payload.guest;
+  if (payload && payload.guest && codeEl) {
+    codeEl.hidden = false;
+    codeEl.textContent = payload.guest;
+    if (guestHint) guestHint.hidden = false;
+  }
   setState('En attente de la tablette');
 });
-socket.on('satellite-ok', () => {
-  setState('Jumelée — Caméra 2');
+socket.on('satellite-ok', (payload) => {
+  paired = true;
+  const name = (payload && payload.name) || (nameInput && nameInput.value) || 'Caméra 2';
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = name;
+  storeName(name);
+  if (codeEl) codeEl.hidden = true;
+  if (guestHint) guestHint.hidden = true;
+  setState('Jumelée — ' + name);
 });
-socket.on('disconnect', () => setState('Déconnectée'));
+socket.on('devices', (snap) => {
+  const next = snap && snap.names && snap.names.cam2;
+  if (!nameInput || !next || document.activeElement === nameInput) return;
+  if (nameInput.value.trim() === next) return;
+  nameInput.value = next;
+  storeName(next);
+  if (paired) setState('Jumelée — ' + next);
+});
+socket.on('disconnect', () => {
+  paired = false;
+  setState('Déconnectée');
+});
 
 async function startCam() {
   if (stream) stream.getTracks().forEach((t) => t.stop());

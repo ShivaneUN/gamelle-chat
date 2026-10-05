@@ -675,6 +675,45 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        MethodChannel(messenger, "gamelle/pairing").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "deviceLabel" -> result.success(PairingNsd.deviceLabel(this))
+                "advertise" -> {
+                    val name = (call.arguments as? Map<*, *>)?.get("name")?.toString().orEmpty()
+                    PairingNsd.advertise(this, name)
+                    result.success(true)
+                }
+                "stopAdvertise" -> {
+                    PairingNsd.stopAdvertise(this)
+                    result.success(true)
+                }
+                "startBrowse" -> {
+                    PairingNsd.startBrowse(this)
+                    result.success(true)
+                }
+                "stopBrowse" -> {
+                    PairingNsd.stopBrowse(this)
+                    result.success(true)
+                }
+                "nearby" -> result.success(PairingNsd.snapshot())
+                "sendLink" -> {
+                    val args = call.arguments as? Map<*, *>
+                    val host = args?.get("host")?.toString().orEmpty()
+                    val port = (args?.get("port") as? Number)?.toInt() ?: 3000
+                    val url = args?.get("url")?.toString().orEmpty()
+                    Thread {
+                        val ok = try {
+                            PairingNsd.sendLink(host, port, url)
+                        } catch (_: Exception) {
+                            false
+                        }
+                        mainHandler.post { result.success(ok) }
+                    }.start()
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         MethodChannel(messenger, "gamelle/webview").setMethodCallHandler { call, result ->
             when (call.method) {
                 "protect" -> {
