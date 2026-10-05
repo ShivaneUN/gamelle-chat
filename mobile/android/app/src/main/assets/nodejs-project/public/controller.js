@@ -56,11 +56,41 @@ function withAccess(url) {
 }
 
 const refreshBtn = document.getElementById('refreshBtn');
-if (refreshBtn) {
-  refreshBtn.onclick = () => {
-    try { location.reload(); } catch (e) { location.href = location.href; }
-  };
+function reloadControllerPage() {
+  try { location.reload(); } catch (e) { location.href = location.href; }
 }
+if (refreshBtn) refreshBtn.onclick = reloadControllerPage;
+
+// Wi-Fi → 5G : la page figée se recharge toute seule, une seule fois.
+(function refreshWhenCellular() {
+  let sawOffline = false;
+  let lastType = '';
+  try { lastType = (navigator.connection && navigator.connection.type) || ''; } catch (e) {}
+  function reloadOnce() {
+    const now = Date.now();
+    let prev = 0;
+    try { prev = Number(sessionStorage.getItem('gamelle-net-reload') || 0); } catch (e) {}
+    if (prev && now - prev < 10000) return;
+    try { sessionStorage.setItem('gamelle-net-reload', String(now)); } catch (e) {}
+    reloadControllerPage();
+  }
+  window.addEventListener('offline', () => { sawOffline = true; });
+  window.addEventListener('online', () => {
+    if (!sawOffline) return;
+    sawOffline = false;
+    reloadOnce();
+  });
+  try {
+    const conn = navigator.connection;
+    if (conn && conn.addEventListener) {
+      conn.addEventListener('change', () => {
+        const next = String(conn.type || '');
+        if (next === 'cellular' && lastType && lastType !== 'cellular') reloadOnce();
+        if (next) lastType = next;
+      });
+    }
+  } catch (e) {}
+})();
 
 function readControllerCode() {
   const params = new URLSearchParams(location.search);
