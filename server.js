@@ -630,6 +630,7 @@ function sendHtml(res, req, file, extra) {
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
     setUncached(res);
+    if (file === 'controller.html') res.setHeader('X-Gamelle-Page', 'controller');
     res.type('html').send(out);
   });
 }

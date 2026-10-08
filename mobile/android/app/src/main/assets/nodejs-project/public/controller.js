@@ -130,24 +130,33 @@ const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
 if (!code) {
-  authFetch('/api/active-code').then(async (r) => {
-    if (r.status === 401) {
-      clearSessionToken();
-      location.replace('/?next=controller');
-      return;
-    }
-    const j = await r.json().catch(() => ({}));
-    const c = String((j && j.code) || '').trim();
-    if (c.length >= 4) {
-      try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
-      try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
-      return;
-    }
-    setTimeout(() => location.reload(), 2500);
-  }).catch(() => {
-    setTimeout(() => location.reload(), 2500);
-  });
+  const waitHint = document.getElementById('liveHint');
+  if (statusEl) {
+    statusEl.textContent = 'Hors ligne';
+    statusEl.className = 'status off';
+  }
+  if (waitHint) waitHint.textContent = 'En attente du serveur…';
+  const waitForCode = () => {
+    authFetch('/api/active-code').then(async (r) => {
+      if (r.status === 401) {
+        clearSessionToken();
+        location.replace('/?next=controller');
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      const c = String((j && j.code) || '').trim();
+      if (c.length >= 4) {
+        try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
+        try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
+        location.replace('/controller.html' + (readSessionToken() ? ('?access=' + encodeURIComponent(readSessionToken())) : ''));
+        return;
+      }
+      setTimeout(waitForCode, 2500);
+    }).catch(() => {
+      setTimeout(waitForCode, 2500);
+    });
+  };
+  waitForCode();
   throw new Error('code-redirect');
 }
 
@@ -230,7 +239,16 @@ socket.on('session-replaced', () => {
   clearSessionToken();
   location.replace('/?reason=session');
 });
+socket.on('connect_error', () => {
+  if (authKicked) return;
+  setStatus(false, 'Hors ligne');
+  if (liveHint) liveHint.textContent = 'En attente du serveur…';
+});
 socket.on('disconnect', (reason) => {
+  if (!authKicked) {
+    setStatus(false, 'Hors ligne');
+    if (liveHint) liveHint.textContent = 'En attente du serveur…';
+  }
   if (reason === 'io server disconnect' && !authKicked) {
     setTimeout(() => {
       try { socket.connect(); } catch (e) {}

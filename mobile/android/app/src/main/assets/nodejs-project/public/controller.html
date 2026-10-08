@@ -221,6 +221,11 @@
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
 
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+}
+</script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
@@ -229,6 +234,6 @@
 <script src="/alarm-ui.js?v=0.1.3"></script>
 <script src="/talk-pcm.js?v=4"></script>
 <script src="/qr.js?v=1"></script>
-<script src="/controller.js?v=0.1.10"></script>
+<script src="/controller.js?v=0.1.11"></script>
 </body>
 </html>
