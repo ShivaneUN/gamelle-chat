@@ -4,6 +4,21 @@
   var SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
   var playbackVolume = 1;
   var talkGainBoost = 1.25;
+  var micCaptureCount = 0;
+
+  function applyAudioSession() {
+    try {
+      if (!navigator.audioSession) return;
+      // playback = haut-parleur, sans micro. play-and-record = micro iPhone autorisé.
+      navigator.audioSession.type = micCaptureCount > 0 ? 'play-and-record' : 'playback';
+    } catch (e) {}
+  }
+
+  function setMicCaptureSession(on) {
+    micCaptureCount += on ? 1 : -1;
+    if (micCaptureCount < 0) micCaptureCount = 0;
+    applyAudioSession();
+  }
 
   function clamp01(v) {
     const n = Number(v);
@@ -94,9 +109,7 @@
   }
 
   function unlockTalkAudio() {
-    try {
-      if (navigator.audioSession) navigator.audioSession.type = 'playback';
-    } catch (e) {}
+    applyAudioSession();
     const ctx = sharedAudioCtx();
     if (!global.__gamelleAudioUnlocked) {
       try {
@@ -318,6 +331,7 @@
 
   global.sharedAudioCtx = sharedAudioCtx;
   global.unlockTalkAudio = unlockTalkAudio;
+  global.setMicCaptureSession = setMicCaptureSession;
   global.startTalkCapture = startTalkCapture;
   global.stopTalkCapture = stopTalkCapture;
   global.playTalkPcm = playTalkPcm;

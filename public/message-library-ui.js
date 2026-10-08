@@ -172,7 +172,7 @@ function createMessageLibrary({ containerId, socket, onChange, onUseForAlarm }) 
     }
 
     const live = existingAudioStream();
-    const startWith = (stream, stopTracks, restoreMic) => {
+    const startWith = (stream, stopTracks, restoreMic, heldSession) => {
       const chunks = [];
       const { mime, ext } = pickMime();
       let rec;
@@ -186,13 +186,21 @@ function createMessageLibrary({ containerId, socket, onChange, onUseForAlarm }) 
       const startedAt = Date.now();
 
       rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      let captureReleased = false;
+      const releaseCapture = () => {
+        if (!heldSession || captureReleased) return;
+        captureReleased = true;
+        if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
+      };
       rec.onerror = () => {
+        releaseCapture();
         if (restoreMic) restoreMic();
         if (stopTracks) stream.getTracks().forEach((t) => t.stop());
         finishRecordingUi(messageId);
         alert('Erreur d\'enregistrement audio');
       };
       rec.onstop = () => {
+        releaseCapture();
         if (restoreMic) restoreMic();
         if (stopTracks) stream.getTracks().forEach((t) => t.stop());
         finishRecordingUi(messageId);
@@ -246,9 +254,11 @@ function createMessageLibrary({ containerId, socket, onChange, onUseForAlarm }) 
         return;
       }
       const restoreMic = pauseOtherMicTracks();
+      if (typeof setMicCaptureSession === 'function') setMicCaptureSession(true);
       navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((stream) => {
-        startWith(stream, true, restoreMic);
+        startWith(stream, true, restoreMic, true);
       }).catch((e) => {
+        if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
         restoreMic();
         let tip = e.name + ' — ' + e.message;
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -266,7 +276,7 @@ function createMessageLibrary({ containerId, socket, onChange, onUseForAlarm }) 
       try {
         const track = live.getAudioTracks().find((t) => t.readyState === 'live');
         const recStream = new MediaStream([track.clone ? track.clone() : track]);
-        startWith(recStream, recStream.getTracks()[0] !== track, null);
+        startWith(recStream, recStream.getTracks()[0] !== track, null, false);
         return;
       } catch (e) {
         openMic();

@@ -433,11 +433,13 @@ unlockMicBtn.onclick = async () => {
     if (micOn) {
       micOn = false;
       stopMicTalk();
+      if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
       if (localStream) localStream.getAudioTracks().forEach((t) => { t.enabled = false; t.stop(); localStream.removeTrack(t); });
       renderMicStatus('granted');
       return;
     }
     let testStream;
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(true);
     try {
       testStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
     } catch (e) {
@@ -454,6 +456,7 @@ unlockMicBtn.onclick = async () => {
     refreshMicStatus();
   } catch (e) {
     micOn = false;
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
     refreshMicStatus();
     let tip = e.name + ' — ' + e.message;
     if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
