@@ -1156,10 +1156,6 @@ class MainActivity : FlutterActivity() {
         lastTunnelError = message
         lastPublicUrl = null
         gotTunnelUrl = false
-        try {
-            File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
-        } catch (_: Exception) {
-        }
         emit("url", "")
         emit("error", message)
     }
@@ -1239,9 +1235,11 @@ class MainActivity : FlutterActivity() {
             File(home, "resolv.conf").writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
         } catch (_: Exception) {
         }
-        try {
-            File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
-        } catch (_: Exception) {
+        if (!useNamedTunnel()) {
+            try {
+                File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
+            } catch (_: Exception) {
+            }
         }
         val logFile = File(filesDir, "cloudflared.log")
         try {

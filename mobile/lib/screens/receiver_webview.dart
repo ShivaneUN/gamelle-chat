@@ -78,7 +78,7 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
       }
     });
     _urlSub = NodeBridgeService.instance.messages.listen((msg) {
-      if (msg.tag == 'publicUrl' &&
+      if ((msg.tag == 'publicUrl' || msg.tag == 'savedUrl') &&
           msg.message.startsWith('http') &&
           _isAllowedPublicUrl(msg.message)) {
         _injectPublicUrl(msg.message);
@@ -193,7 +193,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             setState(() => _progress = progress / 100);
           },
           onPageFinished: (_) {
-            _injectPublicUrl(NodeBridgeService.instance.publicUrl);
+            _injectPublicUrl(
+              NodeBridgeService.instance.publicUrl ??
+                  NodeBridgeService.instance.savedPublicUrl,
+            );
             _unlockWebAudio();
             unawaited(_native.invokeMethod<void>('audioFocus'));
             if (widget.url.contains('scan.html')) {

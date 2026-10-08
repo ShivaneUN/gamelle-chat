@@ -156,6 +156,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool get _localOk => _bridge.status == NodeStatus.running;
 
+  bool get _serverDown =>
+      _bridge.status == NodeStatus.idle || _bridge.status == NodeStatus.error;
+
   bool get _cloudflareOk => _bridge.publicUrl != null;
 
   Future<void> _startServer() async {
@@ -343,7 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _pairingPanel({required bool expand}) {
-    final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
+    final remote = _bridge.scannableQrUrl;
     final qrSize = expand ? 260.0 : 220.0;
     final publicOn = _bridge.tunnelEnabled || _bridge.customDomainActive;
     final Widget qr;
@@ -396,6 +399,14 @@ class _HomeScreenState extends State<HomeScreen> {
             textAlign: TextAlign.center,
             style: const TextStyle(color: _muted, fontSize: 12, height: 1.3),
           ),
+          if (_serverDown) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Serveur arrêté — le lien reste le même.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _muted, fontSize: 12, height: 1.3),
+            ),
+          ],
         ],
         const SizedBox(height: 14),
         Wrap(
@@ -408,12 +419,16 @@ class _HomeScreenState extends State<HomeScreen> {
               label: _bridge.customDomainActive
                   ? (_cloudflareOk
                       ? 'Domaine OK'
-                      : ((_bridge.tunnelError ?? '').isNotEmpty ? 'Domaine coupé' : 'Domaine…'))
+                      : (_serverDown && remote != null
+                          ? 'Lien prêt'
+                          : ((_bridge.tunnelError ?? '').isNotEmpty ? 'Domaine coupé' : 'Domaine…')))
                   : (!_bridge.tunnelEnabled
                       ? 'Cloudflare off'
                       : (_cloudflareOk
                           ? 'Cloudflare OK'
-                          : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare'))),
+                          : (_serverDown && remote != null
+                              ? 'Lien prêt'
+                              : (_bridge.tunnelError == null ? 'Cloudflare…' : 'Cloudflare')))),
               ok: _cloudflareOk,
             ),
           ],
