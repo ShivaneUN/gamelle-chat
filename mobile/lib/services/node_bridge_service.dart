@@ -26,6 +26,8 @@ class NodeBridgeService {
   String? lastError;
   String localUrl = 'http://127.0.0.1:3000';
   String? publicUrl;
+  /// Dernier lien public, conservé quand le serveur ou le tunnel est arrêté.
+  String? savedPublicUrl;
   String? pairCode;
   String? tunnelError;
   /// Cloudflare libre (trycloudflare). Exclusif avec [customDomainActive].
@@ -41,8 +43,16 @@ class NodeBridgeService {
 
   String? get controllerShareUrl => scannableQrUrl;
 
+  String? get _shareBase {
+    final live = publicUrl;
+    if (live != null && live.isNotEmpty) return live;
+    final saved = savedPublicUrl;
+    if (saved != null && saved.isNotEmpty) return saved;
+    return null;
+  }
+
   String? get scannableQrUrl {
-    final raw = publicUrl;
+    final raw = _shareBase;
     if (raw == null || raw.isEmpty) return null;
     final uri = Uri.tryParse(raw);
     if (uri == null) return null;
@@ -134,10 +144,10 @@ class NodeBridgeService {
     if (tag == 'publicUrl') {
       if (message.isEmpty) {
         publicUrl = null;
-        unawaited(_clearStalePublicUrl());
       } else {
         if (!_isAllowedPublicUrl(message)) return;
         publicUrl = message;
+        savedPublicUrl = message;
         unawaited(_persistPublicUrl(message));
       }
     }
@@ -240,8 +250,37 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
+  /// Lien du domaine configuré, lisible même si Node ne tourne pas.
+  Future<void> rememberShareUrl() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      customDomainActive =
+          s.enabled && s.hasToken && s.publicUrl.trim().isNotEmpty;
+      final configured = s.publicUrl.trim();
+      if (s.enabled && _isAllowedPublicUrl(configured)) {
+        savedPublicUrl = configured;
+        unawaited(_persistPublicUrl(configured));
+      }
+    } catch (_) {}
+    if (savedPublicUrl == null || savedPublicUrl!.isEmpty) {
+      try {
+        final dir = await _persistDataDir();
+        if (dir != null) {
+          final file = File('${dir.path}${Platform.pathSeparator}public-url.json');
+          if (await file.exists()) {
+            final decoded = jsonDecode(await file.readAsString());
+            final url = decoded is Map ? '${decoded['url'] ?? ''}' : '';
+            if (_isAllowedPublicUrl(url)) savedPublicUrl = url;
+          }
+        }
+      } catch (_) {}
+    }
+    _controller.add(NodeBridgeMessage(tag: 'savedUrl', message: savedPublicUrl ?? ''));
+  }
+
   Future<void> _clearStalePublicUrl() async {
     publicUrl = null;
+    savedPublicUrl = null;
     try {
       final dir = await _persistDataDir();
       if (dir == null) return;
@@ -255,7 +294,6 @@ class NodeBridgeService {
     if (!tunnelEnabled && !customDomainActive) return;
     if (_tunnelStarted) return;
     _tunnelStarted = true;
-    await _clearStalePublicUrl();
     _tunnelSub ??= CloudflareTunnel.events().listen((event) {
       final type = '${event['type'] ?? ''}';
       final value = '${event['value'] ?? ''}';
@@ -263,10 +301,10 @@ class NodeBridgeService {
         if (value.isEmpty) {
           publicUrl = null;
           tunnelError = null;
-          unawaited(_clearStalePublicUrl());
           _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
         } else if (_isAllowedPublicUrl(value)) {
           publicUrl = value;
+          savedPublicUrl = value;
           tunnelError = null;
           unawaited(_persistPublicUrl(value));
           _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
@@ -295,7 +333,6 @@ class NodeBridgeService {
     publicUrl = null;
     tunnelError = null;
     _tunnelStarted = false;
-    await _clearStalePublicUrl();
     _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
   }
 
@@ -341,6 +378,7 @@ class NodeBridgeService {
     } catch (_) {}
     if (clearPublicUrl) {
       publicUrl = null;
+      savedPublicUrl = null;
       tunnelError = null;
       await _clearStalePublicUrl();
       _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
@@ -358,6 +396,7 @@ class NodeBridgeService {
     if (status == NodeStatus.starting) return true;
     lastError = null;
     status = NodeStatus.starting;
+    await rememberShareUrl();
     _pollStarted = false;
     await _ensureListener();
     await _waitForCopiedAssets();

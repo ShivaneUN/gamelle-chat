@@ -434,7 +434,13 @@ function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
 }
 setInterval(() => {
-  try { ensureLiveFallback(); } catch (e) {}
+  try {
+    if (remoteVideo && remoteVideo.srcObject) {
+      if (webrtcHasPicture()) markWebrtcPicture();
+      else if (webrtcLive && webrtcFramesAt && Date.now() - webrtcFramesAt > 2000) dropWebrtcPicture();
+    }
+    ensureLiveFallback();
+  } catch (e) {}
 }, 1000);
 
 // --- Flash / torche du récepteur ---
@@ -939,8 +945,55 @@ function preferWebrtcRecv() {
   return camWanted && peerControllerCount === 1;
 }
 
-function stopWebrtcReceiver() {
+function webrtcHasPicture() {
+  return !!(remoteVideo && remoteVideo.srcObject && remoteVideo.videoWidth > 0);
+}
+
+function tellReceiverSeeing(on) {
+  try { socket.emit('signal', { channel: 'cam', type: 'seeing', on: !!on }); } catch (e) {}
+}
+
+let webrtcFramesAt = 0;
+let webrtcRetries = 0;
+
+function markWebrtcPicture() {
+  if (!webrtcHasPicture()) return;
+  webrtcFramesAt = Date.now();
+  webrtcRetries = 0;
+  if (webrtcLive) return;
+  showWebrtcLive();
+  tellReceiverSeeing(true);
+}
+
+function dropWebrtcPicture() {
+  const was = webrtcLive;
   webrtcLive = false;
+  webrtcFramesAt = 0;
+  if (remoteVideo) {
+    remoteVideo.classList.remove('on');
+    remoteVideo.style.display = 'none';
+  }
+  if (was) tellReceiverSeeing(false);
+  relayShown = false;
+  if (remoteRelay && remoteRelay.getAttribute('src')) showRelayLive();
+  ensureLiveFallback();
+  if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
+}
+
+function armWebrtcFrameWatch() {
+  if (!remoteVideo || typeof remoteVideo.requestVideoFrameCallback !== 'function') return;
+  const loop = () => {
+    if (!remoteVideo || !remoteVideo.srcObject) return;
+    markWebrtcPicture();
+    try { remoteVideo.requestVideoFrameCallback(loop); } catch (e) {}
+  };
+  try { remoteVideo.requestVideoFrameCallback(loop); } catch (e) {}
+}
+
+function stopWebrtcReceiver() {
+  const was = webrtcLive;
+  webrtcLive = false;
+  webrtcFramesAt = 0;
   if (pcCam) {
     try { pcCam.onicecandidate = null; } catch (e) {}
     try { pcCam.ontrack = null; } catch (e) {}
@@ -954,6 +1007,7 @@ function stopWebrtcReceiver() {
     remoteVideo.classList.remove('on');
     remoteVideo.style.display = 'none';
   }
+  if (was) tellReceiverSeeing(false);
 }
 
 function onWebrtcRecvState() {
@@ -961,13 +1015,20 @@ function onWebrtcRecvState() {
   const ice = pcCam.iceConnectionState || '';
   const conn = pcCam.connectionState || '';
   if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
-    if (remoteVideo && remoteVideo.srcObject) showWebrtcLive();
+    markWebrtcPicture();
     return;
   }
   if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
-    webrtcLive = false;
-    ensureLiveFallback();
-    if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
+    dropWebrtcPicture();
+    if (ice === 'failed' || conn === 'failed') {
+      stopWebrtcReceiver();
+      if (webrtcRetries < 2 && preferWebrtcRecv()) {
+        webrtcRetries += 1;
+        setTimeout(() => {
+          if (preferWebrtcRecv() && !pcCam) ensureCamPeer();
+        }, 800);
+      }
+    }
   }
 }
 
@@ -997,9 +1058,12 @@ function ensureCamPeer() {
       remoteVideo.srcObject = stream;
       remoteVideo.playsInline = true;
       remoteVideo.muted = true;
-      remoteVideo.play().catch(() => {});
+      remoteVideo.onloadeddata = markWebrtcPicture;
+      remoteVideo.onplaying = markWebrtcPicture;
+      remoteVideo.onresize = markWebrtcPicture;
+      armWebrtcFrameWatch();
+      remoteVideo.play().then(markWebrtcPicture).catch(() => {});
     }
-    showWebrtcLive();
   };
   pcCam.oniceconnectionstatechange = onWebrtcRecvState;
   pcCam.onconnectionstatechange = onWebrtcRecvState;
@@ -1016,13 +1080,11 @@ function syncControllerLiveTransport() {
     return;
   }
   if (preferWebrtcRecv()) {
-    // 1 contrôleur : direct. Le snapshot lent ne doit pas écraser les images socket.
-    if (!webrtcLive) lastSocketFrameAt = Date.now();
+    // JPEG tout de suite. Le direct ne remplace l’image que lorsqu’elle est vraiment là.
     ensureCamPeer();
   } else {
     stopWebrtcReceiver();
-    lastSocketFrameAt = Date.now();
-    if (liveHint) liveHint.textContent = 'Vue live';
+    if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
   }
   ensureLiveFallback();
 }
@@ -1042,8 +1104,7 @@ socket.on('signal', async (payload) => {
       await pc.setLocalDescription(answer);
       socket.emit('signal', { channel: 'cam', type: 'answer', sdp: pc.localDescription });
     } catch (e) {
-      webrtcLive = false;
-      ensureLiveFallback();
+      dropWebrtcPicture();
     }
     return;
   }

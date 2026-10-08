@@ -864,8 +864,11 @@ function preferWebrtcSend() {
   return !!camOn && peerControllerCount === 1 && !!localStream;
 }
 
+let controllerSeesDirect = false;
+
 function stopWebrtcSender() {
   webrtcSendReady = false;
+  controllerSeesDirect = false;
   if (pcCam) {
     try { pcCam.onicecandidate = null; } catch (e) {}
     try { pcCam.oniceconnectionstatechange = null; } catch (e) {}
@@ -881,12 +884,13 @@ function onWebrtcSendState() {
   const conn = pcCam.connectionState || '';
   if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
     webrtcSendReady = true;
-    // P2P OK → coupe le JPEG pour soulager CPU / bande passante.
-    stopLiveRelay();
+    // JPEG jusqu’à ce que le contrôleur voie vraiment l’image directe.
+    if (controllerSeesDirect) stopLiveRelay();
     return;
   }
   if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
     webrtcSendReady = false;
+    controllerSeesDirect = false;
     if (camOn && !liveRelayTimer) startLiveRelay();
   }
 }
@@ -939,10 +943,12 @@ function syncLiveTransport() {
     return;
   }
   if (preferWebrtcSend()) {
-    // 1 contrôleur : direct d'abord. JPEG seulement tant que le P2P n'est pas là.
-    if (!webrtcSendReady && (!liveRelayTimer || liveRelayMode !== 'single')) startLiveRelay();
+    // JPEG tant que le contrôleur n’a pas confirmé l’image directe.
+    const direct = webrtcSendReady && controllerSeesDirect;
+    if (!direct && (!liveRelayTimer || liveRelayMode !== 'single')) startLiveRelay();
     startWebrtcSender(false).catch(() => {});
   } else {
+    controllerSeesDirect = false;
     // 2 contrôleurs et plus : pas de direct, JPEG allégé pour rester fluide.
     stopWebrtcSender();
     if (!liveRelayTimer || liveRelayMode !== 'multi') startLiveRelay();
@@ -1014,8 +1020,8 @@ function keepCameraAlive() {
     }
     if (localVideo) localVideo.play().catch(() => {});
   } catch (e) {}
-  // Ne pas forcer le JPEG si le direct WebRTC tourne déjà.
-  if (webrtcSendReady) return;
+  // JPEG tant que le contrôleur n’a pas l’image directe à l’écran.
+  if (webrtcSendReady && controllerSeesDirect) return;
   if (!liveRelayTimer || liveRelayMode !== relayMode()) startLiveRelay();
 }
 
@@ -1125,9 +1131,18 @@ socket.on('talk-audio', ({ rate, samples }) => {
 
 socket.on('signal', async (payload) => {
   if (!payload || payload.channel !== 'cam') return;
+  if (payload.type === 'seeing') {
+    controllerSeesDirect = !!payload.on && preferWebrtcSend();
+    if (controllerSeesDirect && webrtcSendReady) stopLiveRelay();
+    else if (camOn && !liveRelayTimer) startLiveRelay();
+    return;
+  }
   if (payload.type === 'ready') {
-    // Le contrôleur est prêt à recevoir → (re)proposer une offre WebRTC.
-    if (preferWebrtcSend()) startWebrtcSender(true).catch(() => {});
+    // Nouvelle page contrôleur : JPEG tout de suite, direct seulement s’il s’affiche.
+    if (preferWebrtcSend()) {
+      startWebrtcSender(true).catch(() => {});
+      if (camOn && !controllerSeesDirect && !liveRelayTimer) startLiveRelay();
+    }
     return;
   }
   if (!pcCam) return;
