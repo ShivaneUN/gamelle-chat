@@ -758,9 +758,9 @@ document.getElementById('alarmSoundBtn').onclick = () => {
   if (alarmControls.setSoundEnabled) alarmControls.setSoundEnabled(alarmSoundOn);
   renderAlarmSoundBtn();
 };
-unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
+if (typeof setTalkGainBoost === 'function') setTalkGainBoost(2.2);
 
 let recvScreenOn = true;
 function renderScreenOffBtn() {
