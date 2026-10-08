@@ -1155,6 +1155,7 @@ async function startTalk() {
       alert('Le micro a besoin d’une page sécurisée. Ouvre le lien de ton domaine, ou http://127.0.0.1:3000 sur la tablette.');
       return;
     }
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(true);
     unlockSoundEngine();
     try {
       talkStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
@@ -1175,12 +1176,14 @@ async function startTalk() {
     talkCapture = null;
     if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
     talkStream = null;
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
     refreshMicStatus();
     alert('Micro indisponible: ' + err.message);
   }
 }
 function stopTalk() {
   talking = false;
+  if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
   clearMicAckWatch();
   stopTalkCapture(talkCapture);
   talkCapture = null;
