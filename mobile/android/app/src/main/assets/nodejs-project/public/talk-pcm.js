@@ -3,6 +3,7 @@
   var TARGET_RATE = 16000;
   var SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
   var playbackVolume = 1;
+  var talkGainBoost = 1.25;
 
   function clamp01(v) {
     const n = Number(v);
@@ -10,13 +11,24 @@
     return Math.max(0, Math.min(1, n));
   }
 
-  function setTalkPlaybackVolume(v) {
-    playbackVolume = clamp01(v);
+  function applyTalkGain() {
     try {
       if (global.__gamelleTalkGain) {
-        global.__gamelleTalkGain.gain.value = Math.max(0.0001, playbackVolume * 1.25);
+        global.__gamelleTalkGain.gain.value = Math.max(0.0001, playbackVolume * talkGainBoost);
       }
     } catch (e) {}
+  }
+
+  function setTalkPlaybackVolume(v) {
+    playbackVolume = clamp01(v);
+    applyTalkGain();
+  }
+
+  function setTalkGainBoost(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return;
+    talkGainBoost = Math.max(0.2, Math.min(4, n));
+    applyTalkGain();
   }
 
   function getTalkPlaybackVolume() {
@@ -82,15 +94,24 @@
   }
 
   function unlockTalkAudio() {
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    } catch (e) {}
     const ctx = sharedAudioCtx();
     if (!global.__gamelleAudioUnlocked) {
-      global.__gamelleAudioUnlocked = true;
       try {
         const a = new Audio(SILENT_WAV);
         a.setAttribute('playsinline', 'true');
         a.volume = 0.01;
         const p = a.play();
-        if (p && p.then) p.then(() => { if (ctx) ctx.resume().catch(() => {}); }).catch(() => {});
+        if (p && p.then) {
+          p.then(() => {
+            global.__gamelleAudioUnlocked = true;
+            if (ctx) ctx.resume().catch(() => {});
+          }).catch(() => {});
+        } else {
+          global.__gamelleAudioUnlocked = true;
+        }
       } catch (e) {}
     }
     if (ctx) ctx.resume().catch(() => {});
@@ -270,7 +291,7 @@
         state.gain.connect(ctx.destination);
       }
       global.__gamelleTalkGain = state.gain;
-      state.gain.gain.value = Math.max(0.0001, playbackVolume * 1.25);
+      state.gain.gain.value = Math.max(0.0001, playbackVolume * talkGainBoost);
       src.connect(state.gain);
       const now = ctx.currentTime;
       if (!state.nextTime || state.nextTime < now + 0.02) state.nextTime = now + 0.02;
@@ -300,6 +321,7 @@
   global.startTalkCapture = startTalkCapture;
   global.stopTalkCapture = stopTalkCapture;
   global.playTalkPcm = playTalkPcm;
+  global.setTalkGainBoost = setTalkGainBoost;
   global.setTalkPlaybackVolume = setTalkPlaybackVolume;
   global.getTalkPlaybackVolume = getTalkPlaybackVolume;
 })(window);

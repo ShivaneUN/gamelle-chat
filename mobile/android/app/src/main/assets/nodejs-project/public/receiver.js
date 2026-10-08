@@ -513,7 +513,6 @@ document.getElementById('alarmSoundBtn').onclick = () => {
   if (alarmControls.setSoundEnabled) alarmControls.setSoundEnabled(alarmSoundOn);
   renderAlarmSoundBtn();
 };
-unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
 document.addEventListener('pointerdown', unlockSoundEngine);
@@ -910,6 +909,7 @@ async function startWebrtcSender(force) {
   }
   try {
     localStream.getTracks().forEach((t) => {
+      if (t.kind === 'audio') return;
       try { pcCam.addTrack(t, localStream); } catch (e) {}
     });
   } catch (e) {}
