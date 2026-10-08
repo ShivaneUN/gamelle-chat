@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Cache-Control" content="no-store">
+<meta name="gamelle-page" content="controller">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gamelle">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Contrôleur - Gamelle Chat</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -222,9 +227,27 @@
 </div>
 
 <script>
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
-}
+(function () {
+  var CACHE = 'gamelle-controller-v2';
+  function keep(cache) {
+    return fetch('/controller.html', { credentials: 'same-origin', cache: 'reload' }).then(function (res) {
+      if (!res || !res.ok) return;
+      return res.text().then(function (text) {
+        if (text.indexOf('name="gamelle-page" content="controller"') < 0) return;
+        return cache.put('/controller.html', new Response(text, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        }));
+      });
+    });
+  }
+  if (window.caches) {
+    caches.open(CACHE).then(keep).catch(function () {});
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  }
+})();
 </script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
