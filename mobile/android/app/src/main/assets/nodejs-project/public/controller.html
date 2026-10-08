@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Cache-Control" content="no-store">
+<meta name="gamelle-page" content="controller">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gamelle">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Contrôleur - Gamelle Chat</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -221,6 +226,29 @@
   <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
 
+<script>
+(function () {
+  var CACHE = 'gamelle-controller-v2';
+  function keep(cache) {
+    return fetch('/controller.html', { credentials: 'same-origin', cache: 'reload' }).then(function (res) {
+      if (!res || !res.ok) return;
+      return res.text().then(function (text) {
+        if (text.indexOf('name="gamelle-page" content="controller"') < 0) return;
+        return cache.put('/controller.html', new Response(text, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        }));
+      });
+    });
+  }
+  if (window.caches) {
+    caches.open(CACHE).then(keep).catch(function () {});
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  }
+})();
+</script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
@@ -229,6 +257,6 @@
 <script src="/alarm-ui.js?v=0.1.3"></script>
 <script src="/talk-pcm.js?v=4"></script>
 <script src="/qr.js?v=1"></script>
-<script src="/controller.js?v=0.1.10"></script>
+<script src="/controller.js?v=0.1.11"></script>
 </body>
 </html>

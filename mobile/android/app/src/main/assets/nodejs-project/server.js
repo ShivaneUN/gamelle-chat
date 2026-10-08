@@ -57,10 +57,27 @@ function setUncached(res) {
   res.setHeader('Surrogate-Control', 'no-store');
 }
 
+// Le téléphone peut réafficher le contrôleur si le serveur ne répond pas.
+// Cloudflare ne stocke pas cette copie.
+function setShellCache(res, maxAgeSec) {
+  const age = Number.isFinite(maxAgeSec) ? maxAgeSec : 0;
+  res.removeHeader('Pragma');
+  res.removeHeader('Expires');
+  res.setHeader('Cache-Control', 'private, max-age=' + age + ', stale-if-error=2592000');
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
+  res.setHeader('Surrogate-Control', 'no-store');
+}
+
 // Le lien public est toujours /controller.html, sans ?v=.
-// Ces en-têtes empêchent le téléphone et Cloudflare de figer cette adresse.
+// Ces en-têtes empêchent Cloudflare de figer cette adresse.
 app.use((req, res, next) => {
   if (String(req.path || '').startsWith('/media/')) return next();
+  const p = String(req.path || '');
+  if (p === '/socket.io/socket.io.js' || p === '/sw.js' || p === '/manifest.webmanifest') {
+    setShellCache(res, 86400);
+    return next();
+  }
   setUncached(res);
   next();
 });
@@ -629,7 +646,12 @@ function sendHtml(res, req, file, extra) {
       /(src|href)="(\/[^"]+?\.(?:js|css))(?:\?[^"]*)?"/gi,
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
-    setUncached(res);
+    if (file === 'controller.html') {
+      setShellCache(res, 604800);
+      res.setHeader('X-Gamelle-Page', 'controller');
+    } else {
+      setUncached(res);
+    }
     res.type('html').send(out);
   });
 }
@@ -671,7 +693,8 @@ app.get('/receiver.html', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/\.(js|mjs|css|html)$/i.test(String(filePath || ''))) setUncached(res);
+    if (/\.(js|mjs|css|png|ico|svg|webp|webmanifest)$/i.test(String(filePath || ''))) setShellCache(res, 86400);
+    else if (/\.html$/i.test(String(filePath || ''))) setUncached(res);
   },
 }));
 
