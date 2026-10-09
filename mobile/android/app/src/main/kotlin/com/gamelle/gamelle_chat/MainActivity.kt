@@ -433,7 +433,7 @@ class MainActivity : FlutterActivity() {
                         }
                         if (tokenRaw.isNotEmpty()) {
                             if (tokenRaw.length < 40) {
-                                result.error("TOKEN", "Token trop court", null)
+                                result.error("TOKEN", "Token trop court (${tokenRaw.length} caractères)", null)
                                 return@setMethodCallHandler
                             }
                             writePersistText("tunnel.token", tokenRaw + "\n")
