@@ -41,6 +41,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   String _domainUrl = '';
   bool _hasToken = false;
   bool _editingToken = false;
+  bool _showToken = true;
   final _urlCtrl = TextEditingController();
   final _tokenCtrl = TextEditingController();
 
@@ -184,8 +185,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
       if (mounted) setState(() {});
     } catch (e) {
       if (!mounted) return;
+      setState(() => _showToken = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Domaine : $e')),
+        SnackBar(content: Text(_domainErrorText(e))),
       );
     } finally {
       if (mounted) setState(() => _domainBusy = false);
@@ -206,7 +208,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
       );
       return;
     }
-    final token = _tokenCtrl.text.trim().isNotEmpty ? _tokenCtrl.text.trim() : null;
+    final token = _tokenReadyForSave();
+    if (token == null && _tokenCtrl.text.trim().isNotEmpty) return;
     await _applyDomain(enabled: on, publicUrl: url, token: token);
   }
 
@@ -216,9 +219,58 @@ class _SettingsPanelState extends State<SettingsPanel> {
     await _applyDomain(enabled: _domainEnabled, publicUrl: url);
   }
 
+  /// Le token Cloudflare est une longue ligne sans espace. On retire
+  /// les retours à la ligne d’un collage, et la commande `--token` si elle est collée avec.
+  String _cleanToken(String raw) {
+    var t = raw.trim();
+    final quoted = RegExp("^['\"](.+)['\"]\$").firstMatch(t);
+    if (quoted != null) t = quoted.group(1)!.trim();
+    final flagged = RegExp(r'--token(?:=|\s+)(\S+)').firstMatch(t);
+    if (flagged != null) t = flagged.group(1)!;
+    return t.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  String _domainErrorText(Object e) {
+    final s = e.toString();
+    if (s.contains('Token trop court')) {
+      return 'Token trop court. Colle le token Cloudflare en entier : une longue ligne, pas l’identifiant du tunnel.';
+    }
+    if (s.contains('URL invalide')) return 'Lien de domaine invalide.';
+    return 'Domaine : $s';
+  }
+
+  void _rejectShortToken(int length) {
+    setState(() => _showToken = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Token trop court : $length caractères. Le token Cloudflare est une longue ligne, en général plus de 100 caractères. Une ligne courte avec des tirets est l’identifiant du tunnel, pas le token.',
+        ),
+      ),
+    );
+  }
+
+  /// null si le champ est vide. Le champ reste affiché si le token est trop court.
+  String? _tokenReadyForSave() {
+    final typed = _tokenCtrl.text;
+    if (typed.trim().isEmpty) return null;
+    final token = _cleanToken(typed);
+    if (token != typed) {
+      _tokenCtrl.value = TextEditingValue(
+        text: token,
+        selection: TextSelection.collapsed(offset: token.length),
+      );
+    }
+    if (token.length < 40) {
+      _rejectShortToken(token.length);
+      return null;
+    }
+    return token;
+  }
+
   Future<void> _saveToken() async {
-    final token = _tokenCtrl.text.trim();
-    if (token.isEmpty) return;
+    final token = _tokenReadyForSave();
+    if (token == null) return;
     await _applyDomain(
       enabled: _domainEnabled,
       publicUrl: _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : null,
@@ -435,43 +487,82 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   Widget _buildTokenRow() {
     if (_editingToken || !_hasToken) {
-      return Row(
+      final cleaned = _cleanToken(_tokenCtrl.text);
+      final count = cleaned.length;
+      final short = count > 0 && count < 40;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(Icons.lock_outline_rounded, color: Colors.white, size: 22),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _tokenCtrl,
-              enabled: !_domainBusy,
-              obscureText: true,
-              obscuringCharacter: '•',
-              enableSuggestions: false,
-              autocorrect: false,
-              // Pas de bascule œil : le token ne s’affiche jamais.
-              style: const TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 1.2),
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: '••••••••',
-                hintStyle: TextStyle(color: _muted, letterSpacing: 2),
-                border: InputBorder.none,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Icon(Icons.lock_outline_rounded, color: Colors.white, size: 22),
               ),
-              onSubmitted: (_) => _saveToken(),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _tokenCtrl,
+                  enabled: !_domainBusy,
+                  obscureText: !_showToken,
+                  obscuringCharacter: '•',
+                  maxLines: _showToken ? 4 : 1,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: _showToken ? 13 : 14,
+                    letterSpacing: _showToken ? 0 : 1.2,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'Colle le token du tunnel',
+                    hintStyle: TextStyle(color: _muted),
+                    border: InputBorder.none,
+                  ),
+                  onSubmitted: (_) => _saveToken(),
+                ),
+              ),
+              IconButton(
+                tooltip: _showToken ? 'Masquer le token' : 'Afficher le token',
+                visualDensity: VisualDensity.compact,
+                onPressed: _domainBusy ? null : () => setState(() => _showToken = !_showToken),
+                icon: Icon(
+                  _showToken ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                  color: Colors.white70,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Enregistrer le token',
+                visualDensity: VisualDensity.compact,
+                onPressed: _domainBusy ? null : _saveToken,
+                icon: const Icon(Icons.check_rounded, color: _accent),
+              ),
+              if (_editingToken)
+                IconButton(
+                  tooltip: 'Annuler',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _domainBusy
+                      ? null
+                      : () => setState(() {
+                            _editingToken = false;
+                            _showToken = true;
+                            _tokenCtrl.clear();
+                          }),
+                  icon: const Icon(Icons.close_rounded, color: _muted),
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 30, right: 8, bottom: 8),
+            child: Text(
+              count == 0
+                  ? 'Le token reste visible le temps de vérifier le collage.'
+                  : '$count caractères${short ? ' — trop court' : ''}',
+              style: TextStyle(color: short ? _accent : _muted, fontSize: 12),
             ),
           ),
-          IconButton(
-            onPressed: _domainBusy ? null : _saveToken,
-            icon: const Icon(Icons.check_rounded, color: _accent),
-          ),
-          if (_editingToken)
-            IconButton(
-              onPressed: _domainBusy
-                  ? null
-                  : () => setState(() {
-                        _editingToken = false;
-                        _tokenCtrl.clear();
-                      }),
-              icon: const Icon(Icons.close_rounded, color: _muted),
-            ),
         ],
       );
     }
@@ -486,6 +577,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
               ? null
               : () => setState(() {
                     _editingToken = true;
+                    _showToken = true;
                     _tokenCtrl.clear();
                   }),
           icon: const Icon(Icons.edit_rounded, color: Colors.white),
