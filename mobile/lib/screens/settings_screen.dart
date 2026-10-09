@@ -694,6 +694,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
               '5. Ici, colle ton adresse https://… et ce token, puis active Mon domaine.\n\n'
               'localhost:3001 est le serveur de cette tablette. Il est le même sur chaque appareil. '
               'C’est le token collé ici qui relie ton domaine à cette tablette.\n\n'
+              'Plusieurs tablettes peuvent partager le même domaine si elles ont la même version. '
+              'Une version plus récente sur ce domaine coupe la plus ancienne. Un autre domaine continue sans mise à jour.\n\n'
               'Le téléphone ouvre ensuite cette adresse. Le compte se crée sur cette tablette.',
               style: TextStyle(color: Colors.white, height: 1.35),
             ),

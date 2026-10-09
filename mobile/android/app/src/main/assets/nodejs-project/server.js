@@ -2280,7 +2280,7 @@ function logDomainBlock(message) {
   if (!message || message === lastDomainBlockLog) return;
   lastDomainBlockLog = message;
   console.warn(message);
-  console.warn('Le domaine reste fermé tant que cette installation n’est pas la version publiée.');
+  console.warn('Le domaine reste fermé tant qu’un appareil plus récent occupe le même domaine.');
 }
 
 function clearDomainWatch() {
@@ -2299,14 +2299,70 @@ function stopActiveTunnel() {
   }
 }
 
-function armDomainWatch() {
+function showVer(version) {
+  const t = String(version || '').trim();
+  if (!t) return t;
+  return /^v/i.test(t) ? t : `v${t}`;
+}
+
+function mixedDomainMessage(newer) {
+  return `Domaine coupé : un autre appareil sur ce domaine est en ${showVer(newer)}. La même version est nécessaire pour le partager.`;
+}
+
+function fetchUrl(url, redirectsLeft) {
+  const lib = String(url).startsWith('http://') ? http : https;
+  return new Promise((resolve, reject) => {
+    const req = lib.request(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'GamelleChat',
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+      },
+      timeout: 8000,
+    }, (res) => {
+      const loc = String(res.headers.location || '');
+      if (res.statusCode >= 300 && res.statusCode < 400 && loc && redirectsLeft > 0) {
+        res.resume();
+        fetchUrl(new URL(loc, url).toString(), redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+/** Version plus récente déjà en ligne sur ce domaine. Vide si même version, seul, ou injoignable. */
+async function newerPeerOnDomain(pageUrl) {
+  const local = updater.pkgVersion();
+  const base = String(pageUrl || '').replace(/\/$/, '');
+  if (!base.startsWith('http')) return '';
+  for (let i = 0; i < 4; i++) {
+    try {
+      const res = await fetchUrl(`${base}/api/info?probe=${i}-${Date.now()}`, 2);
+      if (res.status < 200 || res.status >= 300) continue;
+      const info = JSON.parse(res.body);
+      const ver = String((info && info.version) || '');
+      if (updater.isRemoteNewer(ver, local)) return ver;
+    } catch (e) {}
+  }
+  return '';
+}
+
+function armDomainWatch(pageUrl) {
   clearDomainWatch();
-  // Déjà ouvert : un trou de GitHub ne coupe pas. Une release plus récente, si.
+  // Même version : on reste, même à plusieurs. On coupe seulement si un pair est plus récent.
   domainWatchTimer = setInterval(() => {
-    domainGate().then((gate) => {
-      if (gate.gate !== 'behind') return;
-      logDomainBlock(gate.message);
-      console.warn('Tunnel coupé : une version plus récente est publiée.');
+    newerPeerOnDomain(pageUrl).then((newer) => {
+      if (!newer) return;
+      logDomainBlock(mixedDomainMessage(newer));
       clearDomainWatch();
       stopActiveTunnel();
     }).catch(() => {});
@@ -2321,54 +2377,6 @@ function scheduleDomainOpen(origin) {
     startPublicTunnel(origin).catch(() => {});
   }, 45 * 1000);
   if (domainRetryTimer.unref) domainRetryTimer.unref();
-}
-
-function httpsGet(url, follow, left) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, {
-      method: 'GET',
-      headers: { 'User-Agent': 'GamelleChat', Accept: '*/*' },
-      timeout: 20000,
-    }, (res) => {
-      const loc = String(res.headers.location || '');
-      if (follow && res.statusCode >= 300 && res.statusCode < 400 && loc && left > 0) {
-        res.resume();
-        httpsGet(new URL(loc, url).toString(), true, left - 1).then(resolve, reject);
-        return;
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        resolve({ status: res.statusCode || 0, location: loc, body: Buffer.concat(chunks).toString('utf8') });
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.end();
-  });
-}
-
-async function fetchLatestReleaseTag() {
-  const latest = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases/latest', false, 0);
-  const fromLoc = decodeURIComponent((latest.location.split('/releases/tag/')[1] || '').split('/')[0].split('?')[0]).trim();
-  if (fromLoc) return fromLoc;
-  const atom = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases.atom', true, 4);
-  if (atom.status < 200 || atom.status >= 300) throw new Error('releases.atom HTTP ' + atom.status);
-  const match = atom.body.match(/\/releases\/tag\/([^<"\s]+)/);
-  if (match && match[1]) return decodeURIComponent(match[1]).trim();
-  throw new Error('Aucune release GitHub trouvée.');
-}
-
-async function domainGate() {
-  const local = updater.pkgVersion();
-  const forced = process.env.GAMELLE_LATEST_TAG;
-  if (forced === 'unknown') return updater.domainGateFrom('fail', '', local);
-  if (forced) return updater.domainGateFrom('ok', forced, local);
-  try {
-    return updater.domainGateFrom('ok', await fetchLatestReleaseTag(), local);
-  } catch (e) {
-    return updater.domainGateFrom('fail', '', local);
-  }
 }
 
 async function startNamedTunnel(bin, token, fixedUrl) {
@@ -2401,7 +2409,7 @@ async function startNamedTunnel(bin, token, fixedUrl) {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   activeTunnelStop = stop;
-  armDomainWatch();
+  armDomainWatch(fixedUrl);
 }
 
 async function startQuickTunnel(cf, origin) {
@@ -2422,7 +2430,7 @@ async function startQuickTunnel(cf, origin) {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   activeTunnelStop = stop;
-  armDomainWatch();
+  armDomainWatch('');
 }
 
 async function startPublicTunnel(origin) {
@@ -2433,17 +2441,17 @@ async function startPublicTunnel(origin) {
   if (tunnelStartLock) return;
   tunnelStartLock = true;
   try {
-    const gate = await domainGate();
-    if (gate.gate !== 'allowed') {
-      logDomainBlock(gate.message);
-      scheduleDomainOpen(origin);
-      return;
-    }
-    lastDomainBlockLog = '';
     const { cf, bin } = await ensureCloudflaredBin();
     const token = readTunnelToken();
     const fixedUrl = tunnelConfig.publicUrl;
     if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
+      const newer = await newerPeerOnDomain(fixedUrl);
+      if (newer) {
+        logDomainBlock(mixedDomainMessage(newer));
+        scheduleDomainOpen(origin);
+        return;
+      }
+      lastDomainBlockLog = '';
       await startNamedTunnel(bin, token, fixedUrl);
       return;
     }

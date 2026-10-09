@@ -1169,12 +1169,49 @@ class MainActivity : FlutterActivity() {
         emit("error", message)
     }
 
-    /** true seulement quand GitHub confirme que cette version peut ouvrir le domaine. */
+    /**
+     * Un autre connecteur du même domaine répond avec une version plus récente.
+     * Même version : on reste. Échec réseau : on reste. Autre domaine : on ne le voit pas.
+     */
+    private fun newerPeerOnThisDomain(): String? {
+        if (!useNamedTunnel()) return null
+        val base = fixedPublicUrl?.trim()?.trimEnd('/').orEmpty()
+        if (!base.startsWith("http")) return null
+        val local = installedVersionName()
+        repeat(4) { i ->
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                val url = java.net.URL("$base/api/info?probe=$i-${System.currentTimeMillis()}")
+                conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("Cache-Control", "no-store")
+                    setRequestProperty("User-Agent", "GamelleChat")
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) return@repeat
+                val body = conn.inputStream.bufferedReader().use { it.readText() }.take(4000)
+                val ver = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.getOrNull(1).orEmpty()
+                if (ver.isNotBlank() && GithubUpdate.remoteIsNewer(ver, local)) return ver
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return null
+    }
+
+    /** true tant qu’aucun autre appareil plus récent n’occupe déjà ce domaine. */
     private fun waitUntilDomainAllowed(): Boolean {
         while (!shuttingDown) {
-            val (gate, message) = GithubUpdate.domainGate(installedVersionName())
-            if (gate == GithubUpdate.DomainGate.Allowed) return true
-            announceDomainCut(message)
+            val newer = newerPeerOnThisDomain()
+            if (newer == null) return true
+            announceDomainCut(GithubUpdate.mixedDomainMessage(newer))
             try {
                 Thread.sleep(30_000L)
             } catch (_: InterruptedException) {
@@ -1184,7 +1221,7 @@ class MainActivity : FlutterActivity() {
         return false
     }
 
-    /** Tunnel déjà ouvert : on ne coupe que si une release plus récente existe vraiment. */
+    /** Tunnel ouvert : on ne coupe que si un pair du même domaine est plus récent. */
     private fun watchDomainWhileUp(proc: java.lang.Process) {
         val watcher = Thread {
             while (!shuttingDown && isJavaProcessAlive(proc)) {
@@ -1194,13 +1231,13 @@ class MainActivity : FlutterActivity() {
                     return@Thread
                 }
                 if (shuttingDown || !isJavaProcessAlive(proc)) return@Thread
-                val (gate, message) = try {
-                    GithubUpdate.domainGate(installedVersionName())
+                val newer = try {
+                    newerPeerOnThisDomain()
                 } catch (_: Exception) {
-                    continue
+                    null
                 }
-                if (gate != GithubUpdate.DomainGate.Behind) continue
-                announceDomainCut(message)
+                if (newer == null) continue
+                announceDomainCut(GithubUpdate.mixedDomainMessage(newer))
                 stopCloudflaredProcess(proc)
                 return@Thread
             }
