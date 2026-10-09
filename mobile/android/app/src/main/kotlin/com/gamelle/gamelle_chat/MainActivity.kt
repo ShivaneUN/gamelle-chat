@@ -265,12 +265,21 @@ class MainActivity : FlutterActivity() {
         tunnelToken = null
     }
 
+    /** Début et fin seulement. Le milieu, au moins la moitié, reste masqué. */
+    private fun maskedToken(): String {
+        val t = readPersistText("tunnel.token")?.trim().orEmpty()
+        if (t.length < 40 || t.contains("REMPLACE")) return ""
+        val head = (t.length / 4).coerceIn(4, 8)
+        val tail = (t.length / 4).coerceIn(4, 6)
+        return t.take(head) + "••••••••" + t.takeLast(tail)
+    }
+
     private fun customDomainStatusMap(): Map<String, Any?> {
         return mapOf(
             "enabled" to readCustomDomainEnabled(),
             "publicUrl" to readPersistPublicUrl(),
             "hasToken" to persistHasToken(),
-            // Jamais le token ici.
+            "tokenMask" to maskedToken(),
         )
     }
 

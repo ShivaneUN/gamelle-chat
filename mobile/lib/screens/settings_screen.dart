@@ -12,8 +12,9 @@ const _card = Color(0xFF151821);
 const _tile = Color(0xFF1C2030);
 const _accent = Color(0xFFFF7A45);
 const _muted = Color(0xFF8B93A7);
+const _ok = Color(0xFF3DDC97);
 
-/// Panneau réglages (Wi‑Fi, serveur, Cloudflare, mon domaine, notifs) —
+/// Panneau réglages (serveur, Cloudflare, mon domaine, notifs) —
 /// page pleine ou panneau gauche de l’accueil (à la place du QR).
 class SettingsPanel extends StatefulWidget {
   const SettingsPanel({
@@ -40,8 +41,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
   bool _domainEnabled = false;
   String _domainUrl = '';
   bool _hasToken = false;
+  String _tokenMask = '';
   bool _editingToken = false;
   bool _showToken = true;
+  static const _serviceUrl = 'localhost:3001';
   final _urlCtrl = TextEditingController();
   final _tokenCtrl = TextEditingController();
 
@@ -68,9 +71,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       final s = await CloudflareTunnel.getCustomDomain();
       if (!mounted) return;
       setState(() {
-        _domainEnabled = s.enabled;
-        _domainUrl = s.publicUrl;
-        _hasToken = s.hasToken;
+        _takeDomainStatus(s);
         if (_urlCtrl.text.isEmpty && s.publicUrl.isNotEmpty) {
           _urlCtrl.text = s.publicUrl;
         }
@@ -162,9 +163,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
       }
       if (!mounted) return;
       setState(() {
-        _domainEnabled = s.enabled;
-        _domainUrl = s.publicUrl;
-        _hasToken = s.hasToken;
+        _takeDomainStatus(s);
         _editingToken = false;
         _tokenCtrl.clear();
         if (s.publicUrl.isNotEmpty) _urlCtrl.text = s.publicUrl;
@@ -294,6 +293,21 @@ class _SettingsPanelState extends State<SettingsPanel> {
     return _notifStatus.toString().split('.').last;
   }
 
+  void _takeDomainStatus(CustomDomainStatus s) {
+    _domainEnabled = s.enabled;
+    _domainUrl = s.publicUrl;
+    _hasToken = s.hasToken;
+    _tokenMask = s.tokenMask;
+  }
+
+  bool get _domainUp {
+    if (!_domainEnabled || !_hasToken || _domainUrl.isEmpty) return false;
+    final live = _bridge.publicUrl ?? '';
+    if (live.isEmpty) return false;
+    final err = _bridge.tunnelError;
+    return err == null || err.isEmpty;
+  }
+
   String get _domainSubtitle {
     if (!_domainEnabled) {
       return 'Off — Cloudflare libre actif';
@@ -338,18 +352,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
       _SettingsCard(
         child: Column(
           children: [
-            _SettingsTile(
-              icon: Icons.wifi_rounded,
-              title: 'Wi-Fi local',
-              subtitle: _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), ''),
-              onTap: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-              trailing: IconButton(
-                tooltip: 'Copier',
-                onPressed: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-                icon: const Icon(Icons.copy_rounded, color: _accent),
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFF2A3142)),
             _SettingsTile(
               icon: Icons.power_settings_new_rounded,
               title: 'Serveur',
@@ -408,10 +410,20 @@ class _SettingsPanelState extends State<SettingsPanel> {
               icon: Icons.language_rounded,
               title: 'Mon domaine',
               subtitle: _domainSubtitle,
-              trailing: Switch(
-                value: _domainEnabled,
-                activeThumbColor: _accent,
-                onChanged: _domainBusy ? null : _toggleDomain,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Aide',
+                    onPressed: _showDomainHelp,
+                    icon: const Icon(Icons.help_outline_rounded, color: _accent),
+                  ),
+                  Switch(
+                    value: _domainEnabled,
+                    activeThumbColor: _accent,
+                    onChanged: _domainBusy ? null : _toggleDomain,
+                  ),
+                ],
               ),
             ),
             const Divider(height: 1, color: Color(0xFF2A3142)),
@@ -444,6 +456,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
               ),
             ),
             const Divider(height: 1, color: Color(0xFF2A3142)),
+            _buildServerHostRow(),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: _buildTokenRow(),
@@ -455,8 +469,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
         padding: const EdgeInsets.only(top: 12, left: 4, right: 4),
         child: Text(
           running
-              ? 'Le Wi-Fi local reste disponible même si Cloudflare est coupé.'
-              : 'Démarre le serveur pour exposer le Wi-Fi local et le tunnel.',
+              ? 'Le récepteur reste sur cette tablette.'
+              : 'Démarre le serveur pour ouvrir le domaine.',
           style: const TextStyle(color: _muted, fontSize: 13),
         ),
       ),
@@ -567,26 +581,131 @@ class _SettingsPanelState extends State<SettingsPanel> {
       );
     }
 
-    // Token enregistré : icônes seules (pas de révélation).
-    return Row(
+    final up = _domainUp;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.lock_rounded, color: _accent, size: 22),
-        const Spacer(),
-        IconButton(
-          onPressed: _domainBusy
-              ? null
-              : () => setState(() {
-                    _editingToken = true;
-                    _showToken = true;
-                    _tokenCtrl.clear();
-                  }),
-          icon: const Icon(Icons.edit_rounded, color: Colors.white),
+        Row(
+          children: [
+            Icon(Icons.lock_rounded, color: up ? _ok : _accent, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _tokenMask.isEmpty ? 'Token enregistré' : _tokenMask,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Modifier le token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy
+                  ? null
+                  : () => setState(() {
+                        _editingToken = true;
+                        _showToken = true;
+                        _tokenCtrl.clear();
+                      }),
+              icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            ),
+            IconButton(
+              tooltip: 'Supprimer le token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy ? null : _deleteToken,
+              icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+            ),
+          ],
         ),
-        IconButton(
-          onPressed: _domainBusy ? null : _deleteToken,
-          icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+        Padding(
+          padding: const EdgeInsets.only(left: 30, bottom: 8),
+          child: Text(
+            up ? 'Actif' : 'Inactif',
+            style: TextStyle(color: up ? _ok : _muted, fontSize: 12),
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _buildServerHostRow() {
+    final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            host.isEmpty ? 'Ce serveur n’a pas encore d’adresse.' : 'Ce serveur',
+            style: const TextStyle(color: _muted, fontSize: 12),
+          ),
+          if (host.isNotEmpty)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    host,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copier l’adresse',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _copy(_domainUrl, done: 'Adresse copiée'),
+                  icon: const Icon(Icons.copy_rounded, color: _accent, size: 20),
+                ),
+              ],
+            ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Cloudflare : $_serviceUrl',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copier localhost:3001',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _copy(_serviceUrl, done: 'localhost:3001 copié'),
+                icon: const Icon(Icons.copy_rounded, color: _accent, size: 20),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDomainHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Créer mon domaine', style: TextStyle(color: Colors.white)),
+          content: const SingleChildScrollView(
+            child: Text(
+              'Exemple avec Cloudflare.\n\n'
+              '1. Dans Cloudflare Zero Trust, crée un tunnel.\n'
+              '2. Ajoute un nom public : ton sous-domaine et ton domaine.\n'
+              '3. Type de service : HTTP. URL : localhost:3001. Laisse le chemin vide.\n'
+              '4. Enregistre, puis copie le token long. L’identifiant avec des tirets n’est pas le token.\n'
+              '5. Ici, colle ton adresse https://… et ce token, puis active Mon domaine.\n\n'
+              'localhost:3001 est le serveur de cette tablette. Il est le même sur chaque appareil. '
+              'C’est le token collé ici qui relie ton domaine à cette tablette.\n\n'
+              'Le téléphone ouvre ensuite cette adresse. Le compte se crée sur cette tablette.',
+              style: TextStyle(color: Colors.white, height: 1.35),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Compris', style: TextStyle(color: _accent)),
+            ),
+          ],
+        );
+      },
     );
   }
 }
