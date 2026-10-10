@@ -166,15 +166,25 @@ class _SettingsPanelState extends State<SettingsPanel> {
         _takeDomainStatus(s);
         _editingToken = false;
         _tokenCtrl.clear();
-        if (s.publicUrl.isNotEmpty) _urlCtrl.text = s.publicUrl;
+        if (s.publicUrl.isNotEmpty) {
+          _urlCtrl.text = s.publicUrl;
+        } else if (clearToken) {
+          _urlCtrl.clear();
+        }
       });
 
       final domainLive = s.enabled && s.hasToken && s.publicUrl.isNotEmpty;
       if (domainLive) {
-        // Mon domaine ON → Cloudflare libre OFF.
+        // Domaine + token enregistrés → connexion du tunnel nommé.
         _bridge.tunnelEnabled = false;
         _bridge.customDomainActive = true;
-        await _bridge.restartTunnel(clearPublicUrl: false);
+        await _bridge.restartTunnel(clearPublicUrl: true);
+      } else if (clearToken) {
+        // Suppression : le lien du token est coupé. Le tunnel gratuit ne repart pas seul.
+        _bridge.tunnelEnabled = false;
+        _bridge.customDomainActive = false;
+        _urlCtrl.clear();
+        await _bridge.restartTunnel(clearPublicUrl: true);
       } else {
         // Mon domaine OFF → Cloudflare libre ON.
         _bridge.customDomainActive = false;
@@ -215,7 +225,14 @@ class _SettingsPanelState extends State<SettingsPanel> {
   Future<void> _saveUrl() async {
     final url = _urlCtrl.text.trim();
     if (url.isEmpty) return;
-    await _applyDomain(enabled: _domainEnabled, publicUrl: url);
+    final typed = _tokenReadyForSave();
+    if (typed == null && _tokenCtrl.text.trim().isNotEmpty) return;
+    final hasToken = typed != null || _hasToken;
+    await _applyDomain(
+      enabled: hasToken,
+      publicUrl: url,
+      token: typed,
+    );
   }
 
   /// Le token Cloudflare est une longue ligne sans espace. On retire
@@ -226,7 +243,12 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (quoted != null) t = quoted.group(1)!.trim();
     final flagged = RegExp(r'--token(?:=|\s+)(\S+)').firstMatch(t);
     if (flagged != null) t = flagged.group(1)!;
+    t = t.replaceFirst(RegExp(r'^token\s*[:=]\s*', caseSensitive: false), '');
     return t.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _looksLikeTunnelToken(String token) {
+    return RegExp(r'^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$').hasMatch(token);
   }
 
   String _domainErrorText(Object e) {
@@ -267,14 +289,38 @@ class _SettingsPanelState extends State<SettingsPanel> {
     return token;
   }
 
+  Future<void> _pasteToken() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final raw = data?.text ?? '';
+    if (!mounted) return;
+    if (raw.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Presse-papiers vide. Copie le token, puis appuie sur Coller.')),
+      );
+      return;
+    }
+    final token = _cleanToken(raw);
+    setState(() {
+      _showToken = true;
+      _editingToken = true;
+      _tokenCtrl.value = TextEditingValue(
+        text: token,
+        selection: TextSelection.collapsed(offset: token.length),
+      );
+    });
+  }
+
   Future<void> _saveToken() async {
     final token = _tokenReadyForSave();
     if (token == null) return;
-    await _applyDomain(
-      enabled: _domainEnabled,
-      publicUrl: _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : null,
-      token: token,
-    );
+    final url = _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : _domainUrl;
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Indique aussi le domaine pour l’activer.')),
+      );
+      return;
+    }
+    await _applyDomain(enabled: true, publicUrl: url, token: token);
   }
 
   Future<void> _deleteToken() async {
@@ -309,15 +355,14 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 
   String get _domainSubtitle {
-    if (!_domainEnabled) {
-      return 'Off — Cloudflare libre actif';
-    }
-    if (_domainUrl.isEmpty) return 'Lien manquant';
+    if (!_domainEnabled) return 'Off';
+    if (_domainUrl.isEmpty) return 'Indique le domaine';
     final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
     if (!_hasToken) return '$host — token manquant';
     final err = _bridge.tunnelError;
     if (err != null && err.isNotEmpty) return err;
-    return '$host — Cloudflare libre off';
+    if (_domainUp) return '$host — actif';
+    return '$host — connexion…';
   }
 
   @override
@@ -462,6 +507,19 @@ class _SettingsPanelState extends State<SettingsPanel> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: _buildTokenRow(),
             ),
+            if (_hasToken || _domainUrl.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: OutlinedButton.icon(
+                  onPressed: _domainBusy ? null : _deleteToken,
+                  icon: const Icon(Icons.link_off_rounded, size: 18),
+                  label: const Text('Supprimer le domaine'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0x55FFFFFF)),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -516,26 +574,35 @@ class _SettingsPanelState extends State<SettingsPanel> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: TextField(
-                  controller: _tokenCtrl,
-                  enabled: !_domainBusy,
-                  obscureText: !_showToken,
-                  obscuringCharacter: '•',
-                  maxLines: _showToken ? 4 : 1,
-                  enableSuggestions: false,
-                  autocorrect: false,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: _showToken ? 13 : 14,
-                    letterSpacing: _showToken ? 0 : 1.2,
+                child: CallbackShortcuts(
+                  bindings: {
+                    const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
+                      _pasteToken();
+                    },
+                  },
+                  child: TextField(
+                    controller: _tokenCtrl,
+                    enabled: !_domainBusy,
+                    obscureText: !_showToken,
+                    obscuringCharacter: '•',
+                    enableInteractiveSelection: true,
+                    minLines: 1,
+                    maxLines: _showToken ? null : 1,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: _showToken ? 13 : 14,
+                      letterSpacing: _showToken ? 0 : 1.2,
+                    ),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'Colle le token du tunnel',
+                      hintStyle: TextStyle(color: _muted),
+                      border: InputBorder.none,
+                    ),
+                    onSubmitted: (_) => _saveToken(),
                   ),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    hintText: 'Colle le token du tunnel',
-                    hintStyle: TextStyle(color: _muted),
-                    border: InputBorder.none,
-                  ),
-                  onSubmitted: (_) => _saveToken(),
                 ),
               ),
               IconButton(
@@ -569,12 +636,31 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ],
           ),
           Padding(
+            padding: const EdgeInsets.only(left: 30, right: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _domainBusy ? null : () { _pasteToken(); },
+                icon: const Icon(Icons.content_paste_rounded, size: 18),
+                label: const Text('Coller'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.only(left: 30, right: 8, bottom: 8),
             child: Text(
               count == 0
-                  ? 'Le token reste visible le temps de vérifier le collage.'
-                  : '$count caractères${short ? ' — trop court' : ''}',
-              style: TextStyle(color: short ? _accent : _muted, fontSize: 12),
+                  ? 'Copie le token, puis appuie sur Coller. Ctrl+V ne marche pas sur cette tablette.'
+                  : short
+                      ? '$count caractères — trop court'
+                      : _looksLikeTunnelToken(cleaned)
+                          ? '$count caractères — token complet'
+                          : '$count caractères — ce n’est pas un token Cloudflare',
+              style: TextStyle(
+                color: short || (count >= 40 && !_looksLikeTunnelToken(cleaned)) ? _accent : _muted,
+                fontSize: 12,
+              ),
             ),
           ),
         ],
@@ -596,6 +682,12 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Colors.white, fontSize: 14),
               ),
+            ),
+            IconButton(
+              tooltip: 'Coller un token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy ? null : () { _pasteToken(); },
+              icon: const Icon(Icons.content_paste_rounded, color: Colors.white),
             ),
             IconButton(
               tooltip: 'Modifier le token',
@@ -620,7 +712,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
         Padding(
           padding: const EdgeInsets.only(left: 30, bottom: 8),
           child: Text(
-            up ? 'Actif' : 'Inactif',
+            up
+                ? 'Actif — le site Cloudflare voit ce tunnel'
+                : 'Connexion… le site reste inactif tant que ce n’est pas vert',
             style: TextStyle(color: up ? _ok : _muted, fontSize: 12),
           ),
         ),

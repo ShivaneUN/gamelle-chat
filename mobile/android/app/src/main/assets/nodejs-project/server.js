@@ -2442,8 +2442,12 @@ async function startPublicTunnel(origin) {
   tunnelStartLock = true;
   try {
     const { cf, bin } = await ensureCloudflaredBin();
-    const token = readTunnelToken();
-    const fixedUrl = tunnelConfig.publicUrl;
+    const freeOnly = process.env.GAMELLE_FREE_ONLY === '1';
+    const token = freeOnly ? '' : readTunnelToken();
+    const fixedUrl = freeOnly ? '' : tunnelConfig.publicUrl;
+    if (freeOnly) {
+      console.log('Lien gratuit seulement. Le domaine perso n’est pas ouvert.');
+    }
     if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
       const newer = await newerPeerOnDomain(fixedUrl);
       if (newer) {
