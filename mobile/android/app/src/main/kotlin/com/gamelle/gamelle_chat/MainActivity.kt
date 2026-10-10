@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
@@ -12,6 +13,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.util.Log
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -139,13 +141,18 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun cleanTunnelToken(raw: String): String {
+        var token = raw.trim()
+        val flagged = Regex("--token(?:=|\\s+)(\\S+)").find(token)
+        if (flagged != null) token = flagged.groupValues[1]
+        token = token.replace(Regex("(?i)^token\\s*[:=]\\s*"), "")
+        return token.replace(Regex("\\s+"), "")
+    }
+
     private fun applyTunnelTokenText(tokenRaw: String?) {
         if (tokenRaw.isNullOrBlank()) return
-        val token = tokenRaw
-            .lineSequence()
-            .map { it.trim() }
-            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.contains("REMPLACE_MOI") && it.length >= 40 }
-        if (!token.isNullOrBlank()) tunnelToken = token
+        val token = cleanTunnelToken(tokenRaw)
+        if (token.length >= 40 && !token.contains("REMPLACE")) tunnelToken = token
     }
 
     private fun loadTunnelSettings() {
@@ -162,11 +169,13 @@ class MainActivity : FlutterActivity() {
             }
         }
         // 2) Fallback assets APK (dev / install privée uniquement — releases publiques = vides).
+        // Après une suppression, custom-domain.json existe : on ne recolle pas le secret de l’APK.
+        val keepAssetSecrets = !File(filesDir, "gamelle-persist/custom-domain.json").exists()
         try {
             val cfgAsset = readAssetText("tunnel.config.json")
-            if (fixedPublicUrl.isNullOrBlank()) applyTunnelConfigText(cfgAsset)
-            // Migre une fois assets → persist si l’APK embarquait encore un secret.
-            if (!cfgAsset.isNullOrBlank() &&
+            if (customOn && fixedPublicUrl.isNullOrBlank()) applyTunnelConfigText(cfgAsset)
+            if (keepAssetSecrets &&
+                !cfgAsset.isNullOrBlank() &&
                 readPersistText("tunnel.config.json").isNullOrBlank() &&
                 cfgAsset.contains("\"publicUrl\"") &&
                 !cfgAsset.contains("TON-") &&
@@ -183,7 +192,8 @@ class MainActivity : FlutterActivity() {
         try {
             val tokAsset = readAssetText("tunnel.token")
             if (customOn && tunnelToken.isNullOrBlank()) applyTunnelTokenText(tokAsset)
-            if (!tokAsset.isNullOrBlank() &&
+            if (keepAssetSecrets &&
+                !tokAsset.isNullOrBlank() &&
                 readPersistText("tunnel.token").isNullOrBlank() &&
                 tokAsset.trim().length >= 40 &&
                 !tokAsset.contains("REMPLACE")
@@ -197,6 +207,16 @@ class MainActivity : FlutterActivity() {
 
     private fun useNamedTunnel(): Boolean {
         return !tunnelToken.isNullOrBlank() && !fixedPublicUrl.isNullOrBlank()
+    }
+
+    /**
+     * Flutter.lnk n’embarque pas de domaine. Première ouverture : Mon domaine est off,
+     * le lien gratuit tourne. Dès que la tablette enregistre un domaine, on ne touche plus.
+     */
+    private fun seedEmptyDomainForLocalFlutter() {
+        if (!isLocalFlutterInstall()) return
+        if (File(filesDir, "gamelle-persist/custom-domain.json").exists()) return
+        writeCustomDomainEnabled(false)
     }
 
     /** Préférence UI « Mon domaine » (défaut true si fichier absent — compat anciens installs). */
@@ -355,6 +375,7 @@ class MainActivity : FlutterActivity() {
             PersistRescue.rescue(filesDir)
         } catch (_: Exception) {
         }
+        seedEmptyDomainForLocalFlutter()
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
@@ -441,22 +462,22 @@ class MainActivity : FlutterActivity() {
                             writeCustomDomainConfig(normalized)
                         }
                         if (tokenRaw.isNotEmpty()) {
-                            if (tokenRaw.length < 40) {
-                                result.error("TOKEN", "Token trop court (${tokenRaw.length} caractères)", null)
+                            val token = cleanTunnelToken(tokenRaw)
+                            if (token.length < 40) {
+                                result.error("TOKEN", "Token trop court (${token.length} caractères)", null)
                                 return@setMethodCallHandler
                             }
-                            writePersistText("tunnel.token", tokenRaw + "\n")
+                            writePersistText("tunnel.token", token + "\n")
                         }
-                        // Recharge en mémoire ; Flutter relance le tunnel si besoin.
+                        // Le lien n’est émis qu’au « Registered tunnel connection ».
+                        // Sinon l’app dit Actif alors que Cloudflare affiche Inactif.
                         stopTunnel()
                         loadTunnelSettings()
                         if (enabled && useNamedTunnel()) {
-                            val url = fixedPublicUrl!!
-                            gotTunnelUrl = true
-                            lastPublicUrl = url
+                            gotTunnelUrl = false
+                            lastPublicUrl = null
                             lastTunnelError = null
-                            persistPublicUrl(url)
-                            emit("url", url)
+                            emit("url", "")
                         } else if (!enabled) {
                             // Domaine perso OFF → oublier l’URL fixe ; le quick tunnel
                             // (trycloudflare) fournira le prochain lien.
@@ -476,18 +497,23 @@ class MainActivity : FlutterActivity() {
                 }
                 "clearCustomDomainToken" -> {
                     try {
+                        writeCustomDomainEnabled(false)
                         clearPersistToken()
-                        stopTunnel()
-                        loadTunnelSettings()
-                        if (useNamedTunnel()) {
-                            val url = fixedPublicUrl!!
-                            gotTunnelUrl = true
-                            lastPublicUrl = url
-                            emit("url", url)
-                        } else {
-                            lastPublicUrl = null
-                            emit("url", "")
+                        try {
+                            File(filesDir, "gamelle-persist/tunnel.config.json").delete()
+                        } catch (_: Exception) {
                         }
+                        try {
+                            File(File(filesDir, "gamelle-persist/data"), "public-url.json").delete()
+                        } catch (_: Exception) {
+                        }
+                        stopTunnel()
+                        fixedPublicUrl = null
+                        tunnelToken = null
+                        gotTunnelUrl = false
+                        lastPublicUrl = null
+                        lastTunnelError = null
+                        emit("url", "")
                         result.success(customDomainStatusMap())
                     } catch (e: Exception) {
                         result.error("TOKEN", e.message ?: "erreur", null)
@@ -1152,6 +1178,11 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** flutter run / Flutter.lnk. L’APK de release GitHub n’est pas débuggable. */
+    private fun isLocalFlutterInstall(): Boolean {
+        return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
     private fun installedVersionName(): String {
         return try {
             @Suppress("DEPRECATION")
@@ -1169,12 +1200,49 @@ class MainActivity : FlutterActivity() {
         emit("error", message)
     }
 
-    /** true seulement quand GitHub confirme que cette version peut ouvrir le domaine. */
+    /**
+     * Un autre connecteur du même domaine répond avec une version plus récente.
+     * Même version : on reste. Échec réseau : on reste. Autre domaine : on ne le voit pas.
+     */
+    private fun newerPeerOnThisDomain(): String? {
+        if (!useNamedTunnel()) return null
+        val base = fixedPublicUrl?.trim()?.trimEnd('/').orEmpty()
+        if (!base.startsWith("http")) return null
+        val local = installedVersionName()
+        repeat(4) { i ->
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                val url = java.net.URL("$base/api/info?probe=$i-${System.currentTimeMillis()}")
+                conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("Cache-Control", "no-store")
+                    setRequestProperty("User-Agent", "GamelleChat")
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) return@repeat
+                val body = conn.inputStream.bufferedReader().use { it.readText() }.take(4000)
+                val ver = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.getOrNull(1).orEmpty()
+                if (ver.isNotBlank() && GithubUpdate.remoteIsNewer(ver, local)) return ver
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return null
+    }
+
+    /** true tant qu’aucun autre appareil plus récent n’occupe déjà ce domaine. */
     private fun waitUntilDomainAllowed(): Boolean {
         while (!shuttingDown) {
-            val (gate, message) = GithubUpdate.domainGate(installedVersionName())
-            if (gate == GithubUpdate.DomainGate.Allowed) return true
-            announceDomainCut(message)
+            val newer = newerPeerOnThisDomain()
+            if (newer == null) return true
+            announceDomainCut(GithubUpdate.mixedDomainMessage(newer))
             try {
                 Thread.sleep(30_000L)
             } catch (_: InterruptedException) {
@@ -1184,7 +1252,7 @@ class MainActivity : FlutterActivity() {
         return false
     }
 
-    /** Tunnel déjà ouvert : on ne coupe que si une release plus récente existe vraiment. */
+    /** Tunnel ouvert : on ne coupe que si un pair du même domaine est plus récent. */
     private fun watchDomainWhileUp(proc: java.lang.Process) {
         val watcher = Thread {
             while (!shuttingDown && isJavaProcessAlive(proc)) {
@@ -1194,13 +1262,13 @@ class MainActivity : FlutterActivity() {
                     return@Thread
                 }
                 if (shuttingDown || !isJavaProcessAlive(proc)) return@Thread
-                val (gate, message) = try {
-                    GithubUpdate.domainGate(installedVersionName())
+                val newer = try {
+                    newerPeerOnThisDomain()
                 } catch (_: Exception) {
-                    continue
+                    null
                 }
-                if (gate != GithubUpdate.DomainGate.Behind) continue
-                announceDomainCut(message)
+                if (newer == null) continue
+                announceDomainCut(GithubUpdate.mixedDomainMessage(newer))
                 stopCloudflaredProcess(proc)
                 return@Thread
             }
@@ -1256,7 +1324,8 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
         }
 
-        val protocols = listOf("http2", "quic", "auto")
+        val protocols = tunnelProtocols()
+        Log.i("GamelleTunnel", "protocoles ${protocols.joinToString()} sdk=${Build.VERSION.SDK_INT}")
         var lastErr = "cloudflared n’a pas démarré"
         var i = 0
         while (!shuttingDown) {
@@ -1267,11 +1336,12 @@ class MainActivity : FlutterActivity() {
             if (shuttingDown) return
             if (!gotTunnelUrl) {
                 lastTunnelError = lastErr
+                Log.i("GamelleTunnel", lastErr.take(300))
                 emit("error", lastErr)
             }
             i++
             try {
-                Thread.sleep(if (gotTunnelUrl) 1500L else 2500L)
+                Thread.sleep(tunnelRetryDelay(lastErr, gotTunnelUrl))
             } catch (_: InterruptedException) {
                 return
             }
@@ -1301,6 +1371,16 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * Tab S2 (Android 7, API 24) : SELinux refuse les sockets brutes de QUIC
+     * (`node_bind` / rawip). cloudflared ne s’enregistre pas, Cloudflare répond 1033.
+     * HTTP/2 passe en TCP et sert le domaine nommé comme le lien libre.
+     */
+    private fun tunnelProtocols(): List<String> {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.N_MR1) return listOf("http2")
+        return listOf("http2", "quic", "auto")
+    }
+
     private fun runTunnelOnce(bin: File, home: File, logFile: File, protocol: String): String {
         waitForOrigin()
         val useHttp = isPortOpen(3001)
@@ -1308,14 +1388,6 @@ class MainActivity : FlutterActivity() {
             return "serveur local pas prêt (ports 3000/3001)"
         }
         val named = useNamedTunnel()
-        if (named) {
-            val url = fixedPublicUrl!!
-            gotTunnelUrl = true
-            lastPublicUrl = url
-            lastTunnelError = null
-            persistPublicUrl(url)
-            emit("url", url)
-        }
         val args = mutableListOf(
             bin.absolutePath,
             "tunnel",
@@ -1405,7 +1477,23 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun quickTunnelLimited(message: String): Boolean {
+        val t = message.lowercase()
+        return t.contains("429") || t.contains("1015") || t.contains("too many requests") ||
+            t.contains("trop de demandes") || t.contains("satur")
+    }
+
+    private fun tunnelRetryDelay(message: String, connected: Boolean): Long {
+        if (quickTunnelLimited(message)) return 10 * 60 * 1000L
+        if (connected) return 1500L
+        return 15000L
+    }
+
     private fun summarizeCloudflaredError(lines: List<String>, code: Int): String {
+        val all = lines.joinToString("\n")
+        if (quickTunnelLimited(all)) {
+            return "Cloudflare libre saturé : trop de demandes. Nouvel essai dans 10 minutes, sans relancer."
+        }
         val useful = lines.filter { line ->
             val t = line.lowercase()
             (t.contains("err ") || t.contains(" failed") || t.contains("error") ||

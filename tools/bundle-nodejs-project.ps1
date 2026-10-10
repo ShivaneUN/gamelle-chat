@@ -19,9 +19,8 @@ New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 Copy-Item (Join-Path $Root "server.js") (Join-Path $Dest "server.js") -Force
 Copy-Item (Join-Path $Root "update-service.js") (Join-Path $Dest "update-service.js") -Force
 
-# Releases publiques : JAMAIS copier un tunnel/token perso dans l’APK.
-# Les secrets restent dans .local-secrets/ + gamelle-persist sur l’appareil.
-# (launch-phone.ps1 re-injecte .local-secrets après ce bundle pour l’install perso.)
+# Releases publiques et Flutter.lnk : jamais de tunnel perso dans l’app.
+# Flutter.lnk n’ouvre que le lien gratuit. Le domaine se regle sur l’APK de release.
 $publicTunnel = @'
 {
   "publicUrl": "",
