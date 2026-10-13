@@ -46,8 +46,6 @@ class NodeBridgeService {
   String? get _shareBase {
     final live = publicUrl;
     if (live != null && live.isNotEmpty) return live;
-    final saved = savedPublicUrl;
-    if (saved != null && saved.isNotEmpty) return saved;
     return null;
   }
 

@@ -148,7 +148,7 @@ function Start-LocalServer {
     try { npm install } finally { Pop-Location }
   }
   Write-Host " Demarrage du serveur (nouvelle fenetre)..."
-  $cmd = "cd /d `"$repoRoot`" && npm start"
+  $cmd = "cd /d `"$repoRoot`" && set GAMELLE_FREE_ONLY=1&& npm start"
   Start-Process -FilePath "cmd.exe" -ArgumentList "/k", $cmd
   for ($i = 0; $i -lt 40; $i++) {
     Start-Sleep -Seconds 1
@@ -236,35 +236,8 @@ try {
   exit 1
 }
 
-# Tunnel perso (juvana.cc) : UNIQUEMENT install locale via Flutter.lnk - jamais pour GitHub/releases.
-function Inject-PersonalTunnel {
-  $secrets = Join-Path $repoRoot ".local-secrets"
-  $cfgSrc = Join-Path $secrets "tunnel.config.json"
-  $tokSrc = Join-Path $secrets "tunnel.token"
-  if (-not (Test-Path $cfgSrc)) {
-    Write-Host "[INFO] Pas de .local-secrets/tunnel.config.json - tunnel perso non injecte." -ForegroundColor Yellow
-    return
-  }
-  $assets = Join-Path $project "android\app\src\main\assets"
-  $nodeAssets = Join-Path $assets "nodejs-project"
-  New-Item -ItemType Directory -Force -Path $nodeAssets | Out-Null
-  Copy-Item $cfgSrc (Join-Path $assets "tunnel.config.json") -Force
-  Copy-Item $cfgSrc (Join-Path $nodeAssets "tunnel.config.json") -Force
-  Copy-Item $cfgSrc (Join-Path $repoRoot "tunnel.config.json") -Force
-  if (Test-Path $tokSrc) {
-    Copy-Item $tokSrc (Join-Path $assets "tunnel.token") -Force
-    Copy-Item $tokSrc (Join-Path $nodeAssets "tunnel.token") -Force
-    Copy-Item $tokSrc (Join-Path $repoRoot "tunnel.token") -Force
-  }
-  $urlHint = ""
-  try {
-    $urlHint = (Get-Content $cfgSrc -Raw -Encoding UTF8 | ConvertFrom-Json).publicUrl
-  } catch {}
-  if (-not $urlHint) { $urlHint = "(config locale)" }
-  Write-Host " Tunnel perso injecte (local) : $urlHint" -ForegroundColor Green
-  Write-Host "  reste hors GitHub - bundle public remet des assets vides"
-}
-Inject-PersonalTunnel
+# Flutter.lnk n'injecte pas de domaine. La tablette garde celui qu'on y enregistre.
+Write-Host " Aucun domaine perso injecte. Un domaine deja enregistre sur la tablette est garde."
 
 Write-Host "----------------------------------------"
 Write-Host " Build en cours..."
@@ -283,32 +256,6 @@ try {
   & $flutter run -d $deviceId "--dart-define=SERVER_URL=$serverUrl"
   $code = $LASTEXITCODE
 } finally {
-  # Apres install : pousser aussi vers gamelle-persist (survit aux OTA publiques).
-  if ($adb -and $usbSerial -and $code -eq 0) {
-    $secrets = Join-Path $repoRoot ".local-secrets"
-    $cfgSrc = Join-Path $secrets "tunnel.config.json"
-    $tokSrc = Join-Path $secrets "tunnel.token"
-    if (Test-Path $cfgSrc) {
-      $pkg = "com.gamelle.gamelle_chat"
-      $tmp = "/data/local/tmp/gamelle-tunnel"
-      try {
-        & $adb -s $usbSerial shell "mkdir -p $tmp" 2>$null | Out-Null
-        & $adb -s $usbSerial push $cfgSrc "$tmp/tunnel.config.json" 2>$null | Out-Null
-        if (Test-Path $tokSrc) {
-          & $adb -s $usbSerial push $tokSrc "$tmp/tunnel.token" 2>$null | Out-Null
-        }
-        # Commandes separees : evite here-string / [ / && qui cassent PowerShell 5.1
-        & $adb -s $usbSerial shell "run-as $pkg mkdir -p files/gamelle-persist" 2>$null | Out-Null
-        & $adb -s $usbSerial shell "run-as $pkg cp -f $tmp/tunnel.config.json files/gamelle-persist/tunnel.config.json" 2>$null | Out-Null
-        if (Test-Path $tokSrc) {
-          & $adb -s $usbSerial shell "run-as $pkg cp -f $tmp/tunnel.token files/gamelle-persist/tunnel.token" 2>$null | Out-Null
-        }
-        Write-Host " Secrets tunnel copies dans gamelle-persist sur la tablette." -ForegroundColor Green
-      } catch {
-        Write-Host "[INFO] Persist tablette non mis a jour (assets APK suffisent pour cette install)." -ForegroundColor Yellow
-      }
-    }
-  }
   Write-Host ""
   Write-Host " Fermeture : deconnexion ADB Wi-Fi..."
   Disconnect-WirelessAdb $adb

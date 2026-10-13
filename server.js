@@ -396,12 +396,6 @@ function findUserByName(accounts, username) {
   return accounts.users.find((u) => u && u.username && normUser(u.username) === want) || null;
 }
 
-function accountNames(accounts) {
-  return (accounts && accounts.users || [])
-    .map((u) => (u && u.username ? String(u.username) : ''))
-    .filter(Boolean);
-}
-
 function passwordMatches(user, password) {
   const hashHex = String(user && user.passHash || '').trim().toLowerCase();
   const salt = String(user && user.salt || '');
@@ -678,7 +672,7 @@ app.get('/controller.html', (req, res) => {
     setSessionCookie(res, access, req);
     return sendHtml(res, req, 'controller.html');
   }
-  if (!isLanRequest(req) && !getSessionUser(req)) {
+  if (!getSessionUser(req)) {
     return sendHtml(res, req, 'index.html', {
       error: '',
       version: updater.pkgVersion(),
@@ -794,16 +788,16 @@ app.post('/api/auth/login', (req, res) => {
     if (!username || !password) {
       return sendLoginFail(req, res, 401, 'Identifiant et mot de passe requis.', 'empty');
     }
+    const generic = 'Identifiant ou mot de passe incorrect.';
     if (!accounts.users.length) {
-      return sendLoginFail(req, res, 401, 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.', 'no-accounts');
+      const error = isLocalRequest(req)
+        ? 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.'
+        : generic;
+      return sendLoginFail(req, res, 401, error, 'no-accounts');
     }
     const user = findUserByName(accounts, username);
-    const known = accountNames(accounts);
     if (!user || !user.salt || !user.passHash) {
-      const error = known.length
-        ? `Pas de compte « ${username} ». Comptes sur la tablette : ${known.join(', ')}.`
-        : 'Aucun compte sur la tablette. Ouvre Comptes et crée-en un.';
-      return sendLoginFail(req, res, 401, error, 'unknown-user');
+      return sendLoginFail(req, res, 401, generic, 'unknown-user');
     }
     let ok = false;
     try {
@@ -812,7 +806,7 @@ app.post('/api/auth/login', (req, res) => {
       return sendLoginFail(req, res, 500, 'Vérification impossible. Réessaie.', 'verify-failed');
     }
     if (!ok) {
-      return sendLoginFail(req, res, 401, `Mot de passe incorrect pour « ${user.username} ».`, 'bad-password');
+      return sendLoginFail(req, res, 401, generic, 'bad-password');
     }
 
     let current = null;
@@ -1063,7 +1057,7 @@ app.get('/api/alarm-stop', (_req, res) => {
 app.get('/c/:code', (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
-  if (!isLanRequest(req) && !getSessionUser(req)) {
+  if (!getSessionUser(req)) {
     return res.redirect(302, '/?next=controller&code=' + encodeURIComponent(code));
   }
   try {
@@ -1095,6 +1089,7 @@ app.post('/api/update/apply', (_req, res) => {
 });
 
 app.get('/api/live/:code', (req, res) => {
+  if (!isLocalRequest(req) && !getSessionUser(req)) return res.status(401).end();
   const frame = liveJpegs[req.params.code];
   if (!frame) return res.status(204).end();
   res.setHeader('Content-Type', 'image/jpeg');
@@ -1306,6 +1301,9 @@ function getRoom(code) {
       camOn: false,
       screenOn: true,
       cameras: [],
+      visioArmed: false,
+      visioWanted: false,
+      facing: 'Arrière',
     };
   }
   if (!rooms[key].controllerIds) rooms[key].controllerIds = new Set();
@@ -1342,6 +1340,20 @@ function hydrateRoomsFromPersisted() {
   }
 }
 hydrateRoomsFromPersisted();
+
+function visioSnapshot(room) {
+  const armed = !!(room && room.visioArmed);
+  const wanted = !!(room && room.visioWanted);
+  const facing = room && room.facing === 'Avant' ? 'Avant' : 'Arrière';
+  return { armed, wanted, live: armed && wanted, facing };
+}
+
+function emitVisio(code) {
+  if (!code) return;
+  const msg = visioSnapshot(getRoom(code));
+  emitToRole(code, 'receiver', 'visio-state', msg);
+  emitToRole(code, 'controller', 'visio-state', msg);
+}
 
 function emitToRole(code, role, event, payload) {
   const socketIds = io.sockets.adapter.rooms.get(code);
@@ -1531,18 +1543,14 @@ io.on('connection', (socket) => {
     }
     if (role === 'controller') {
       const user = getSocketSessionUser(socket);
-      if (!user && !isLanRequest(socket.request)) {
+      if (!user) {
         socket.emit('auth-required', { error: 'Connexion requise' });
         socket.disconnect(true);
         return;
       }
-      if (user) {
-        socket.data.userId = user.id;
-        socket.data.username = user.username;
-        touchSession(user.token);
-      } else {
-        socket.data.username = 'Local';
-      }
+      socket.data.userId = user.id;
+      socket.data.username = user.username;
+      touchSession(user.token);
     }
     if (role === 'receiver' && !isLocalRequest(socket.request)) {
       socket.emit('join-error', { error: 'Récepteur réservé à la tablette' });
@@ -1613,6 +1621,10 @@ io.on('connection', (socket) => {
       if (room.cameras && room.cameras.length) socket.emit('camera-list', room.cameras);
       if (room.battery) socket.emit('battery-status', room.battery);
       socket.emit(room.screenOn === false ? 'screen-off' : 'screen-on');
+      socket.emit('visio-state', visioSnapshot(room));
+    }
+    if (role === 'receiver') {
+      socket.emit('visio-state', visioSnapshot(room));
     }
   });
 
@@ -1967,6 +1979,31 @@ io.on('connection', (socket) => {
     if (!socket.data.code) return;
     emitToTargets(socket.data.code, payload && payload.target, 'switch-camera', payload);
   });
+  socket.on('camera-facing', (payload) => {
+    if (!socket.data.code || socket.data.role !== 'receiver') return;
+    const facing = payload && payload.facing === 'Avant' ? 'Avant' : 'Arrière';
+    const room = getRoom(socket.data.code);
+    room.facing = facing;
+    emitToRole(socket.data.code, 'controller', 'camera-facing', { facing });
+  });
+  socket.on('visio-arm', (payload) => {
+    if (!socket.data.code || socket.data.role !== 'receiver') return;
+    const room = getRoom(socket.data.code);
+    room.visioArmed = !!(payload && payload.on);
+    if (!room.visioArmed) room.visioWanted = false;
+    emitVisio(socket.data.code);
+  });
+  socket.on('visio-want', (payload) => {
+    if (!socket.data.code || socket.data.role !== 'controller') return;
+    const room = getRoom(socket.data.code);
+    if (!room.visioArmed) {
+      room.visioWanted = false;
+      emitVisio(socket.data.code);
+      return;
+    }
+    room.visioWanted = !!(payload && payload.on);
+    emitVisio(socket.data.code);
+  });
   socket.on('torch', (payload) => {
     if (!socket.data.code) return;
     emitToTargets(socket.data.code, payload && payload.target, 'torch', payload);
@@ -2071,11 +2108,18 @@ io.on('connection', (socket) => {
       room.satelliteId = null;
       emitDevices(code);
     }
+    if (room.controllerIds.size === 0 && room.visioWanted) {
+      room.visioWanted = false;
+      emitVisio(code);
+    }
     if (room.receiverId === socket.id) {
       room.receiverId = null;
       room.camOn = false;
       room.cameras = [];
       room.battery = null;
+      room.visioArmed = false;
+      room.visioWanted = false;
+      emitVisio(code);
       delete liveJpegs[code];
       emitToRole(code, 'controller', 'cam-status', { on: false });
       emitToRole(code, 'controller', 'battery-status', { level: null, offline: true });
@@ -2280,7 +2324,7 @@ function logDomainBlock(message) {
   if (!message || message === lastDomainBlockLog) return;
   lastDomainBlockLog = message;
   console.warn(message);
-  console.warn('Le domaine reste fermé tant que cette installation n’est pas la version publiée.');
+  console.warn('Le domaine reste fermé tant qu’un appareil plus récent occupe le même domaine.');
 }
 
 function clearDomainWatch() {
@@ -2299,14 +2343,70 @@ function stopActiveTunnel() {
   }
 }
 
-function armDomainWatch() {
+function showVer(version) {
+  const t = String(version || '').trim();
+  if (!t) return t;
+  return /^v/i.test(t) ? t : `v${t}`;
+}
+
+function mixedDomainMessage(newer) {
+  return `Domaine coupé : un autre appareil sur ce domaine est en ${showVer(newer)}. La même version est nécessaire pour le partager.`;
+}
+
+function fetchUrl(url, redirectsLeft) {
+  const lib = String(url).startsWith('http://') ? http : https;
+  return new Promise((resolve, reject) => {
+    const req = lib.request(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'GamelleChat',
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+      },
+      timeout: 8000,
+    }, (res) => {
+      const loc = String(res.headers.location || '');
+      if (res.statusCode >= 300 && res.statusCode < 400 && loc && redirectsLeft > 0) {
+        res.resume();
+        fetchUrl(new URL(loc, url).toString(), redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+/** Version plus récente déjà en ligne sur ce domaine. Vide si même version, seul, ou injoignable. */
+async function newerPeerOnDomain(pageUrl) {
+  const local = updater.pkgVersion();
+  const base = String(pageUrl || '').replace(/\/$/, '');
+  if (!base.startsWith('http')) return '';
+  for (let i = 0; i < 4; i++) {
+    try {
+      const res = await fetchUrl(`${base}/api/info?probe=${i}-${Date.now()}`, 2);
+      if (res.status < 200 || res.status >= 300) continue;
+      const info = JSON.parse(res.body);
+      const ver = String((info && info.version) || '');
+      if (updater.isRemoteNewer(ver, local)) return ver;
+    } catch (e) {}
+  }
+  return '';
+}
+
+function armDomainWatch(pageUrl) {
   clearDomainWatch();
-  // Déjà ouvert : un trou de GitHub ne coupe pas. Une release plus récente, si.
+  // Même version : on reste, même à plusieurs. On coupe seulement si un pair est plus récent.
   domainWatchTimer = setInterval(() => {
-    domainGate().then((gate) => {
-      if (gate.gate !== 'behind') return;
-      logDomainBlock(gate.message);
-      console.warn('Tunnel coupé : une version plus récente est publiée.');
+    newerPeerOnDomain(pageUrl).then((newer) => {
+      if (!newer) return;
+      logDomainBlock(mixedDomainMessage(newer));
       clearDomainWatch();
       stopActiveTunnel();
     }).catch(() => {});
@@ -2321,54 +2421,6 @@ function scheduleDomainOpen(origin) {
     startPublicTunnel(origin).catch(() => {});
   }, 45 * 1000);
   if (domainRetryTimer.unref) domainRetryTimer.unref();
-}
-
-function httpsGet(url, follow, left) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, {
-      method: 'GET',
-      headers: { 'User-Agent': 'GamelleChat', Accept: '*/*' },
-      timeout: 20000,
-    }, (res) => {
-      const loc = String(res.headers.location || '');
-      if (follow && res.statusCode >= 300 && res.statusCode < 400 && loc && left > 0) {
-        res.resume();
-        httpsGet(new URL(loc, url).toString(), true, left - 1).then(resolve, reject);
-        return;
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        resolve({ status: res.statusCode || 0, location: loc, body: Buffer.concat(chunks).toString('utf8') });
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.end();
-  });
-}
-
-async function fetchLatestReleaseTag() {
-  const latest = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases/latest', false, 0);
-  const fromLoc = decodeURIComponent((latest.location.split('/releases/tag/')[1] || '').split('/')[0].split('?')[0]).trim();
-  if (fromLoc) return fromLoc;
-  const atom = await httpsGet('https://github.com/ShivaneUN/gamelle-chat/releases.atom', true, 4);
-  if (atom.status < 200 || atom.status >= 300) throw new Error('releases.atom HTTP ' + atom.status);
-  const match = atom.body.match(/\/releases\/tag\/([^<"\s]+)/);
-  if (match && match[1]) return decodeURIComponent(match[1]).trim();
-  throw new Error('Aucune release GitHub trouvée.');
-}
-
-async function domainGate() {
-  const local = updater.pkgVersion();
-  const forced = process.env.GAMELLE_LATEST_TAG;
-  if (forced === 'unknown') return updater.domainGateFrom('fail', '', local);
-  if (forced) return updater.domainGateFrom('ok', forced, local);
-  try {
-    return updater.domainGateFrom('ok', await fetchLatestReleaseTag(), local);
-  } catch (e) {
-    return updater.domainGateFrom('fail', '', local);
-  }
 }
 
 async function startNamedTunnel(bin, token, fixedUrl) {
@@ -2401,7 +2453,7 @@ async function startNamedTunnel(bin, token, fixedUrl) {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   activeTunnelStop = stop;
-  armDomainWatch();
+  armDomainWatch(fixedUrl);
 }
 
 async function startQuickTunnel(cf, origin) {
@@ -2422,7 +2474,7 @@ async function startQuickTunnel(cf, origin) {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   activeTunnelStop = stop;
-  armDomainWatch();
+  armDomainWatch('');
 }
 
 async function startPublicTunnel(origin) {
@@ -2433,17 +2485,21 @@ async function startPublicTunnel(origin) {
   if (tunnelStartLock) return;
   tunnelStartLock = true;
   try {
-    const gate = await domainGate();
-    if (gate.gate !== 'allowed') {
-      logDomainBlock(gate.message);
-      scheduleDomainOpen(origin);
-      return;
-    }
-    lastDomainBlockLog = '';
     const { cf, bin } = await ensureCloudflaredBin();
-    const token = readTunnelToken();
-    const fixedUrl = tunnelConfig.publicUrl;
+    const freeOnly = process.env.GAMELLE_FREE_ONLY === '1';
+    const token = freeOnly ? '' : readTunnelToken();
+    const fixedUrl = freeOnly ? '' : tunnelConfig.publicUrl;
+    if (freeOnly) {
+      console.log('Lien gratuit seulement. Le domaine perso n’est pas ouvert.');
+    }
     if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
+      const newer = await newerPeerOnDomain(fixedUrl);
+      if (newer) {
+        logDomainBlock(mixedDomainMessage(newer));
+        scheduleDomainOpen(origin);
+        return;
+      }
+      lastDomainBlockLog = '';
       await startNamedTunnel(bin, token, fixedUrl);
       return;
     }

@@ -601,7 +601,7 @@ function setCamDot(on) {
   const dot = document.getElementById('camDot');
   if (!dot) return;
   dot.classList.toggle('on', !!on);
-  dot.title = on ? 'Caméra allumée' : 'Caméra éteinte';
+  dot.title = 'Vue en direct';
 }
 
 function renderReceiverBattery(payload) {
@@ -911,6 +911,12 @@ function renderFacingBtn() {
   facingBtn.setAttribute('aria-label', 'Caméra ' + preferredFacing);
 }
 
+socket.on('camera-facing', (payload) => {
+  const facing = payload && payload.facing === 'Avant' ? 'Avant' : 'Arrière';
+  preferredFacing = facing;
+  renderFacingBtn();
+});
+
 socket.on('camera-list', (cams) => {
   cameraList = Array.isArray(cams) ? cams : [];
   cameraSelect.innerHTML = cameraList
@@ -1105,6 +1111,130 @@ function syncControllerLiveTransport() {
     if (liveHint && !webrtcLive) liveHint.textContent = 'Vue live';
   }
   ensureLiveFallback();
+}
+
+let visioArmed = false;
+let visioLive = false;
+let selfFacing = 'Avant';
+let selfStream = null;
+let pcVisio = null;
+
+function renderSelfPip() {
+  const pip = document.getElementById('selfPip');
+  const btn = document.getElementById('visioWantBtn');
+  const face = document.getElementById('selfFacingBtn');
+  if (!pip) return;
+  pip.hidden = !visioArmed;
+  pip.classList.toggle('waiting', !visioLive);
+  if (btn) btn.className = 'chip-btn pip-visio ' + (visioLive ? 'toggle-on' : 'toggle-off');
+  if (face) {
+    face.hidden = !visioLive;
+    face.textContent = selfFacing;
+  }
+}
+
+function stopSelfVisio() {
+  if (selfStream) selfStream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+  selfStream = null;
+  const videoEl = document.getElementById('selfVideo');
+  if (videoEl) videoEl.srcObject = null;
+  if (pcVisio) {
+    try { pcVisio.onicecandidate = null; } catch (e) {}
+    try { pcVisio.close(); } catch (e) {}
+    pcVisio = null;
+  }
+}
+
+async function openSelfCamera() {
+  const facingMode = selfFacing === 'Avant' ? 'user' : 'environment';
+  const video = { facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } };
+  return navigator.mediaDevices.getUserMedia({ video, audio: false });
+}
+
+async function startSelfVisio() {
+  if (pcVisio || !visioLive) return;
+  try {
+    selfStream = await openSelfCamera();
+  } catch (e) {
+    socket.emit('visio-want', { on: false });
+    return;
+  }
+  const videoEl = document.getElementById('selfVideo');
+  if (videoEl) {
+    videoEl.srcObject = selfStream;
+    videoEl.play().catch(() => {});
+  }
+  const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+  try {
+    pcVisio = new RTCPeerConnection({ iceServers });
+  } catch (e) {
+    stopSelfVisio();
+    socket.emit('visio-want', { on: false });
+    return;
+  }
+  selfStream.getVideoTracks().forEach((t) => {
+    try { pcVisio.addTrack(t, selfStream); } catch (err) {}
+  });
+  pcVisio.onicecandidate = (e) => {
+    if (e.candidate) socket.emit('signal', { channel: 'visio', type: 'candidate', candidate: e.candidate });
+  };
+  try {
+    const offer = await pcVisio.createOffer();
+    await pcVisio.setLocalDescription(offer);
+    socket.emit('signal', { channel: 'visio', type: 'offer', sdp: pcVisio.localDescription });
+  } catch (e) {
+    stopSelfVisio();
+    socket.emit('visio-want', { on: false });
+  }
+}
+
+socket.on('visio-state', (state) => {
+  visioArmed = !!(state && state.armed);
+  const live = !!(state && state.live);
+  if (state && state.facing) {
+    preferredFacing = state.facing === 'Avant' ? 'Avant' : 'Arrière';
+    renderFacingBtn();
+  }
+  if (!live) stopSelfVisio();
+  visioLive = live;
+  renderSelfPip();
+  if (live) startSelfVisio().catch(() => {});
+});
+
+socket.on('signal', async (payload) => {
+  if (!payload || payload.channel !== 'visio' || !pcVisio) return;
+  try {
+    if (payload.type === 'answer' && payload.sdp) await pcVisio.setRemoteDescription(payload.sdp);
+    if (payload.type === 'candidate' && payload.candidate) await pcVisio.addIceCandidate(payload.candidate);
+  } catch (e) {}
+});
+
+const visioWantBtn = document.getElementById('visioWantBtn');
+if (visioWantBtn) {
+  visioWantBtn.onclick = () => {
+    if (!visioArmed) return;
+    socket.emit('visio-want', { on: !visioLive });
+  };
+}
+const selfFacingBtn = document.getElementById('selfFacingBtn');
+if (selfFacingBtn) {
+  selfFacingBtn.onclick = async () => {
+    selfFacing = selfFacing === 'Avant' ? 'Arrière' : 'Avant';
+    renderSelfPip();
+    if (!visioLive) return;
+    try {
+      const next = await openSelfCamera();
+      const track = next.getVideoTracks()[0];
+      if (pcVisio && track) {
+        const sender = pcVisio.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (sender) await sender.replaceTrack(track);
+      }
+      if (selfStream) selfStream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+      selfStream = next;
+      const videoEl = document.getElementById('selfVideo');
+      if (videoEl) videoEl.srcObject = selfStream;
+    } catch (e) {}
+  };
 }
 
 socket.on('signal', async (payload) => {

@@ -26,25 +26,11 @@ object GithubUpdate {
         if (f.exists()) f.delete()
     }
 
-    enum class DomainGate { Allowed, Behind, Unknown }
+    /** true si [remote] est une version strictement plus récente que [local]. */
+    fun remoteIsNewer(remote: String, local: String): Boolean = isNewer(remote, local)
 
-    /**
-     * Avant d'ouvrir le domaine : Allowed si cette installation est égale ou plus récente,
-     * Behind si GitHub a une release plus récente, Unknown si GitHub ne répond pas.
-     */
-    fun domainGate(installedVersion: String): Pair<DomainGate, String> {
-        val local = installedVersion.trim()
-        return try {
-            val remote = fetchLatestTag()
-            if (isNewer(remote, local)) {
-                DomainGate.Behind to
-                    "Domaine coupé : installe la mise à jour ${display(remote)} pour utiliser le domaine."
-            } else {
-                DomainGate.Allowed to ""
-            }
-        } catch (_: Exception) {
-            DomainGate.Unknown to "Domaine coupé : impossible de vérifier la version."
-        }
+    fun mixedDomainMessage(newerVersion: String): String {
+        return "Domaine coupé : un autre appareil sur ce domaine est en ${display(newerVersion)}. La même version est nécessaire pour le partager."
     }
 
     fun localTag(filesDir: File, installedVersion: String): String {
