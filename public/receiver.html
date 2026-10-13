@@ -13,7 +13,7 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=58">
+<link rel="stylesheet" href="/style.css?v=59">
 </head>
 <body class="live-page">
 <div class="wrap screen-fit">
@@ -28,13 +28,20 @@
   <div class="card live-card">
     <div class="live-head">
       <h3 class="card-title">Caméra <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
-      <button id="camBtn" class="chip-btn toggle-off" type="button"><span class="lbl">Caméra</span></button>
+      <div class="live-chips">
+        <button id="facingBtn" class="chip-btn" type="button">Arrière</button>
+        <button id="camBtn" class="chip-btn toggle-off" type="button"><span class="lbl">Caméra</span></button>
+        <button id="visioArmBtn" class="chip-btn toggle-off" type="button">Visio</button>
+      </div>
     </div>
-    <div class="live-wrap">
+    <div class="live-wrap" id="fluxWrap">
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="localVideo" autoplay playsinline muted></video>
+      <video id="visioRemote" autoplay playsinline></video>
       <img id="cam2Live" class="cam2-live" alt="Caméra 2">
+      <div class="flux-grab" aria-hidden="true"></div>
     </div>
+    <div class="under-flux" id="underFlux">
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
       <div class="volume-main">
@@ -73,6 +80,7 @@
           <span class="lbl">Caméras</span>
         </button>
       </div>
+    </div>
     </div>
   </div>
 
@@ -237,6 +245,7 @@
 <script src="/alarm-ui.js?v=0.1.3"></script>
 <script src="/qr.js?v=6"></script>
 <script src="/talk-pcm.js?v=4"></script>
-<script src="/receiver.js?v=61"></script>
+<script src="/flux-gesture.js?v=1"></script>
+<script src="/receiver.js?v=62"></script>
 </body>
 </html>

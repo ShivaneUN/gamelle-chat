@@ -18,9 +18,9 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=58">
+<link rel="stylesheet" href="/style.css?v=59">
 </head>
-<body class="live-page">
+<body class="live-page controller-page">
 <div class="wrap screen-fit">
   <div class="page-head">
     <button id="refreshBtn" class="chip-btn head-refresh" type="button" title="Actualiser" aria-label="Actualiser">
@@ -39,20 +39,27 @@
 
   <div class="card live-card">
     <div class="live-head">
-      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
       <div class="live-chips">
+        <span id="camDot" class="cam-dot" title="Vue en direct"></span>
+        <span id="recvBattery" class="battery-badge off" title="Batterie du récepteur">—%</span>
         <button id="facingBtn" class="chip-btn" type="button">Arrière</button>
         <button id="flashBtn" class="chip-btn toggle-off" type="button">Flash</button>
-        <span id="recvBattery" class="battery-badge off" title="Batterie du Récepteur">—%</span>
       </div>
     </div>
     <select id="cameraSelect" style="display:none;"></select>
-    <div class="live-wrap">
+    <div class="live-wrap" id="fluxWrap">
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
       <img id="cam2Relay" class="cam2-relay" alt="Caméra 2">
+      <div id="selfPip" class="self-pip" hidden>
+        <video id="selfVideo" autoplay playsinline muted></video>
+        <button id="selfFacingBtn" class="chip-btn pip-face" type="button">Avant</button>
+        <button id="visioWantBtn" class="chip-btn pip-visio toggle-off" type="button">Visio</button>
+      </div>
+      <div class="flux-grab" aria-hidden="true"></div>
     </div>
+    <div class="under-flux" id="underFlux">
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
       <div class="volume-main">
@@ -97,6 +104,7 @@
           <span class="lbl">Caméras</span>
         </button>
       </div>
+    </div>
     </div>
   </div>
 
@@ -257,6 +265,7 @@
 <script src="/alarm-ui.js?v=0.1.3"></script>
 <script src="/talk-pcm.js?v=4"></script>
 <script src="/qr.js?v=1"></script>
-<script src="/controller.js?v=0.1.11"></script>
+<script src="/flux-gesture.js?v=1"></script>
+<script src="/controller.js?v=0.1.12"></script>
 </body>
 </html>

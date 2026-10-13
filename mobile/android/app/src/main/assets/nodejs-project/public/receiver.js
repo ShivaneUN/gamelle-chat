@@ -657,7 +657,7 @@ function renderCamBtnPending(on) {
 async function enableCamera() {
   try {
     const videoConstraints = {
-      facingMode: { ideal: 'environment' },
+      facingMode: { ideal: facingModeFor(preferredFacing) },
       width: { ideal: 640 },
       frameRate: { ideal: 30, max: 30 },
     };
@@ -754,11 +754,25 @@ socket.on('torch', async (payload) => {
   await applyTorch(!!(payload && payload.on));
 });
 
-// --- Changement de caméra demandé par le contrôleur, sans couper le direct ---
-socket.on('switch-camera', async (payload) => {
-  if (!camOn) return;
+let preferredFacing = 'Arrière';
+function facingModeFor(label) {
+  return label === 'Avant' ? 'user' : 'environment';
+}
+function renderFacingBtn() {
+  const btn = document.getElementById('facingBtn');
+  if (!btn) return;
+  btn.textContent = preferredFacing;
+  btn.setAttribute('aria-label', 'Caméra ' + preferredFacing);
+}
+function publishFacing() {
+  socket.emit('camera-facing', { facing: preferredFacing });
+}
+
+// --- Changement de caméra, sans couper le direct ---
+async function switchTabletCamera(payload) {
+  if (!camOn) return false;
   const deviceId = payload && payload.deviceId;
-  const facingMode = (payload && payload.facingMode) || 'environment';
+  const facingMode = (payload && payload.facingMode) || facingModeFor(preferredFacing);
   const oldStream = localStream;
 
   // Libérer l'objectif actuel avant d'ouvrir l'autre (requis sur beaucoup d'Android).
@@ -808,7 +822,7 @@ socket.on('switch-camera', async (payload) => {
     } catch (e2) {
       console.warn('Impossible de rétablir la caméra:', e2.message);
     }
-    return;
+    return false;
   }
 
   try {
@@ -831,8 +845,111 @@ socket.on('switch-camera', async (payload) => {
     if (micOn) await startMicTalk(localStream, false);
     sendCameraList();
     if (torchWanted) await applyTorch(true);
+    return true;
   } catch (e) {
     console.warn('Changement de caméra impossible:', e.message);
+    return false;
+  }
+}
+
+socket.on('switch-camera', async (payload) => {
+  const facingMode = (payload && payload.facingMode) || 'environment';
+  preferredFacing = facingMode === 'user' ? 'Avant' : 'Arrière';
+  renderFacingBtn();
+  publishFacing();
+  await switchTabletCamera(payload);
+});
+
+const facingBtn = document.getElementById('facingBtn');
+if (facingBtn) {
+  facingBtn.onclick = async () => {
+    preferredFacing = preferredFacing === 'Avant' ? 'Arrière' : 'Avant';
+    renderFacingBtn();
+    publishFacing();
+    await switchTabletCamera({ facingMode: facingModeFor(preferredFacing) });
+  };
+}
+
+let visioArmed = false;
+let pcVisio = null;
+const visioRemote = document.getElementById('visioRemote');
+const visioArmBtn = document.getElementById('visioArmBtn');
+const fluxWrap = document.getElementById('fluxWrap');
+
+function renderVisioArm() {
+  if (!visioArmBtn) return;
+  visioArmBtn.className = 'chip-btn ' + (visioArmed ? 'toggle-on' : 'toggle-off');
+  visioArmBtn.textContent = 'Visio';
+}
+if (visioArmBtn) {
+  visioArmBtn.onclick = () => {
+    visioArmed = !visioArmed;
+    renderVisioArm();
+    socket.emit('visio-arm', { on: visioArmed });
+  };
+}
+
+function stopVisioRecv() {
+  if (fluxWrap) fluxWrap.classList.remove('visio-on');
+  if (visioRemote) {
+    visioRemote.srcObject = null;
+    visioRemote.classList.remove('on');
+    visioRemote.style.display = 'none';
+  }
+  if (pcVisio) {
+    try { pcVisio.close(); } catch (e) {}
+    pcVisio = null;
+  }
+}
+
+socket.on('visio-state', (state) => {
+  visioArmed = !!(state && state.armed);
+  renderVisioArm();
+  if (state && state.facing) {
+    preferredFacing = state.facing === 'Avant' ? 'Avant' : 'Arrière';
+    renderFacingBtn();
+  }
+  if (!state || !state.live) stopVisioRecv();
+});
+
+socket.on('signal', async (payload) => {
+  if (!payload || payload.channel !== 'visio') return;
+  if (payload.type === 'offer' && payload.sdp) {
+    stopVisioRecv();
+    const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+    try {
+      pcVisio = new RTCPeerConnection({ iceServers });
+    } catch (e) {
+      pcVisio = null;
+      return;
+    }
+    pcVisio.ontrack = (e) => {
+      const stream = (e.streams && e.streams[0]) || null;
+      if (!visioRemote || !stream) return;
+      visioRemote.srcObject = stream;
+      visioRemote.playsInline = true;
+      visioRemote.muted = true;
+      visioRemote.classList.add('on');
+      visioRemote.style.display = 'block';
+      if (fluxWrap) fluxWrap.classList.add('visio-on');
+      visioRemote.play().catch(() => {});
+    };
+    pcVisio.onicecandidate = (e) => {
+      if (e.candidate) socket.emit('signal', { channel: 'visio', type: 'candidate', candidate: e.candidate });
+    };
+    try {
+      await pcVisio.setRemoteDescription(payload.sdp);
+      const answer = await pcVisio.createAnswer();
+      await pcVisio.setLocalDescription(answer);
+      socket.emit('signal', { channel: 'visio', type: 'answer', sdp: pcVisio.localDescription });
+    } catch (e) {
+      stopVisioRecv();
+    }
+    return;
+  }
+  if (!pcVisio) return;
+  if (payload.type === 'candidate' && payload.candidate) {
+    try { await pcVisio.addIceCandidate(payload.candidate); } catch (e) {}
   }
 });
 
