@@ -2,83 +2,73 @@
   var wrap = document.getElementById('fluxWrap');
   var card = wrap && wrap.closest('.live-card');
   if (!wrap || !card) return;
+
+  var layer = wrap.querySelector('.flux-touch');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.className = 'flux-touch';
+    layer.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(layer);
+  }
+
+  var startX = 0;
   var startY = 0;
   var tracking = false;
-  var touchId = null;
 
-  function yOfTouch(list, id) {
-    if (!list) return null;
-    for (var i = 0; i < list.length; i++) {
-      if (id == null || list[i].identifier === id) return list[i].clientY;
+  function finish(dy) {
+    if (dy > 28) {
+      card.classList.add('flux-collapsed');
+      return true;
     }
-    return null;
+    if (dy < -28) {
+      card.classList.remove('flux-collapsed');
+      return true;
+    }
+    return false;
   }
 
-  function inHandle(clientY) {
-    var rect = wrap.getBoundingClientRect();
-    return clientY >= rect.bottom - 80 && clientY <= rect.bottom + 36;
-  }
-
-  function blockedTarget(ev) {
-    var t = ev.target;
-    return !!(t && t.closest && t.closest('button, a, input, select, textarea, .self-pip'));
-  }
-
-  function beginTouch(ev) {
-    if (!ev.touches || !ev.touches.length || blockedTarget(ev)) return;
-    var y = ev.touches[0].clientY;
-    if (!inHandle(y)) return;
+  layer.addEventListener('touchstart', function (ev) {
+    var t = ev.touches && ev.touches[0];
+    if (!t) return;
     tracking = true;
-    startY = y;
-    touchId = ev.touches[0].identifier;
+    startX = t.clientX;
+    startY = t.clientY;
     if (ev.cancelable) ev.preventDefault();
-  }
+  }, { passive: false });
 
-  function moveTouch(ev) {
+  layer.addEventListener('touchmove', function (ev) {
     if (!tracking) return;
-    var y = yOfTouch(ev.touches, touchId);
-    if (y == null) return;
-    var dy = y - startY;
-    if (dy > 22) {
-      card.classList.add('flux-collapsed');
-      tracking = false;
-    } else if (dy < -22) {
-      card.classList.remove('flux-collapsed');
-      tracking = false;
+    var t = ev.touches && ev.touches[0];
+    if (!t) return;
+    var dx = t.clientX - startX;
+    var dy = t.clientY - startY;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (ev.cancelable) ev.preventDefault();
+      return;
     }
+    if (finish(dy)) tracking = false;
     if (ev.cancelable) ev.preventDefault();
-  }
+  }, { passive: false });
 
-  function endTouch() {
-    tracking = false;
-    touchId = null;
-  }
+  function stopTouch() { tracking = false; }
+  layer.addEventListener('touchend', stopTouch);
+  layer.addEventListener('touchcancel', stopTouch);
 
-  wrap.addEventListener('touchstart', beginTouch, { passive: false });
-  document.addEventListener('touchmove', moveTouch, { passive: false });
-  document.addEventListener('touchend', endTouch);
-  document.addEventListener('touchcancel', endTouch);
-
-  wrap.addEventListener('pointerdown', function (ev) {
+  layer.addEventListener('pointerdown', function (ev) {
     if (ev.pointerType === 'touch') return;
-    if (blockedTarget(ev) || !inHandle(ev.clientY)) return;
+    if (ev.button != null && ev.button !== 0) return;
     tracking = true;
+    startX = ev.clientX;
     startY = ev.clientY;
-    if (ev.cancelable) ev.preventDefault();
+    try { layer.setPointerCapture(ev.pointerId); } catch (e) {}
   });
-  document.addEventListener('pointermove', function (ev) {
-    if (ev.pointerType === 'touch' || !tracking || touchId != null) return;
+  layer.addEventListener('pointermove', function (ev) {
+    if (!tracking || ev.pointerType === 'touch') return;
+    var dx = ev.clientX - startX;
     var dy = ev.clientY - startY;
-    if (dy > 22) {
-      card.classList.add('flux-collapsed');
-      tracking = false;
-    } else if (dy < -22) {
-      card.classList.remove('flux-collapsed');
-      tracking = false;
-    }
+    if (Math.abs(dx) > Math.abs(dy)) return;
+    if (finish(dy)) tracking = false;
   });
-  document.addEventListener('pointerup', function (ev) {
-    if (ev.pointerType === 'touch') return;
-    tracking = false;
-  });
+  layer.addEventListener('pointerup', stopTouch);
+  layer.addEventListener('pointercancel', stopTouch);
 })();

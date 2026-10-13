@@ -1207,10 +1207,10 @@ button.chip-btn.sync-on,
   left: 0;
   right: 0;
   bottom: 0;
-  height: 72px;
+  height: 28px;
   z-index: 8;
   touch-action: none;
-  pointer-events: auto;
+  pointer-events: none;
   cursor: ns-resize;
   background: linear-gradient(180deg, transparent, rgba(0,0,0,.45));
 }
@@ -1226,6 +1226,13 @@ button.chip-btn.sync-on,
   background: rgba(255,255,255,.7);
 }
 .live-card.flux-collapsed .under-flux { display: none; }
+.flux-touch {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  touch-action: none;
+  background: transparent;
+}
 .self-pip {
   position: absolute;
   right: 10px;
@@ -1233,7 +1240,7 @@ button.chip-btn.sync-on,
   width: 30%;
   max-width: 148px;
   aspect-ratio: 3 / 4;
-  z-index: 5;
+  z-index: 9;
   border-radius: 14px;
   overflow: hidden;
   background: #141820;
