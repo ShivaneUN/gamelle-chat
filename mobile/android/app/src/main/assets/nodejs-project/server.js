@@ -687,8 +687,7 @@ app.get('/receiver.html', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/flux-gesture\.js$/i.test(String(filePath || ''))) setUncached(res);
-    else if (/\.(js|mjs|css|png|ico|svg|webp|webmanifest)$/i.test(String(filePath || ''))) setShellCache(res, 86400);
+    if (/\.(js|mjs|css|png|ico|svg|webp|webmanifest)$/i.test(String(filePath || ''))) setShellCache(res, 86400);
     else if (/\.html$/i.test(String(filePath || ''))) setUncached(res);
   },
 }));
