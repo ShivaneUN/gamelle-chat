@@ -1231,10 +1231,11 @@ button.chip-btn.sync-on,
 .flux-size {
   position: absolute;
   z-index: 40;
-  left: 10px;
+  left: 50%;
   bottom: 10px;
   width: 44px;
   height: 44px;
+  margin-left: -22px;
   pointer-events: auto !important;
 }
 .flux-size svg { pointer-events: none; display: block; }

@@ -1,9 +1,14 @@
 (function () {
   if (window.gamelleFluxSize) return;
-  window.gamelleFluxSize = function (btn) {
+  window.gamelleFluxSize = function (btn, ev) {
+    window.__gamelleFluxGuard = Date.now() + 700;
+    if (ev) {
+      if (ev.cancelable) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+    }
     if (!btn || btn.getAttribute('data-lock') === '1') return;
     btn.setAttribute('data-lock', '1');
-    setTimeout(function () { btn.removeAttribute('data-lock'); }, 400);
+    setTimeout(function () { btn.removeAttribute('data-lock'); }, 450);
     var card = btn.closest && btn.closest('.live-card');
     var under = document.getElementById('underFlux');
     if (!card || !under) return;
