@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -509,6 +511,9 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
                     : WebViewWidget(
                         key: ValueKey<int>(_generation),
                         controller: web,
+                        gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                          Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
+                        },
                       ),
               ),
             ],

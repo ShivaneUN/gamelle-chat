@@ -641,7 +641,7 @@ function sendHtml(res, req, file, extra) {
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
     if (file === 'controller.html') {
-      setShellCache(res, 604800);
+      setUncached(res);
       res.setHeader('X-Gamelle-Page', 'controller');
     } else {
       setUncached(res);
@@ -687,7 +687,8 @@ app.get('/receiver.html', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/\.(js|mjs|css|png|ico|svg|webp|webmanifest)$/i.test(String(filePath || ''))) setShellCache(res, 86400);
+    if (/flux-gesture\.js$/i.test(String(filePath || ''))) setUncached(res);
+    else if (/\.(js|mjs|css|png|ico|svg|webp|webmanifest)$/i.test(String(filePath || ''))) setShellCache(res, 86400);
     else if (/\.html$/i.test(String(filePath || ''))) setUncached(res);
   },
 }));
