@@ -1225,7 +1225,25 @@ button.chip-btn.sync-on,
   border-radius: 4px;
   background: rgba(255,255,255,.7);
 }
-.live-card.flux-collapsed .under-flux { display: none; }
+.live-card.flux-collapsed .under-flux { display: none !important; }
+.live-card.flux-collapsed .live-wrap { flex: 1 1 auto; min-height: 0; }
+.flux-handle {
+  flex-shrink: 0;
+  height: 36px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: ns-resize;
+}
+.flux-handle::before {
+  content: "";
+  width: 46px;
+  height: 5px;
+  border-radius: 5px;
+  background: rgba(255,255,255,.8);
+}
 .flux-touch {
   position: absolute;
   inset: 0;
