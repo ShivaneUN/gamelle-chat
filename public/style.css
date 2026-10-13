@@ -695,27 +695,27 @@ body.live-page .page-head-right {
   min-width: 0;
   max-width: 100%;
 }
-body.controller-page .page-head {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+body.live-page .flux-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
-body.controller-page .page-head h1 {
-  text-align: center;
-  justify-self: center;
-}
-body.controller-page .page-head-right {
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-body.controller-page .page-head-left .status {
+body.live-page .flux-meta .status {
   text-align: left;
   white-space: nowrap;
 }
-body.controller-page .page-head-left .battery-badge {
+body.live-page .flux-meta .battery-badge {
   min-height: 22px;
   padding: 3px 8px;
   font-size: 11px;
   border-radius: 999px;
+  flex-shrink: 0;
+}
+body.live-page .flux-meta .peers-pop {
+  left: 0;
+  right: auto;
 }
 body.live-page .page-head h1 {
   grid-column: 2;
@@ -812,6 +812,12 @@ body.live-page .live-wrap canvas {
   object-position: center;
   border-radius: 14px;
   background: #000;
+  pointer-events: none;
+}
+body.live-page .live-wrap .self-pip,
+body.live-page .live-wrap .self-pip button,
+body.live-page .live-wrap .flux-grab {
+  pointer-events: auto;
 }
 body.live-page .live-placeholder {
   object-fit: contain;
@@ -1201,9 +1207,10 @@ button.chip-btn.sync-on,
   left: 0;
   right: 0;
   bottom: 0;
-  height: 44px;
-  z-index: 6;
+  height: 72px;
+  z-index: 8;
   touch-action: none;
+  pointer-events: auto;
   cursor: ns-resize;
   background: linear-gradient(180deg, transparent, rgba(0,0,0,.45));
 }
