@@ -812,12 +812,13 @@ body.live-page .live-wrap canvas {
   object-position: center;
   border-radius: 14px;
   background: #000;
-  pointer-events: none;
+  pointer-events: none !important;
 }
 body.live-page .live-wrap .self-pip,
 body.live-page .live-wrap .self-pip button,
+body.live-page .live-wrap .flux-size,
 body.live-page .live-wrap .flux-grab {
-  pointer-events: auto;
+  pointer-events: auto !important;
 }
 body.live-page .live-placeholder {
   object-fit: contain;
@@ -1227,6 +1228,20 @@ button.chip-btn.sync-on,
 }
 .live-card.flux-collapsed .under-flux { display: none !important; }
 .live-card.flux-collapsed .live-wrap { flex: 1 1 auto; min-height: 0; }
+.flux-size {
+  position: absolute;
+  z-index: 40;
+  left: 10px;
+  bottom: 10px;
+  width: 44px;
+  height: 44px;
+  pointer-events: auto !important;
+}
+.flux-size svg { pointer-events: none; display: block; }
+.flux-size .ico-in { display: none; }
+.flux-size.is-on .ico-out { display: none; }
+.flux-size.is-on .ico-in { display: block; }
+body.live-page .live-wrap .flux-size { pointer-events: auto !important; }
 .self-pip {
   position: absolute;
   right: 10px;
