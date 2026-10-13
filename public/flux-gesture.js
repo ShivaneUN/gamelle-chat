@@ -1,33 +1,22 @@
 (function () {
-  var wrap = document.getElementById('fluxWrap');
-  var card = document.querySelector('.live-card');
-  if (!wrap || !card) return;
-  var startY = 0;
-  var tracking = false;
-
-  function inGrabZone(ev) {
-    var rect = wrap.getBoundingClientRect();
-    var y = ev.clientY;
-    return y >= rect.bottom - 56 && y <= rect.bottom + 8;
-  }
-
-  wrap.addEventListener('pointerdown', function (ev) {
-    if (!inGrabZone(ev)) return;
-    tracking = true;
-    startY = ev.clientY;
-  });
-  wrap.addEventListener('pointermove', function (ev) {
-    if (!tracking) return;
-    var dy = ev.clientY - startY;
-    if (dy > 36) {
-      card.classList.add('flux-collapsed');
-      tracking = false;
-    } else if (dy < -36) {
-      card.classList.remove('flux-collapsed');
-      tracking = false;
+  if (window.gamelleFluxSize) return;
+  window.gamelleFluxSize = function (btn, ev) {
+    window.__gamelleFluxGuard = Date.now() + 700;
+    if (ev) {
+      if (ev.cancelable) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
     }
-  });
-  function stop() { tracking = false; }
-  wrap.addEventListener('pointerup', stop);
-  wrap.addEventListener('pointercancel', stop);
+    if (!btn || btn.getAttribute('data-lock') === '1') return;
+    btn.setAttribute('data-lock', '1');
+    setTimeout(function () { btn.removeAttribute('data-lock'); }, 450);
+    var card = btn.closest && btn.closest('.live-card');
+    var under = document.getElementById('underFlux');
+    if (!card || !under) return;
+    var on = !card.classList.contains('flux-collapsed');
+    card.classList.toggle('flux-collapsed', on);
+    if (on) under.style.setProperty('display', 'none', 'important');
+    else under.style.removeProperty('display');
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-label', on ? 'Réduire' : 'Agrandir');
+  };
 })();

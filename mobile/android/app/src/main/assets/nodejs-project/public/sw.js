@@ -1,6 +1,6 @@
 /* Garde la page contrôleur sur le téléphone. Le serveur reste la source
    dès qu'il répond. S'il est arrêté, on réaffiche la dernière page reçue. */
-const CACHE = 'gamelle-controller-v2';
+const CACHE = 'gamelle-controller-v9';
 const SHELL = [
   '/style.css',
   '/socket.io/socket.io.js',
@@ -12,6 +12,7 @@ const SHELL = [
   '/talk-pcm.js',
   '/qr.js',
   '/controller.js',
+  '/flux-gesture.js',
   '/logo.png',
   '/favicon-192.png',
   '/apple-touch-icon.png',

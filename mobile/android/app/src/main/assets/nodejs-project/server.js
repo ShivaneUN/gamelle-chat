@@ -641,7 +641,7 @@ function sendHtml(res, req, file, extra) {
       (_, attr, url) => `${attr}="${url}?v=${assetVer}"`
     );
     if (file === 'controller.html') {
-      setShellCache(res, 604800);
+      setUncached(res);
       res.setHeader('X-Gamelle-Page', 'controller');
     } else {
       setUncached(res);
