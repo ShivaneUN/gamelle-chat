@@ -371,7 +371,7 @@ function frameToBlob(data) {
   }
 }
 
-/** Affiche la frame via <img> + object-fit contain (fiable sur iOS ; canvas y coupe l’image). */
+/** Affiche la frame via <img>. Le CSS la remplit (object-fit: cover). */
 function flushRelayFrame() {
   if (relayDecoding || pendingRelayFrame == null) return;
   const data = pendingRelayFrame;
@@ -1123,14 +1123,13 @@ function renderSelfPip() {
   const pip = document.getElementById('selfPip');
   const btn = document.getElementById('visioWantBtn');
   const face = document.getElementById('selfFacingBtn');
-  if (!pip) return;
-  pip.hidden = !visioArmed;
-  pip.classList.toggle('waiting', !visioLive);
-  if (btn) btn.className = 'chip-btn pip-visio ' + (visioLive ? 'toggle-on' : 'toggle-off');
-  if (face) {
-    face.hidden = !visioLive;
-    face.textContent = selfFacing;
+  // Le cadre n’existe que lorsque le contrôleur a activé la visio.
+  if (pip) {
+    pip.hidden = !visioLive;
+    pip.classList.remove('waiting');
   }
+  if (btn) btn.className = 'chip-btn ' + (visioLive ? 'toggle-on' : 'toggle-off');
+  if (face) face.textContent = selfFacing;
 }
 
 function stopSelfVisio() {

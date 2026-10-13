@@ -676,6 +676,15 @@ body.live-page .page-head .head-refresh .lbl {
   font-size: 11px;
   font-weight: 600;
 }
+body.live-page .page-head-left {
+  grid-column: 1;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
 body.live-page .page-head-right {
   grid-column: 3;
   justify-self: end;
@@ -685,6 +694,28 @@ body.live-page .page-head-right {
   flex-wrap: wrap;
   min-width: 0;
   max-width: 100%;
+}
+body.controller-page .page-head {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+body.controller-page .page-head h1 {
+  text-align: center;
+  justify-self: center;
+}
+body.controller-page .page-head-right {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+body.controller-page .page-head-left .status {
+  text-align: left;
+  white-space: nowrap;
+}
+body.controller-page .page-head-left .battery-badge {
+  min-height: 22px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 999px;
 }
 body.live-page .page-head h1 {
   grid-column: 2;
@@ -707,8 +738,12 @@ body.live-page .status {
   font-weight: 600;
   line-height: 1.2;
   white-space: normal;
-  text-align: right;
+  text-align: left;
   overflow: hidden;
+}
+body.live-page .page-head .peers-pop {
+  left: 0;
+  right: auto;
 }
 body.live-page .card.live-card {
   flex: 1 1 auto;
@@ -772,8 +807,9 @@ body.live-page .live-wrap canvas {
   inset: 0;
   width: 100%;
   height: 100%;
-  /* contain = image entière (évite la vue « coupée en 2 ») */
-  object-fit: contain;
+  /* cover : le flux du récepteur remplit le cadre, sans bandes noires sur les côtés */
+  object-fit: cover;
+  object-position: center;
   border-radius: 14px;
   background: #000;
 }
@@ -1165,8 +1201,10 @@ button.chip-btn.sync-on,
   left: 0;
   right: 0;
   bottom: 0;
-  height: 22px;
+  height: 44px;
   z-index: 6;
+  touch-action: none;
+  cursor: ns-resize;
   background: linear-gradient(180deg, transparent, rgba(0,0,0,.45));
 }
 .flux-grab::after {
