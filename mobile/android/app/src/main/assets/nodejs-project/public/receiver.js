@@ -132,8 +132,8 @@ let recordedChunks = [];
 let micOn = false;
 let talkSoundOn = true;
 let alarmSoundOn = true;
-// WebView Android : l'annulation d'écho rend souvent la piste muette.
-// Le gain automatique reste allumé, sinon le micro du récepteur part trop bas.
+// WebView Android : l'annulation d'écho du navigateur rend souvent la piste muette.
+// Le retour haut-parleur est retiré dans talk-pcm.js. Le gain automatique reste allumé.
 const MIC_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 };
 
 socket.on('active-code', ({ code: next } = {}) => {
