@@ -502,21 +502,25 @@ video { width: 100%; border-radius: 12px; background: #000; }
   flex-direction: column; color: #111; z-index: 999; text-align: center; padding: 20px;
 }
 .alarm-banner h2 { font-size: 28px; }
+body.controller-page .card.live-card { position: relative; }
 body.controller-page .alarm-banner {
-  position: relative;
-  inset: auto;
-  z-index: 5;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 30;
   width: auto;
   max-height: none;
-  margin: 8px 0 0;
-  flex-shrink: 0;
+  margin: 0;
+  min-height: 72px;
   border-radius: 14px;
-  padding: 8px;
+  padding: 10px;
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  pointer-events: auto;
 }
 body.controller-page .alarm-banner .alarm-copy {
   min-width: 0;
