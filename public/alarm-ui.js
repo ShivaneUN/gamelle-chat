@@ -384,6 +384,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
       alarmMsg.textContent = desc || '(bip)';
     }
     if (banner) banner.style.display = 'flex';
+    document.body.classList.add('alarm-open');
     updateButtons();
     playAlarmAudio();
   }
@@ -432,6 +433,7 @@ function createAlarmControls({ socket, getMessages, playSound, isAudioUnlocked, 
     stopSound();
     alarmOn = false;
     if (banner) banner.style.display = 'none';
+    document.body.classList.remove('alarm-open');
     updateButtons();
   }
 
