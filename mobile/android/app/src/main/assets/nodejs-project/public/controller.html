@@ -91,6 +91,14 @@ function gamelleFluxSize(btn, ev) {
       </div>
       <button id="fluxSizeBtn" class="flux-size" type="button" aria-label="Agrandir" onclick="gamelleFluxSize(this, event)" ontouchstart="if(event.cancelable)event.preventDefault();event.stopPropagation();" ontouchend="gamelleFluxSize(this, event)" onpointerdown="if(event.cancelable)event.preventDefault();event.stopPropagation();" onpointerup="gamelleFluxSize(this, event)" style="position:absolute;z-index:40;left:50%;bottom:10px;width:44px;height:44px;margin:0 0 0 -22px;border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;pointer-events:auto;touch-action:manipulation"><svg class="ico-out" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><svg class="ico-in" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></button>
     </div>
+    <div id="alarmBanner" class="alarm-banner" style="display:none;">
+      <div class="alarm-copy">
+        <h2 id="alarmHeadline">C'est l'heure !</h2>
+        <p id="alarmMsg"></p>
+      </div>
+      <button id="stopAlarmBtn" type="button">Arrêter</button>
+    </div>
+    <p id="nextAlarm" class="next-alarm">Pas d’alarme programmée</p>
     <div class="under-flux" id="underFlux">
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -106,6 +114,7 @@ function gamelleFluxSize(btn, ev) {
         <button id="unlockMicBtn" class="tile-btn toggle-off" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
           <span class="lbl">Micro</span>
+          <span class="mic-level" aria-hidden="true"><span class="mic-level-bar"></span></span>
         </button>
         <button id="talkSoundBtn" class="tile-btn toggle-on" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -258,12 +267,6 @@ function gamelleFluxSize(btn, ev) {
     <div id="schedList"></div>
     <button class="ghost" id="addSched" type="button">+ Ajouter un horaire</button>
   </div>
-</div>
-
-<div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2 id="alarmHeadline">C'est l'heure !</h2>
-  <p id="alarmMsg"></p>
-  <button id="stopAlarmBtn">Arrêter maintenant</button>
 </div>
 
 <script>

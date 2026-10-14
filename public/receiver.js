@@ -611,6 +611,7 @@ async function startMicTalk(stream, ownsStream) {
   talkSendOwnsStream = !!ownsStream;
   talkCapture = await startTalkCapture(stream, ({ rate, samples }) => {
     if (!micOn) return;
+    if (typeof setMicLevel === 'function') setMicLevel(samples);
     socket.emit('talk-audio', { rate, samples, target: window.__gamelleTarget || '' });
   });
 }
@@ -623,6 +624,7 @@ function stopMicTalk() {
   }
   talkSendStream = null;
   talkSendOwnsStream = false;
+  if (typeof clearMicLevel === 'function') clearMicLevel();
 }
 
 // --- Caméra locale : activer / désactiver ---

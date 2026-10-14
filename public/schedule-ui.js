@@ -247,7 +247,39 @@ function isEveryDay(days) {
   return normalizeDays(days).length === 7;
 }
 
-function createScheduleManager({ containerId, socket, getMessages }) {
+function nextAlarmLabel(list, now) {
+  const names = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+  const when = now instanceof Date ? now : new Date();
+  const minuteNow = when.getTime() - (when.getSeconds() * 1000 + when.getMilliseconds());
+  let best = null;
+  (list || []).forEach((s) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String((s && s.time) || '').trim());
+    if (!m) return;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return;
+    const days = normalizeDays(s.days);
+    for (let add = 0; add < 8; add++) {
+      const d = new Date(when.getFullYear(), when.getMonth(), when.getDate() + add, h, min, 0, 0);
+      if (d.getTime() < minuteNow) continue;
+      if (!days.includes(d.getDay())) continue;
+      if (!best || d.getTime() < best.getTime()) best = d;
+      break;
+    }
+  });
+  if (!best) return 'Pas d’alarme programmée';
+  const hh = String(best.getHours()).padStart(2, '0');
+  const mm = String(best.getMinutes()).padStart(2, '0');
+  const hhmm = hh + ':' + mm;
+  const start = new Date(when.getFullYear(), when.getMonth(), when.getDate());
+  const dayStart = new Date(best.getFullYear(), best.getMonth(), best.getDate());
+  const diff = Math.round((dayStart.getTime() - start.getTime()) / 86400000);
+  if (diff === 0) return 'Prochaine alarme · aujourd’hui ' + hhmm;
+  if (diff === 1) return 'Prochaine alarme · demain ' + hhmm;
+  return 'Prochaine alarme · ' + names[best.getDay()] + ' ' + hhmm;
+}
+
+function createScheduleManager({ containerId, socket, getMessages, onChange }) {
   const container = document.getElementById(containerId);
   let schedules = [];
 
@@ -280,6 +312,12 @@ function createScheduleManager({ containerId, socket, getMessages }) {
     }
     schedules = next;
     render();
+    notify();
+  }
+
+  function notify() {
+    if (typeof onChange !== 'function') return;
+    try { onChange(schedules); } catch (e) {}
   }
 
   function refreshPickers() {
@@ -446,6 +484,7 @@ function createScheduleManager({ containerId, socket, getMessages }) {
 
   function save() {
     socket.emit('update-schedules', schedules);
+    notify();
   }
 
   function assignAll(messageId) {
@@ -463,7 +502,7 @@ function createScheduleManager({ containerId, socket, getMessages }) {
     render();
   }
 
-  return { setSchedules, addSchedule, save, render, assignAll };
+  return { setSchedules, addSchedule, save, render, assignAll, getSchedules: () => schedules };
 }
 
 function setModalExpanded(sheet, on) {
