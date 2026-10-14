@@ -91,14 +91,9 @@ function gamelleFluxSize(btn, ev) {
       </div>
       <button id="fluxSizeBtn" class="flux-size" type="button" aria-label="Agrandir" onclick="gamelleFluxSize(this, event)" ontouchstart="if(event.cancelable)event.preventDefault();event.stopPropagation();" ontouchend="gamelleFluxSize(this, event)" onpointerdown="if(event.cancelable)event.preventDefault();event.stopPropagation();" onpointerup="gamelleFluxSize(this, event)" style="position:absolute;z-index:40;left:50%;bottom:10px;width:44px;height:44px;margin:0 0 0 -22px;border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;pointer-events:auto;touch-action:manipulation"><svg class="ico-out" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><svg class="ico-in" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></button>
     </div>
-    <div id="alarmBanner" class="alarm-banner" style="display:none;">
-      <div class="alarm-copy">
-        <h2 id="alarmHeadline">C'est l'heure !</h2>
-        <p id="alarmMsg"></p>
-      </div>
-      <button id="stopAlarmBtn" type="button">Arrêter</button>
-    </div>
+    <div class="btn-stack" id="btnStack">
     <p id="nextAlarm" class="next-alarm">Pas d’alarme programmée</p>
+    <div class="btn-cover" id="btnCover">
     <div class="under-flux" id="underFlux">
     <div class="volume-row" id="recvVolumeRow">
       <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -145,6 +140,15 @@ function gamelleFluxSize(btn, ev) {
           <span class="lbl">Caméras</span>
         </button>
       </div>
+    </div>
+    </div>
+    <div id="alarmBanner" class="alarm-banner" style="display:none;">
+      <div class="alarm-copy">
+        <h2 id="alarmHeadline">C'est l'heure !</h2>
+        <p id="alarmMsg"></p>
+      </div>
+      <button id="stopAlarmBtn" type="button">Arrêter</button>
+    </div>
     </div>
     </div>
   </div>
