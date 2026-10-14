@@ -1676,6 +1676,13 @@ io.on('connection', (socket) => {
     emitToRole(socket.data.code, 'controller', 'nearby', room.nearby);
   });
 
+  socket.on('request-link', () => {
+    if (socket.data.role !== 'controller' || !socket.data.code) return;
+    const room = getRoom(socket.data.code);
+    if (room.pairUrl) socket.emit('link-share', { url: room.pairUrl });
+    else emitToRole(socket.data.code, 'receiver', 'request-link', {});
+  });
+
   socket.on('link-share', ({ url } = {}) => {
     if (socket.data.role !== 'receiver' || !socket.data.code || !isLocalRequest(socket.request)) return;
     const clean = String(url || '').trim();

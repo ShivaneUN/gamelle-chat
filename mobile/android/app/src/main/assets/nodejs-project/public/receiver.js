@@ -1444,11 +1444,11 @@ function startBatteryWatch() {
       '<div class="device-row"><div class="device-name"><b>' + r.name + '</b>' +
       '<button type="button" class="rename-btn" data-act="rename" data-id="' + r.id + '" title="Renommer">' + pencil + '</button>' +
       '<span class="status-dot' + (r.on ? ' on' : '') + '" title="' + (r.on ? 'En ligne' : 'Hors ligne') + '"></span></div>' +
-      '<div class="link-row">' +
+      '<div class="device-actions">' +
       '<button type="button" class="' + (flags.torch ? 'sync-on' : 'sync-off') + '" data-act="torch" data-id="' + r.id + '">Lampe</button>' +
       '<button type="button" class="' + (flags.screen ? 'sync-on' : 'sync-off') + '" data-act="screen" data-id="' + r.id + '">Écran</button>' +
       '<button type="button" class="' + (micOn ? 'sync-on' : 'sync-off') + '" data-act="mic" data-id="' + r.id + '">Micro</button>' +
-      (r.id === 'cam2' ? '<button type="button" class="sync-off" data-act="drop" data-id="cam2">Retirer</button>' : '') +
+      (r.id === 'cam2' ? '<button type="button" class="sync-off device-drop" data-act="drop" data-id="cam2">Retirer</button>' : '') +
       '</div></div>'
     )).join('');
     const live2 = document.getElementById('cam2Live');
@@ -1623,13 +1623,7 @@ function startBatteryWatch() {
   }
   const showQr = document.getElementById('showLinkQr');
   if (showQr) showQr.onclick = showLinkQrImg;
-  const guestOk = document.getElementById('guestOk');
-  if (guestOk) {
-    guestOk.onclick = () => {
-      const guest = (document.getElementById('guestInput').value || '').trim();
-      if (guest) socket.emit('accept-guest', { guest });
-    };
-  }
+  socket.on('request-link', () => { loadLink(); });
   const simBtn = document.getElementById('simultBtn');
   if (simBtn) simBtn.onclick = () => { simult = !simult; paint(); };
   const ensBtn = document.getElementById('ensembleBtn');
