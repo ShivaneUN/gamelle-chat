@@ -832,7 +832,20 @@ const msgLibrary = createMessageLibrary({
 document.getElementById('addMsg').onclick = () => msgLibrary.addMessage();
 
 // --- Horaires (composant partagé avec le récepteur, référence la bibliothèque de messages) ---
-const schedManager = createScheduleManager({ containerId: 'schedList', socket, getMessages: msgLibrary.getMessages });
+function paintNextAlarm(list) {
+  const el = document.getElementById('nextAlarm');
+  if (!el || typeof nextAlarmLabel !== 'function') return;
+  const src = list || (schedManager && schedManager.getSchedules ? schedManager.getSchedules() : []);
+  el.textContent = nextAlarmLabel(src, new Date());
+}
+const schedManager = createScheduleManager({
+  containerId: 'schedList',
+  socket,
+  getMessages: msgLibrary.getMessages,
+  onChange: paintNextAlarm,
+});
+paintNextAlarm();
+setInterval(paintNextAlarm, 20000);
 document.getElementById('addSched').onclick = () => schedManager.addSchedule();
 
 // --- Alarme manuelle : le son joue sur le récepteur, le contrôleur voit l'état et peut arrêter ---
@@ -1295,6 +1308,7 @@ async function startTalk() {
     startMicAckWatch();
     talkCapture = await startTalkCapture(talkStream, ({ rate, samples }) => {
       if (!talking) return;
+      if (typeof setMicLevel === 'function') setMicLevel(samples);
       socket.emit('talk-audio', { rate, samples, target: controlTarget() });
     });
     renderMicStatus('granted');
@@ -1305,6 +1319,7 @@ async function startTalk() {
     talkCapture = null;
     if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
     talkStream = null;
+    if (typeof clearMicLevel === 'function') clearMicLevel();
     if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
     refreshMicStatus();
     alert('Micro indisponible: ' + err.message);
@@ -1318,6 +1333,7 @@ function stopTalk() {
   talkCapture = null;
   if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
   talkStream = null;
+  if (typeof clearMicLevel === 'function') clearMicLevel();
   renderMicStatus('granted');
 }
 

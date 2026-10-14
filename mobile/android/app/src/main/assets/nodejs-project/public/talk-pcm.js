@@ -565,8 +565,31 @@
   global.stopTalkCapture = stopTalkCapture;
   global.playTalkPcm = playTalkPcm;
   global.setTalkGainBoost = setTalkGainBoost;
+  function setMicLevel(samples) {
+    const bar = document.querySelector('#unlockMicBtn .mic-level-bar');
+    if (!bar || !samples || !samples.length) return;
+    let energy = 0;
+    let n = 0;
+    const step = Math.max(1, Math.floor(samples.length / 180));
+    for (let i = 0; i < samples.length; i += step) {
+      const v = samples[i] / 32768;
+      energy += v * v;
+      n++;
+    }
+    const rms = Math.sqrt(energy / Math.max(1, n));
+    const pct = Math.max(6, Math.min(100, Math.round(Math.sqrt(rms) * 180)));
+    bar.style.width = pct + '%';
+  }
+
+  function clearMicLevel() {
+    const bar = document.querySelector('#unlockMicBtn .mic-level-bar');
+    if (bar) bar.style.width = '0%';
+  }
+
   global.setTalkPlaybackVolume = setTalkPlaybackVolume;
   global.getTalkPlaybackVolume = getTalkPlaybackVolume;
+  global.setMicLevel = setMicLevel;
+  global.clearMicLevel = clearMicLevel;
   global.__gamelleEcho = {
     reset: resetEchoState,
     push: pushEchoRef,
