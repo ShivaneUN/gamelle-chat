@@ -1454,7 +1454,20 @@ async function saveMediaToDevice(url, name, type) {
 (function setupCtrlDevices() {
   const listEl = document.getElementById('ctrlDeviceList');
   const openBtn = document.getElementById('openDevicesBtn');
-  if (openBtn) openBtn.onclick = () => openModal('devicesModal');
+  function paintQr() {
+    if (!qrImg || !pairUrl || typeof makeQrDataUrl !== 'function') return;
+    try {
+      qrImg.src = makeQrDataUrl(pairUrl, 8, 4);
+      qrImg.hidden = false;
+    } catch (e) {
+      qrImg.hidden = true;
+    }
+  }
+  if (openBtn) openBtn.onclick = () => {
+    openModal('devicesModal');
+    socket.emit('request-link');
+    paintQr();
+  };
   const nearbyEl = document.getElementById('ctrlNearbyList');
   const qrImg = document.getElementById('ctrlLinkQrImg');
   let pairUrl = '';
@@ -1494,29 +1507,8 @@ async function saveMediaToDevice(url, name, type) {
   socket.on('nearby', paintNearby);
   socket.on('link-share', (msg) => {
     pairUrl = (msg && msg.url) || '';
-    if (qrImg && !qrImg.hidden && pairUrl && typeof makeQrDataUrl === 'function') {
-      try { qrImg.src = makeQrDataUrl(pairUrl, 8, 4); } catch (e) {}
-    }
+    paintQr();
   });
-  const showQr = document.getElementById('ctrlShowLinkQr');
-  if (showQr) {
-    showQr.onclick = () => {
-      if (!qrImg || !pairUrl || typeof makeQrDataUrl !== 'function') return;
-      try {
-        qrImg.src = makeQrDataUrl(pairUrl, 8, 4);
-        qrImg.hidden = false;
-      } catch (e) {
-        qrImg.hidden = true;
-      }
-    };
-  }
-  const guestOk = document.getElementById('ctrlGuestOk');
-  if (guestOk) {
-    guestOk.onclick = () => {
-      const guest = (document.getElementById('ctrlGuestInput').value || '').trim();
-      if (guest) socket.emit('accept-guest', { guest: guest });
-    };
-  }
   window.__paintCtrlDevices = function () {
     if (!listEl) return;
     const snap = window.__deviceSnap || { main: true, satellite: false, names: window.__deviceNames || {} };
@@ -1530,7 +1522,7 @@ async function saveMediaToDevice(url, name, type) {
       '<div class="device-row"><div class="device-name"><b>' + r.name + '</b>' +
       '<button type="button" class="rename-btn" data-act="rename" data-id="' + r.id + '" title="Renommer">' + pencil + '</button>' +
       '<span class="status-dot' + (r.on ? ' on' : '') + '" title="' + (r.on ? 'En ligne' : 'Hors ligne') + '"></span></div>' +
-      '<div class="link-row">' +
+      '<div class="device-actions">' +
       '<button type="button" class="' + (flashOn ? 'sync-on' : 'sync-off') + '" data-act="torch" data-id="' + r.id + '">Lampe</button>' +
       '<button type="button" class="' + (recvScreenOn ? 'sync-on' : 'sync-off') + '" data-act="screen" data-id="' + r.id + '">Écran</button>' +
       '<button type="button" class="' + (talking ? 'sync-on' : 'sync-off') + '" data-act="mic" data-id="' + r.id + '">Micro</button>' +

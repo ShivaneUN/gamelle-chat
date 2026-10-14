@@ -273,6 +273,9 @@ def stage_public(stage: Path) -> None:
     if public_root.exists():
         shutil.rmtree(public_root)
     shutil.copytree(PUBLIC, public_root)
+    server_dest = stage / "assets/nodejs-project/server.js"
+    server_dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "server.js", server_dest)
 
 
 def build_apk(base_apk: Path, version: str, version_code: int, out_apk: Path) -> None:
@@ -291,7 +294,7 @@ def build_apk(base_apk: Path, version: str, version_code: int, out_apk: Path) ->
     pkg_path = stage / "assets/nodejs-project/package.json"
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
     pkg_path.write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
-    names = ["AndroidManifest.xml", "assets/nodejs-project/package.json"]
+    names = ["AndroidManifest.xml", "assets/nodejs-project/package.json", "assets/nodejs-project/server.js"]
     for p in (stage / "assets/nodejs-project/public").rglob("*"):
         if p.is_file():
             names.append(p.relative_to(stage).as_posix())
@@ -329,6 +332,12 @@ def verify_apk(base_apk: Path, new_apk: Path, version: str, version_code: int) -
         raise SystemExit("package.json de l’APK n’a pas la nouvelle version")
     if b"cleanIncomingEcho" not in js and (PUBLIC / "talk-pcm.js").read_bytes().find(b"cleanIncomingEcho") >= 0:
         raise SystemExit("talk-pcm.js de l’APK n’est pas à jour")
+    with zipfile.ZipFile(new_apk) as z:
+        packed_server = z.read("assets/nodejs-project/server.js")
+    if b"request-link" not in packed_server and (ROOT / "server.js").read_bytes().find(b"request-link") >= 0:
+        raise SystemExit("server.js de l’APK n’est pas à jour")
+    if b"ACCOUNTS_RESET_ID = '0.1.29'" not in packed_server:
+        raise SystemExit("ACCOUNTS_RESET_ID a changé")
     with zipfile.ZipFile(base_apk) as old, zipfile.ZipFile(new_apk) as new:
         libs = [i.filename for i in old.infolist() if i.filename.startswith("lib/") and i.filename.endswith(".so")]
         for name_lib in libs:
