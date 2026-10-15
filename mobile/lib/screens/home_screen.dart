@@ -225,14 +225,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _leftMode = _LeftMode.qr);
   }
 
-  Future<void> _copy(String value, {String done = 'Lien copié'}) async {
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(done)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -331,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _pairingPanel({required bool expand}) {
-    final remote = _bridge.scannableQrUrl ?? _bridge.publicUrl;
+    final remote = _bridge.scannableQrUrl;
     final qrSize = expand ? 260.0 : 220.0;
     final Widget qr;
     if (!_bridge.tunnelEnabled) {
@@ -356,15 +348,12 @@ class _HomeScreenState extends State<HomeScreen> {
         child: const Center(child: CircularProgressIndicator(color: _accent)),
       );
     } else {
-      qr = GestureDetector(
-        onTap: () => _copy(remote),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFFFFF),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: ScanQr(data: remote, size: qrSize),
+      qr = DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFFFF),
+          borderRadius: BorderRadius.circular(18),
         ),
+        child: ScanQr(data: remote, size: qrSize),
       );
     }
 
@@ -376,14 +365,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 16),
         if (expand) Expanded(child: Center(child: qr)) else Center(child: qr),
-        if (remote != null) ...[
-          const SizedBox(height: 12),
-          SelectableText(
-            remote,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: _muted, fontSize: 12, height: 1.3),
-          ),
-        ],
         const SizedBox(height: 14),
         Wrap(
           alignment: WrapAlignment.center,
