@@ -192,6 +192,20 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
+  Future<bool> _portOpen(int port) async {
+    try {
+      final socket = await Socket.connect(
+        '127.0.0.1',
+        port,
+        timeout: const Duration(seconds: 1),
+      );
+      socket.destroy();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _pollUntilListening() async {
     if (_pollStarted) return;
     _pollStarted = true;
@@ -201,8 +215,16 @@ class NodeBridgeService {
       }
       ..connectionTimeout = const Duration(seconds: 2);
     try {
-      for (var i = 0; i < 50; i++) {
+      // Jusqu’~60s : génération cert 2048 bits possible au 1er boot.
+      for (var i = 0; i < 120; i++) {
         if (status == NodeStatus.running) return;
+        // TCP d’abord (plus fiable que HTTPS pendant le boot).
+        if (await _portOpen(3000) || await _portOpen(3001)) {
+          if (status != NodeStatus.running) {
+            _emit('node', 'LISTENING');
+          }
+          return;
+        }
         try {
           final req = await client.getUrl(Uri.parse('https://127.0.0.1:3000'));
           final res = await req.close().timeout(const Duration(seconds: 3));
@@ -212,7 +234,7 @@ class NodeBridgeService {
           }
           return;
         } catch (_) {
-          await Future<void>.delayed(const Duration(milliseconds: 400));
+          await Future<void>.delayed(const Duration(milliseconds: 500));
         }
       }
       if (status != NodeStatus.running && status != NodeStatus.error) {
@@ -355,6 +377,11 @@ class NodeBridgeService {
     try {
       await const MethodChannel('gamelle/github').invokeMethod<void>('applyOverlay');
     } catch (_) {}
+    // Coupe une éventuelle instance zombie qui occupe :3000.
+    try {
+      await const MethodChannel('gamelle/github').invokeMethod<void>('stopNode');
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 500));
     try {
       try {
         await Nodejs.startService(

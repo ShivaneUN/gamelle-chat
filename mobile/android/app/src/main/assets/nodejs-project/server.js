@@ -65,6 +65,8 @@ function generateCert() {
 }
 
 if (!fs.existsSync(KEY_PATH) || !fs.existsSync(CERT_PATH)) {
+  console.log('Génération du certificat HTTPS (peut prendre quelques secondes)…');
+  try { notifyFlutter('node', 'STARTING cert'); } catch (e) {}
   generateCert();
   console.log('Certificat HTTPS généré (uniquement au premier démarrage).');
 }
@@ -107,17 +109,26 @@ const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const SESSION_COOKIE = 'gamelle_session';
 const SESSION_MAX_AGE_SEC = 365 * 24 * 3600;
-copyDirIfMissing(path.join(__dirname, 'uploads', 'receiver'), RECEIVER_DIR);
-copyDirIfMissing(path.join(__dirname, 'uploads', 'controller'), CONTROLLER_DIR);
-copyDirIfMissing(path.join(__dirname, 'uploads', 'audio'), AUDIO_DIR);
-copyDirIfMissing(path.join(__dirname, 'data'), DATA_DIR);
-copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'data'), DATA_DIR);
-copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'receiver'), RECEIVER_DIR);
-copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'controller'), CONTROLLER_DIR);
-copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'audio'), AUDIO_DIR);
+// Dossiers tout de suite ; copies lourdes (média trash) APRÈS listen pour ne pas
+// dépasser le timeout Flutter « Node n’écoute pas ».
 [RECEIVER_DIR, CONTROLLER_DIR, AUDIO_DIR, DATA_DIR].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
+copyDirIfMissing(path.join(__dirname, 'data'), DATA_DIR);
+
+function migrateMediaInBackground() {
+  try {
+    copyDirIfMissing(path.join(__dirname, 'uploads', 'receiver'), RECEIVER_DIR);
+    copyDirIfMissing(path.join(__dirname, 'uploads', 'controller'), CONTROLLER_DIR);
+    copyDirIfMissing(path.join(__dirname, 'uploads', 'audio'), AUDIO_DIR);
+    copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'data'), DATA_DIR);
+    copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'receiver'), RECEIVER_DIR);
+    copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'controller'), CONTROLLER_DIR);
+    copyDirIfMissing(path.join(__dirname, '..', 'nodejs-project-trash', 'uploads', 'audio'), AUDIO_DIR);
+  } catch (e) {
+    console.warn('Migration média:', e && e.message ? e.message : e);
+  }
+}
 
 function roomWeight(room) {
   if (!room) return 0;
@@ -1466,7 +1477,10 @@ server.on('error', (err) => {
   } catch (e) {}
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+function onHttpsListening() {
+  // Signal direct à Flutter (ne dépend pas du parse de console.log).
+  try { notifyFlutter('node', 'LISTENING'); } catch (e) {}
+  setImmediate(migrateMediaInBackground);
   const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
   console.log(`Sur la tablette (récepteur) : https://localhost:${PORT}`);
@@ -1480,7 +1494,9 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
     startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
-});
+}
+
+server.listen(PORT, '0.0.0.0', onHttpsListening);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
