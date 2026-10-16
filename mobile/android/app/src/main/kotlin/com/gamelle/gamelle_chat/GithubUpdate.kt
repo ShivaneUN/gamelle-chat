@@ -26,6 +26,13 @@ object GithubUpdate {
         if (f.exists()) f.delete()
     }
 
+    /** true si [remote] est une version strictement plus récente que [local]. */
+    fun remoteIsNewer(remote: String, local: String): Boolean = isNewer(remote, local)
+
+    fun mixedDomainMessage(newerVersion: String): String {
+        return "Domaine coupé : un autre appareil sur ce domaine est en ${display(newerVersion)}. La même version est nécessaire pour le partager."
+    }
+
     fun localTag(filesDir: File, installedVersion: String): String {
         // Source de vérité = version installée de l’APK. version.json est un cache,
         // jamais plus “avancé” que le package (évite un faux “déjà à jour”).
@@ -58,15 +65,35 @@ object GithubUpdate {
         )
     }
 
-    fun applyStoredOverlay(filesDir: File) {
+    fun applyStoredOverlay(filesDir: File, installedVersion: String = "") {
         val ota = otaDir(filesDir)
         if (!ota.exists()) return
-        // Les Maj sont des APK complets : un ancien overlay OTA (zip) ne doit
-        // plus écraser server.js / public/ au démarrage (serveur cassé / pas de lien).
+        val installed = installedVersion.trim()
+        var otaTag = ""
         try {
-            ota.deleteRecursively()
+            val vf = versionFile(filesDir)
+            if (vf.exists()) {
+                otaTag = JSONObject(vf.readText(StandardCharsets.UTF_8)).optString("tag").orEmpty()
+            }
         } catch (_: Exception) {
         }
+        // Si l’APK installé est déjà ≥ overlay OTA, on jette l’overlay (évite de downgrader server.js).
+        if (installed.isNotBlank() && otaTag.isNotBlank() && !isNewer(otaTag, installed)) {
+            try {
+                ota.deleteRecursively()
+            } catch (_: Exception) {
+            }
+            return
+        }
+        if (installed.isNotBlank() && otaTag.isBlank()) {
+            // Overlay sans version connue + APK frais → trop risqué, on ignore.
+            try {
+                ota.deleteRecursively()
+            } catch (_: Exception) {
+            }
+            return
+        }
+        copyWanted(ota, nodeDir(filesDir))
     }
 
     fun status(filesDir: File, installedVersion: String): Map<String, Any?> {

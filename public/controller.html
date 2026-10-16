@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Cache-Control" content="no-store">
+<meta name="gamelle-page" content="controller">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gamelle">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Contrôleur - Gamelle Chat</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -13,32 +18,90 @@
 <meta property="og:image" content="/logo.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="/logo.png">
-<link rel="stylesheet" href="/style.css?v=45">
+<link rel="stylesheet" href="/style.css?v=59">
+<script>
+if (!window.__gamelleFluxGuardBound) {
+  window.__gamelleFluxGuardBound = 1;
+  document.addEventListener('click', function (ev) {
+    if (Date.now() < (window.__gamelleFluxGuard || 0)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, true);
+}
+function gamelleFluxSize(btn, ev) {
+  window.__gamelleFluxGuard = Date.now() + 700;
+  if (ev) {
+    if (ev.cancelable) ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
+  }
+  if (!btn || btn.getAttribute('data-lock') === '1') return;
+  btn.setAttribute('data-lock', '1');
+  setTimeout(function () { btn.removeAttribute('data-lock'); }, 450);
+  var card = btn.closest && btn.closest('.live-card');
+  var under = document.getElementById('underFlux');
+  if (!card || !under) return;
+  var on = !card.classList.contains('flux-collapsed');
+  card.classList.toggle('flux-collapsed', on);
+  if (on) under.style.setProperty('display', 'none', 'important');
+  else under.style.removeProperty('display');
+  btn.classList.toggle('is-on', on);
+  btn.setAttribute('aria-label', on ? 'Réduire' : 'Agrandir');
+}
+</script>
 </head>
-<body class="live-page">
+<body class="live-page controller-page">
 <div class="wrap screen-fit">
   <div class="page-head">
+    <button id="refreshBtn" class="chip-btn head-refresh" type="button" title="Actualiser" aria-label="Actualiser">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+      <span class="lbl">Refresh</span>
+    </button>
     <h1>Contrôleur</h1>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <div id="status" class="status off">Hors ligne</div>
+    <div class="page-head-right">
       <button id="logoutBtn" class="chip-btn" type="button">Déconnexion</button>
     </div>
   </div>
 
   <div class="card live-card">
     <div class="live-head">
-      <h3 class="card-title">Vue en direct <span id="camDot" class="cam-dot" title="Caméra éteinte"></span></h3>
+      <div class="flux-meta">
+        <span id="camDot" class="cam-dot" title="Vue en direct"></span>
+        <div class="status-wrap">
+          <div id="status" class="status off">Hors ligne</div>
+          <div id="peersPop" class="peers-pop" hidden></div>
+        </div>
+        <span id="recvBattery" class="battery-badge off" title="Batterie du récepteur">—%</span>
+      </div>
       <div class="live-chips">
         <button id="facingBtn" class="chip-btn" type="button">Arrière</button>
+        <button id="visioWantBtn" class="chip-btn toggle-off" type="button">Visio</button>
         <button id="flashBtn" class="chip-btn toggle-off" type="button">Flash</button>
-        <span id="recvBattery" class="battery-badge off" title="Batterie du Récepteur">—%</span>
       </div>
     </div>
     <select id="cameraSelect" style="display:none;"></select>
-    <div class="live-wrap">
+    <div class="live-wrap" id="fluxWrap">
       <img id="livePlaceholder" class="live-placeholder on" src="/logo.png" alt="Gamelle Chat">
       <video id="remoteVideo" autoplay playsinline></video>
       <img id="remoteRelay" alt="Vue live">
+      <img id="cam2Relay" class="cam2-relay" alt="Caméra 2">
+      <div id="selfPip" class="self-pip" hidden>
+        <video id="selfVideo" autoplay playsinline muted></video>
+        <button id="selfFacingBtn" class="chip-btn pip-face" type="button">Avant</button>
+      </div>
+      <button id="fluxSizeBtn" class="flux-size" type="button" aria-label="Agrandir" onclick="gamelleFluxSize(this, event)" ontouchstart="if(event.cancelable)event.preventDefault();event.stopPropagation();" ontouchend="gamelleFluxSize(this, event)" onpointerdown="if(event.cancelable)event.preventDefault();event.stopPropagation();" onpointerup="gamelleFluxSize(this, event)" style="position:absolute;z-index:40;left:50%;bottom:10px;width:44px;height:44px;margin:0 0 0 -22px;border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;pointer-events:auto;touch-action:manipulation"><svg class="ico-out" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><svg class="ico-in" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>
+    <div class="btn-stack" id="btnStack">
+    <p id="nextAlarm" class="next-alarm">Pas d’alarme programmée</p>
+    <div class="btn-cover" id="btnCover">
+    <div class="under-flux" id="underFlux">
+    <div class="volume-row" id="recvVolumeRow">
+      <svg class="volume-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
+      <div class="volume-main">
+        <div class="volume-lab">Volume récepteur</div>
+        <input id="recvVolume" type="range" min="0" max="100" value="70" aria-label="Volume récepteur">
+      </div>
+      <span class="volume-pct" id="recvVolumePct">70%</span>
     </div>
     <p id="liveHint" class="hint">En attente de la caméra du récepteur…</p>
     <div class="stack-gap">
@@ -46,6 +109,7 @@
         <button id="unlockMicBtn" class="tile-btn toggle-off" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
           <span class="lbl">Micro</span>
+          <span class="mic-level" aria-hidden="true"><span class="mic-level-bar"></span></span>
         </button>
         <button id="talkSoundBtn" class="tile-btn toggle-on" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
@@ -67,13 +131,34 @@
         </button>
         <button id="screenOffBtn" class="tile-btn toggle-on" type="button">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="m3 3 18 18"/></svg>
-          <span class="lbl">Écran off</span>
+          <span class="lbl">Écran</span>
+        </button>
+      </div>
+      <div id="deviceBar" class="tile-row cols-3">
+        <button type="button" id="simultCtrl" class="tile-btn" data-kind="tile" title="Affiche toutes les caméras">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
+          <span class="lbl">Caméras</span>
         </button>
       </div>
     </div>
+    </div>
+    <div id="alarmBanner" class="alarm-banner" style="display:none;">
+      <div class="alarm-copy">
+        <h2 id="alarmHeadline">C'est l'heure !</h2>
+        <p id="alarmMsg"></p>
+      </div>
+      <button id="stopAlarmBtn" type="button">Arrêter</button>
+    </div>
+    </div>
+    </div>
   </div>
 
+  <p class="server-ver" style="flex-shrink:0;margin:0;text-align:center;font-size:12px;line-height:1.2;color:#9aa;">Serveur <!--SERVER_VER--></p>
   <nav class="dock">
+    <button id="openDevicesBtn" class="dock-btn" type="button">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="8" height="14" rx="1"/><rect x="14" y="7" width="8" height="11" rx="1"/></svg>
+      <span class="lbl">Appareils</span>
+    </button>
     <button id="openAlbumBtn" class="dock-btn" type="button">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
       <span class="lbl">Album</span>
@@ -93,6 +178,26 @@
   </nav>
 </div>
 
+<div id="devicesModal" class="modal" hidden>
+  <div class="modal-backdrop" data-close="devicesModal"></div>
+  <div class="modal-sheet" role="dialog" aria-labelledby="devicesTitle">
+    <div class="modal-head">
+      <h2 id="devicesTitle">Appareils</h2>
+      <button type="button" class="ghost modal-close" data-close="devicesModal">Fermer</button>
+    </div>
+    <p class="hint">Jumelage caméra. La tablette cherche les appareils sur le Wi-Fi.</p>
+    <div id="ctrlNearbyList" class="device-list"></div>
+    <img id="ctrlLinkQrImg" alt="QR de jumelage" class="link-qr" hidden>
+    <p class="sync-legend">Synchronisation</p>
+    <div class="link-row">
+      <button id="ctrlCamBtn" class="chip-btn sync-off" type="button" title="Caméras en même temps">Caméra</button>
+      <button id="ctrlSyncBtn" class="chip-btn sync-off" type="button" title="Lampe, écran et micro ensemble">Bouton</button>
+      <button id="ctrlMediaBtn" class="chip-btn sync-off" type="button" title="Photo et vidéo sur tous les appareils">Média</button>
+    </div>
+    <div id="ctrlDeviceList" class="device-list"></div>
+  </div>
+</div>
+
 <div id="albumModal" class="modal" hidden>
   <div class="modal-backdrop" data-close="albumModal"></div>
   <div class="modal-sheet" role="dialog" aria-labelledby="albumTitle">
@@ -103,7 +208,7 @@
         <button type="button" class="ghost modal-close" data-close="albumModal">Fermer</button>
       </div>
     </div>
-    <p class="hint">Photos et vidéos (auto-supprimées après 24h).</p>
+    <p class="hint">Photos et vidéos (copie auto-supprimée après 24h). ↓ = télécharger · ✕ = retirer de ta galerie.</p>
     <div id="gallery" class="gallery"></div>
   </div>
 </div>
@@ -132,6 +237,8 @@
       <button type="button" class="ghost modal-close" data-close="alarmModal">Fermer</button>
     </div>
     <p class="hint lib-sync-hint">Son 1 puis son 2 à la suite, répétés pendant la durée. Synchronisé.</p>
+    <label class="sched-sound-lab" for="alarmHeadlineInput">Texte affiché</label>
+    <input id="alarmHeadlineInput" type="text" maxlength="40" value="C'est l'heure !">
     <label class="sched-sound-lab">Son 1</label>
     <div id="manualAlarmSound1" class="sound-picker"></div>
     <label class="sched-sound-lab">Son 2 (ensuite)</label>
@@ -161,19 +268,38 @@
   </div>
 </div>
 
-<div id="alarmBanner" class="alarm-banner" style="display:none;">
-  <h2>Alarme en cours</h2>
-  <p id="alarmMsg"></p>
-  <button id="stopAlarmBtn">Arrêter maintenant</button>
-</div>
-
+<script>
+(function () {
+  var CACHE = 'gamelle-controller-v2';
+  function keep(cache) {
+    return fetch('/controller.html', { credentials: 'same-origin', cache: 'reload' }).then(function (res) {
+      if (!res || !res.ok) return;
+      return res.text().then(function (text) {
+        if (text.indexOf('name="gamelle-page" content="controller"') < 0) return;
+        return cache.put('/controller.html', new Response(text, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        }));
+      });
+    });
+  }
+  if (window.caches) {
+    caches.open(CACHE).then(keep).catch(function () {});
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  }
+})();
+</script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/webrtc-config.js?v=3"></script>
 <script src="/message-library-ui.js?v=5"></script>
-<script src="/alarm-sounds.js?v=4"></script>
-<script src="/schedule-ui.js?v=13"></script>
-<script src="/alarm-ui.js?v=5"></script>
-<script src="/talk-pcm.js?v=2"></script>
-<script src="/controller.js?v=28"></script>
+<script src="/alarm-sounds.js?v=0.1.2"></script>
+<script src="/schedule-ui.js?v=14"></script>
+<script src="/alarm-ui.js?v=0.1.3"></script>
+<script src="/talk-pcm.js?v=5"></script>
+<script src="/qr.js?v=1"></script>
+<script src="/flux-gesture.js?v=3"></script>
+<script src="/controller.js?v=0.1.12"></script>
 </body>
 </html>
