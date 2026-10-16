@@ -24,7 +24,7 @@ class NodeBridgeService {
   NodeStatus status = NodeStatus.idle;
   bool get running => status == NodeStatus.running;
   String? lastError;
-  String localUrl = 'https://127.0.0.1:3000';
+  String localUrl = 'http://127.0.0.1:3000';
   String? publicUrl;
   String? joinUrl;
   String? pairCode;
@@ -74,7 +74,7 @@ class NodeBridgeService {
     try {
       while (status == NodeStatus.running) {
         try {
-          final req = await client.getUrl(Uri.parse('https://127.0.0.1:3000/api/info'));
+          final req = await client.getUrl(Uri.parse('http://127.0.0.1:3000/api/info'));
           final res = await req.close().timeout(const Duration(seconds: 3));
           final body = await res.transform(utf8.decoder).join();
           final json = jsonDecode(body);
@@ -93,7 +93,7 @@ class NodeBridgeService {
               try {
                 final jReq = await client.getUrl(
                   Uri.parse(
-                    'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(base)}',
+                    'http://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(base)}',
                   ),
                 );
                 final jRes = await jReq.close().timeout(const Duration(seconds: 3));
@@ -226,7 +226,7 @@ class NodeBridgeService {
           return;
         }
         try {
-          final req = await client.getUrl(Uri.parse('https://127.0.0.1:3000'));
+          final req = await client.getUrl(Uri.parse('http://127.0.0.1:3000'));
           final res = await req.close().timeout(const Duration(seconds: 3));
           await res.drain<void>();
           if (status != NodeStatus.running) {
@@ -238,7 +238,7 @@ class NodeBridgeService {
         }
       }
       if (status != NodeStatus.running && status != NodeStatus.error) {
-        _emit('node', 'ERROR Le serveur Node n’écoute pas sur https://127.0.0.1:3000');
+        _emit('node', 'ERROR Le serveur Node n’écoute pas sur http://127.0.0.1:3000');
       }
     } finally {
       client.close(force: true);
@@ -285,7 +285,7 @@ class NodeBridgeService {
     try {
       final req = await client.getUrl(
         Uri.parse(
-          'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(root)}',
+          'http://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(root)}',
         ),
       );
       final res = await req.close().timeout(const Duration(seconds: 3));
