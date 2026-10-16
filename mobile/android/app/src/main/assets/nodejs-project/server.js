@@ -555,6 +555,8 @@ function kickUserSockets(userId) {
   for (const s of [...io.sockets.sockets.values()]) {
     if (!s || !s.data || String(s.data.userId || '') !== id) continue;
     try { s.emit('account-revoked', { error: 'Compte supprimé' }); } catch (e) {}
+    // Même event que la déconnexion manuelle → le contrôleur actuel réagit déjà.
+    try { s.emit('logged-out', { error: 'Compte supprimé' }); } catch (e) {}
     try { s.disconnect(true); } catch (e) {}
     n += 1;
   }
