@@ -64,10 +64,16 @@ function emitControllerJoin() {
 }
 
 (async function bootControllerPairing() {
-  const resolved = await resolveControllerPairCode();
+  let resolved = await resolveControllerPairCode();
   if (!resolved) {
-    // Cookie de jumelage absent : on attend un scan QR (pas de fuite via /api/active-code).
-    setTimeout(() => location.reload(), 2500);
+    // Un 2e essai après pose éventuelle du cookie (controller.html / scan QR).
+    await new Promise((r) => setTimeout(r, 400));
+    resolved = await resolveControllerPairCode();
+  }
+  if (!resolved) {
+    if (statusEl) {
+      statusEl.textContent = 'Scanne le QR affiché sur la tablette, puis reconnecte-toi.';
+    }
     return;
   }
   pairReady = true;

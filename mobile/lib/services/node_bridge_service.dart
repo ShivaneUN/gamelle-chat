@@ -84,7 +84,26 @@ class NodeBridgeService {
               publicUrl = url;
               _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: url));
             }
-            final join = '${json['joinUrl'] ?? ''}';
+            var join = '${json['joinUrl'] ?? ''}';
+            // Si le tunnel natif a l’URL mais pas encore de joinUrl serveur → on la demande.
+            final base = (publicUrl != null && publicUrl!.isNotEmpty)
+                ? publicUrl!
+                : (_isAllowedPublicUrl(url) ? url : '');
+            if ((!join.contains('/j/')) && base.isNotEmpty) {
+              try {
+                final jReq = await client.getUrl(
+                  Uri.parse(
+                    'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(base)}',
+                  ),
+                );
+                final jRes = await jReq.close().timeout(const Duration(seconds: 3));
+                final jBody = await jRes.transform(utf8.decoder).join();
+                final jJson = jsonDecode(jBody);
+                if (jJson is Map) {
+                  join = '${jJson['joinUrl'] ?? ''}';
+                }
+              } catch (_) {}
+            }
             if (_isAllowedPublicUrl(join) && join.contains('/j/') && joinUrl != join) {
               joinUrl = join;
               _controller.add(NodeBridgeMessage(tag: 'joinUrl', message: join));

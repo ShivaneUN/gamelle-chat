@@ -397,6 +397,8 @@ app.get('/controller.html', (req, res) => {
   if (!getSessionUser(req)) {
     return res.redirect(302, '/?next=controller');
   }
+  // Compat : compte connecté sans cookie de jumelage → rattache au salon actif.
+  try { ensurePairCookie(res, req); } catch (e) {}
   sendHtml(res, req, 'controller.html');
 });
 
@@ -614,6 +616,33 @@ function isAllowedPublicUrl(url) {
   }
 }
 
+// Plus large que allowedSuffixes : accepte le domaine Named Tunnel écrit par l’app Android.
+function isTrustedPublicUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const host = (u.hostname || '').toLowerCase();
+    if (!host || host === 'api.trycloudflare.com') return false;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+    if (host.startsWith('ton-')) return false;
+    if (isAllowedPublicUrl(url)) return true;
+    return host.includes('.') && !host.endsWith('.local');
+  } catch (e) {
+    return false;
+  }
+}
+
+function resolvePublicBase() {
+  const fromMem = publicUrl && isTrustedPublicUrl(publicUrl) ? String(publicUrl).replace(/\/$/, '') : '';
+  if (fromMem) return fromMem;
+  const fromNative = readNativePublicUrl();
+  if (fromNative) return fromNative;
+  const fromCfg = tunnelConfig.publicUrl && isTrustedPublicUrl(tunnelConfig.publicUrl)
+    ? String(tunnelConfig.publicUrl).replace(/\/$/, '')
+    : '';
+  return fromCfg || null;
+}
+
 function readNativePublicUrl() {
   try {
     const extra = path.join(DATA_DIR, 'public-url.json');
@@ -621,14 +650,24 @@ function readNativePublicUrl() {
     const j = JSON.parse(fs.readFileSync(extra, 'utf8'));
     if (j && j.url) {
       const url = String(j.url).replace(/\/$/, '');
-      if (isAllowedPublicUrl(url)) return url;
+      if (isTrustedPublicUrl(url)) return url;
     }
   } catch (e) {}
   return null;
 }
 
+function ensurePairCookie(res, req) {
+  if (getPairCodeFromRequest(req)) return true;
+  const code = readActiveCode();
+  if (!code) return false;
+  const token = mintJoinToken(code);
+  if (!token) return false;
+  setPairCookie(res, token, req);
+  return true;
+}
+
 app.get('/api/info', (req, res) => {
-  const base = publicUrl || readNativePublicUrl();
+  const base = resolvePublicBase();
   const payload = {
     publicUrl: base,
     localUrl: `https://${getLocalIp()}:${PORT}`,
@@ -639,6 +678,20 @@ app.get('/api/info', (req, res) => {
     payload.joinUrl = base ? buildJoinUrl(base) : '';
   }
   res.json(payload);
+});
+
+// La tablette peut fournir l’URL publique (tunnel natif) pour minter le QR chiffré.
+app.get('/api/pair/join-url', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
+  const fromQuery = String((req.query && req.query.base) || '').replace(/\/$/, '');
+  const base = (fromQuery && isTrustedPublicUrl(fromQuery) ? fromQuery : '') || resolvePublicBase() || '';
+  if (!base) {
+    return res.json({ ok: true, joinUrl: '' });
+  }
+  const join = buildJoinUrl(base);
+  res.json({ ok: true, joinUrl: join || '' });
 });
 
 app.get('/api/active-code', (req, res) => {
@@ -1468,7 +1521,7 @@ async function startPublicTunnel(origin) {
     const { cf, bin } = await ensureCloudflaredBin();
     const token = readTunnelToken();
     const fixedUrl = tunnelConfig.publicUrl;
-    if (token && fixedUrl && isAllowedPublicUrl(fixedUrl)) {
+    if (token && fixedUrl && isTrustedPublicUrl(fixedUrl)) {
       await startNamedTunnel(bin, token, fixedUrl);
       return;
     }
