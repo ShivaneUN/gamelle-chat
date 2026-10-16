@@ -65,28 +65,13 @@ function generateCert() {
 }
 
 if (!fs.existsSync(KEY_PATH) || !fs.existsSync(CERT_PATH)) {
-  console.log('Génération du certificat HTTPS (peut prendre quelques secondes)…');
-  try { notifyFlutter('node', 'STARTING cert'); } catch (e) {}
   generateCert();
   console.log('Certificat HTTPS généré (uniquement au premier démarrage).');
 }
 
-function createHttpsServer() {
-  return https.createServer({ key: fs.readFileSync(KEY_PATH), cert: fs.readFileSync(CERT_PATH) }, app);
-}
-
-let server;
-try {
-  server = createHttpsServer();
-} catch (e) {
-  if (e.code === 'ERR_SSL_EE_KEY_TOO_SMALL' || (e.message && String(e.message).includes('ee key too small'))) {
-    console.log('Ancien certificat trop faible pour OpenSSL, régénération en 2048 bits...');
-    generateCert();
-    server = createHttpsServer();
-  } else {
-    throw e;
-  }
-}
+// Port 3000 en HTTP (comme 0.2.19) : la tablette et le poll Flutter ouvrent
+// http://127.0.0.1:3000. Un TLS ici cassait le démarrage / le domaine Cloudflare.
+const server = http.createServer(app);
 const io = new Server(server, {
   maxHttpBufferSize: 5e7,
   pingTimeout: 30000,
@@ -698,7 +683,8 @@ app.get('/api/info', (req, res) => {
     const base = resolvePublicBase();
     const payload = {
       publicUrl: base,
-      localUrl: `https://${getLocalIp()}:${PORT}`,
+      // Loopback only — pas d’écoute LAN ; distant = Cloudflare uniquement.
+      localUrl: `http://127.0.0.1:${PORT}`,
       version: updater.pkgVersion(),
     };
     // joinUrl (token AES) uniquement depuis la tablette — jamais le code en clair.
@@ -1471,32 +1457,35 @@ httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
 });
 
 server.on('error', (err) => {
-  console.error('Serveur HTTPS:', err && err.message ? err.message : err);
+  console.error('Serveur HTTP:', err && err.message ? err.message : err);
   try {
     notifyFlutter('node', 'ERROR ' + (err && err.message ? err.message : err));
   } catch (e) {}
 });
 
-function onHttpsListening() {
+function onHttpListening() {
   // Signal direct à Flutter (ne dépend pas du parse de console.log).
   try { notifyFlutter('node', 'LISTENING'); } catch (e) {}
   setImmediate(migrateMediaInBackground);
-  const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
-  console.log(`Sur la tablette (récepteur) : https://localhost:${PORT}`);
-  console.log(`Même WiFi                   : https://${ip}:${PORT}`);
-  console.log('⚠️  En local : le navigateur affichera un avertissement (certificat auto-signé).');
-  console.log('   Clique sur "Avancé" puis "Continuer" — normal.');
-  if (process.env.TUNNEL === '0') {
-    console.log('Tunnel distant désactivé (TUNNEL=0). Hors WiFi, ça ne marchera pas.');
+  console.log(`Sur la tablette (loopback)  : http://127.0.0.1:${PORT}`);
+  console.log('LAN Wi‑Fi                   : fermé (écoute 127.0.0.1 seulement)');
+  console.log('Distant                     : Cloudflare HTTPS uniquement');
+  console.log('Domaine : le tunnel nommé parle en HTTP à l’origine locale (ingress).');
+  // Sur la tablette, Android ouvre le seul cloudflared. Node n'en lance pas un second.
+  if (process.env.TUNNEL === '0' || isMobileBundle()) {
+    console.log(isMobileBundle()
+      ? 'Tunnel : un seul connecteur, ouvert par l’application.'
+      : 'Tunnel distant désactivé (TUNNEL=0). Sans Cloudflare, pas d’accès distant.');
     console.log('================================================\n');
   } else {
-    console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
+    console.log('Ouverture de l\'accès distant (Cloudflare)...');
     startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
 }
 
-server.listen(PORT, '0.0.0.0', onHttpsListening);
+// Pas d’écoute 0.0.0.0 : voisin Wi‑Fi ne peut pas joindre :3000. Distant = tunnel.
+server.listen(PORT, '127.0.0.1', onHttpListening);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');
@@ -1568,6 +1557,10 @@ async function startQuickTunnel(cf, origin) {
 }
 
 async function startPublicTunnel(origin) {
+  if (isMobileBundle() || process.env.TUNNEL === '0') {
+    console.log('Tunnel Node ignoré : un seul connecteur, celui de l’application.');
+    return;
+  }
   try {
     const { cf, bin } = await ensureCloudflaredBin();
     const token = readTunnelToken();

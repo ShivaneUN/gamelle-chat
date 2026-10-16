@@ -1,0 +1,27 @@
+---
+description: Never publish a Gamelle Chat release until pre-release checks pass and the user validates
+alwaysApply: true
+---
+
+# Release gate (Gamelle Chat)
+
+## Hard rule
+- **Do not** create or replace a GitHub release / OTA APK unless:
+  1. `tools/pre-release-check.sh` exits 0, and
+  2. The user explicitly validates publishing (e.g. “ok pour publier”, “envoie la maj”).
+- Finding a bug, fixing it, or opening a PR is **not** permission to publish.
+- Prefer “tests pass, awaiting your validation” over shipping.
+
+## Mandatory checks before asking to publish
+Run `tools/pre-release-check.sh` (or equivalent) and confirm:
+- Node listens with **`http.createServer`** on **`127.0.0.1:3000`** only (never `0.0.0.0`, never local HTTPS)
+- `http://127.0.0.1:PORT/` and `/api/info` return 200 over **HTTP**; `localUrl` is loopback (no LAN IP)
+- HTTPS on the same local port is refused / fails
+- Distant access is Cloudflare only (tunnel → HTTP origin on loopback)
+- Sensitive routes: remote (spoofed CF headers) → 401/403; local → allowed where expected
+- Pairing: `/api/pair/join-url` local OK; `/j/<token>` decrypts; plaintext `/c/CODE` rejected or redirected safely
+- Flutter contract: poll URLs remain `http://127.0.0.1:3000` (unless user approved changing them)
+- Built APK `versionName`/`versionCode` match the intended release tag
+
+## If anything fails
+Fix, re-run the full checklist, do **not** publish. Summarize failures to the user.
