@@ -80,6 +80,13 @@ socket.on('connect', () => {
 socket.on('auth-required', () => {
   location.replace('/');
 });
+socket.on('account-revoked', () => {
+  try {
+    sessionStorage.removeItem('gamellePairCode');
+    localStorage.removeItem('gamellePairCode');
+  } catch (e) {}
+  location.replace('/');
+});
 socket.on('pair-required', () => {
   try {
     sessionStorage.removeItem('gamellePairCode');

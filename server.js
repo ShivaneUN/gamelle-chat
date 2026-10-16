@@ -528,6 +528,23 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+function kickUserSockets(userId) {
+  const id = String(userId || '');
+  if (!id) return 0;
+  let n = 0;
+  for (const socket of io.sockets.sockets.values()) {
+    if (!socket.data || socket.data.userId !== id) continue;
+    try {
+      socket.emit('account-revoked', { error: 'Compte supprimé' });
+    } catch (e) {}
+    try {
+      socket.disconnect(true);
+    } catch (e) {}
+    n += 1;
+  }
+  return n;
+}
+
 app.delete('/api/auth/users/:id', (req, res) => {
   if (!isLocalRequest(req)) {
     return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
@@ -543,6 +560,8 @@ app.delete('/api/auth/users/:id', (req, res) => {
   const sessions = readSessions();
   sessions.sessions = sessions.sessions.filter((s) => s && s.userId !== id);
   writeSessions(sessions);
+  // Coupe immédiatement toute session WebSocket encore ouverte.
+  kickUserSockets(id);
   res.json({ ok: true });
 });
 
