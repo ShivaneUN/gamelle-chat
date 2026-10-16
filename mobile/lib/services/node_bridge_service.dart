@@ -252,6 +252,36 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
+  Future<void> _fetchJoinUrl(String base) async {
+    final root = base.replaceAll(RegExp(r'/$'), '');
+    if (!_isAllowedPublicUrl(root)) return;
+    final client = HttpClient()
+      ..badCertificateCallback = (cert, host, port) {
+        return host == '127.0.0.1' || host == 'localhost';
+      }
+      ..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final req = await client.getUrl(
+        Uri.parse(
+          'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(root)}',
+        ),
+      );
+      final res = await req.close().timeout(const Duration(seconds: 3));
+      final body = await res.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      if (json is Map) {
+        final join = '${json['joinUrl'] ?? ''}';
+        if (_isAllowedPublicUrl(join) && join.contains('/j/') && joinUrl != join) {
+          joinUrl = join;
+          _controller.add(NodeBridgeMessage(tag: 'joinUrl', message: join));
+        }
+      }
+    } catch (_) {
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<void> _startTunnel() async {
     if (!tunnelEnabled) return;
     if (_tunnelStarted) return;
@@ -265,6 +295,8 @@ class NodeBridgeService {
         tunnelError = null;
         unawaited(_persistPublicUrl(value));
         _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
+        // Mint le QR chiffré tout de suite (ne pas attendre le poll /api/info).
+        unawaited(_fetchJoinUrl(value));
       } else if (type == 'error') {
         if (publicUrl != null) return;
         tunnelError = value;

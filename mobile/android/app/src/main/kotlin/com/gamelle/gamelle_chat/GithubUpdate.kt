@@ -61,7 +61,12 @@ object GithubUpdate {
     fun applyStoredOverlay(filesDir: File) {
         val ota = otaDir(filesDir)
         if (!ota.exists()) return
-        copyWanted(ota, nodeDir(filesDir))
+        // Les Maj sont des APK complets : un ancien overlay OTA (zip) ne doit
+        // plus écraser server.js / public/ au démarrage (serveur cassé / pas de lien).
+        try {
+            ota.deleteRecursively()
+        } catch (_: Exception) {
+        }
     }
 
     fun status(filesDir: File, installedVersion: String): Map<String, Any?> {

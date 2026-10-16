@@ -175,20 +175,21 @@ function saveJsonFile(file, data) {
 }
 
 function isLocalRequest(req) {
-  // Le tunnel Cloudflare arrive aussi en 127.0.0.1 : les en-têtes proxy = client distant.
-  const headers = req.headers || {};
-  if (
-    headers['cf-connecting-ip'] ||
-    headers['x-forwarded-for'] ||
-    headers['x-real-ip'] ||
-    headers['cdn-loop'] ||
-    String(headers['via'] || '').toLowerCase().includes('cloudflare')
-  ) {
-    return false;
-  }
   const raw = String(req.socket && req.socket.remoteAddress || '');
   const ip = raw.replace(/^::ffff:/i, '');
-  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+  const loopback = ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+  if (!loopback) return false;
+  // Cloudflared proxyfie aussi en 127.0.0.1 : seuls les en-têtes Cloudflare
+  // marquent un client distant. Ne pas utiliser X-Forwarded-For seul — un proxy
+  // local Android peut l’ajouter et casser le démarrage / le QR sur la tablette.
+  const headers = req.headers || {};
+  if (headers['cf-connecting-ip'] || headers['cf-ray'] || headers['cdn-loop']) {
+    return false;
+  }
+  if (String(headers['via'] || '').toLowerCase().includes('cloudflare')) {
+    return false;
+  }
+  return true;
 }
 
 const PAIR_COOKIE = 'gamelle_pair';
@@ -198,7 +199,7 @@ function getPairSecret() {
   try {
     if (fs.existsSync(PAIR_SECRET_FILE)) {
       const raw = fs.readFileSync(PAIR_SECRET_FILE);
-      if (raw && raw.length >= 32) return raw.subarray(0, 32);
+      if (raw && raw.length >= 32) return Buffer.from(raw.slice(0, 32));
     }
   } catch (e) {}
   const fresh = crypto.randomBytes(32);
@@ -209,24 +210,39 @@ function getPairSecret() {
   return fresh;
 }
 
+function toBase64Url(buf) {
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(text) {
+  const s = String(text || '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  return Buffer.from(s + pad, 'base64');
+}
+
 function mintJoinToken(code) {
-  const room = String(code || '').trim();
-  if (room.length < 4) return '';
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', getPairSecret(), iv);
-  const plain = Buffer.from(JSON.stringify({ c: room, iat: Date.now() }), 'utf8');
-  const enc = Buffer.concat([cipher.update(plain), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, enc]).toString('base64url');
+  try {
+    const room = String(code || '').trim();
+    if (room.length < 4) return '';
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getPairSecret(), iv);
+    const plain = Buffer.from(JSON.stringify({ c: room, iat: Date.now() }), 'utf8');
+    const enc = Buffer.concat([cipher.update(plain), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return toBase64Url(Buffer.concat([iv, tag, enc]));
+  } catch (e) {
+    console.warn('mintJoinToken:', e && e.message ? e.message : e);
+    return '';
+  }
 }
 
 function openJoinToken(token) {
   try {
-    const raw = Buffer.from(String(token || ''), 'base64url');
+    const raw = fromBase64Url(token);
     if (raw.length < 12 + 16 + 1) return null;
-    const iv = raw.subarray(0, 12);
-    const tag = raw.subarray(12, 28);
-    const enc = raw.subarray(28);
+    const iv = raw.slice(0, 12);
+    const tag = raw.slice(12, 28);
+    const enc = raw.slice(28);
     const decipher = crypto.createDecipheriv('aes-256-gcm', getPairSecret(), iv);
     decipher.setAuthTag(tag);
     const plain = Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
@@ -667,17 +683,25 @@ function ensurePairCookie(res, req) {
 }
 
 app.get('/api/info', (req, res) => {
-  const base = resolvePublicBase();
-  const payload = {
-    publicUrl: base,
-    localUrl: `https://${getLocalIp()}:${PORT}`,
-    version: updater.pkgVersion(),
-  };
-  // joinUrl (token AES) uniquement depuis la tablette — jamais le code en clair.
-  if (isLocalRequest(req)) {
-    payload.joinUrl = base ? buildJoinUrl(base) : '';
+  try {
+    const base = resolvePublicBase();
+    const payload = {
+      publicUrl: base,
+      localUrl: `https://${getLocalIp()}:${PORT}`,
+      version: updater.pkgVersion(),
+    };
+    // joinUrl (token AES) uniquement depuis la tablette — jamais le code en clair.
+    if (isLocalRequest(req)) {
+      try {
+        payload.joinUrl = base ? buildJoinUrl(base) : '';
+      } catch (e) {
+        payload.joinUrl = '';
+      }
+    }
+    res.json(payload);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message || 'info' });
   }
-  res.json(payload);
 });
 
 // La tablette peut fournir l’URL publique (tunnel natif) pour minter le QR chiffré.
@@ -685,13 +709,17 @@ app.get('/api/pair/join-url', (req, res) => {
   if (!isLocalRequest(req)) {
     return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
   }
-  const fromQuery = String((req.query && req.query.base) || '').replace(/\/$/, '');
-  const base = (fromQuery && isTrustedPublicUrl(fromQuery) ? fromQuery : '') || resolvePublicBase() || '';
-  if (!base) {
-    return res.json({ ok: true, joinUrl: '' });
+  try {
+    const fromQuery = String((req.query && req.query.base) || '').replace(/\/$/, '');
+    const base = (fromQuery && isTrustedPublicUrl(fromQuery) ? fromQuery : '') || resolvePublicBase() || '';
+    if (!base) {
+      return res.json({ ok: true, joinUrl: '' });
+    }
+    const join = buildJoinUrl(base);
+    res.json({ ok: true, joinUrl: join || '' });
+  } catch (e) {
+    res.status(500).json({ ok: false, joinUrl: '', error: e.message || 'join-url' });
   }
-  const join = buildJoinUrl(base);
-  res.json({ ok: true, joinUrl: join || '' });
 });
 
 app.get('/api/active-code', (req, res) => {
@@ -1429,6 +1457,13 @@ httpOrigin.on('error', (err) => {
 });
 httpOrigin.listen(TUNNEL_PORT, '127.0.0.1', () => {
   console.log(`Origine tunnel (HTTP local) : http://127.0.0.1:${TUNNEL_PORT}`);
+});
+
+server.on('error', (err) => {
+  console.error('Serveur HTTPS:', err && err.message ? err.message : err);
+  try {
+    notifyFlutter('node', 'ERROR ' + (err && err.message ? err.message : err));
+  } catch (e) {}
 });
 
 server.listen(PORT, '0.0.0.0', () => {
