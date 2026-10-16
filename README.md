@@ -30,6 +30,15 @@ Sans tunnel configuré, tu as au minimum le HTTPS local (`https://localhost:3000
 
 Les releases publiques GitHub **n’embarquent aucun** lien ni token Cloudflare perso.
 
+**Chaque nouvelle maj doit rester clean** — avant de publier une release :
+
+```bash
+bash tools/ensure-public-tunnel-assets.sh
+bash tools/check-no-private-secrets.sh path/to/app-release.apk
+```
+
+(CI GitHub Actions `No private secrets` bloque aussi les PR si un lien/token perso réapparaît.)
+
 1. Compte [Cloudflare](https://dash.cloudflare.com) (gratuit OK)
 2. **Zero Trust → Networks → Tunnels → Create**
 3. Voir `tunnel.token.example` et `tunnel.config.json.example`
@@ -41,22 +50,8 @@ Pour désactiver le tunnel : `TUNNEL=0 npm start`.
 
 1. Lance le serveur **sur la tablette** (avec internet)
 2. Tablette : rôle **Récepteur**, active le son + la caméra
-3. Téléphone (4G) : **scanne le QR** sur la tablette (lien de jumelage chiffré), connecte-toi avec un compte créé sur la tablette
+3. Téléphone (4G) : ouvre **ton** URL Cloudflare (celle de *ton* `tunnel.config.json`), connecte-toi avec un compte créé sur la tablette, même code de jumelage
 4. Pas d’avertissement de certificat sur l’URL Cloudflare (vrai HTTPS)
-
-## Sécurité (Access + routes)
-
-### Cloudflare Access (Zero Trust) — config dashboard, pas dans le repo
-Optionnel mais recommandé : devant ton Named Tunnel, active **Zero Trust → Access → Applications** et exige un login Cloudflare (email / PIN) **avant** d’atteindre Gamelle. Ça bloque les inconnus même s’ils trouvent ton domaine.
-
-### Protection dans le repo (déjà en place)
-- QR = `/j/<token AES-GCM>` : le code de jumelage n’est plus en clair dans le lien
-- Plus d’URL affichée sous les QR
-- `/api/active-code`, mises à jour, création de comptes : **tablette seule** (local)
-- Caméra JPEG (`/api/live`), médias, alarmes : **session + jumelage** requis
-- Anciens liens `/c/CODE` en clair refusés
-
-Le secret de chiffrement est local (`data/pair-secret.key`), jamais commit.
 
 ## ⚠️ Avertissement de sécurité au premier accès local (normal)
 

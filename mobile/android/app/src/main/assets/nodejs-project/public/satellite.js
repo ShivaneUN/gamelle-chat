@@ -1,0 +1,191 @@
+const params = new URLSearchParams(location.search);
+const linkKey = params.get('k') || '';
+const socket = io();
+const stateEl = document.getElementById('satState');
+const codeEl = document.getElementById('guestCode');
+const guestHint = document.getElementById('guestHint');
+const nameInput = document.getElementById('camName');
+const video = document.getElementById('localVideo');
+const camBtn = document.getElementById('camBtn');
+const NAME_KEY = 'gamelle-cam-name';
+let camOn = false;
+let paired = false;
+let stream = null;
+let facing = 'environment';
+
+function savedName() {
+  const fromUrl = String(params.get('n') || '').trim().slice(0, 24);
+  if (fromUrl) return fromUrl;
+  try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+}
+function storeName(name) {
+  try { localStorage.setItem(NAME_KEY, name); } catch (e) {}
+}
+function pushName(name) {
+  const clean = String(name || '').trim().slice(0, 24);
+  if (!clean) return;
+  storeName(clean);
+  if (paired) socket.emit('rename-device', { id: 'cam2', name: clean });
+  else socket.emit('satellite-hello', { k: linkKey, name: clean });
+}
+if (nameInput) {
+  const initial = savedName();
+  if (initial) nameInput.value = initial;
+  nameInput.addEventListener('change', () => pushName(nameInput.value));
+}
+
+function setState(text) {
+  if (stateEl) stateEl.textContent = text;
+}
+
+function stopCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  camOn = false;
+  if (video) video.srcObject = null;
+}
+
+function goHome() {
+  if (window.GamelleHost && GamelleHost.postMessage) GamelleHost.postMessage('home');
+  else history.back();
+}
+
+function leavePairing() {
+  stopCam();
+  try { socket.disconnect(); } catch (e) {}
+  goHome();
+}
+
+const homeBtn = document.getElementById('homeBtn');
+const leaveBtn = document.getElementById('leaveBtn');
+if (homeBtn) homeBtn.onclick = () => { stopCam(); goHome(); };
+if (leaveBtn) leaveBtn.onclick = leavePairing;
+
+socket.on('connect', () => {
+  socket.emit('satellite-hello', { k: linkKey, name: savedName() });
+});
+socket.on('satellite-wait', (payload) => {
+  if (payload && payload.error) {
+    setState(payload.error);
+    return;
+  }
+  if (payload && payload.guest && codeEl) {
+    codeEl.hidden = false;
+    codeEl.textContent = payload.guest;
+    if (guestHint) guestHint.hidden = false;
+  }
+  setState('En attente de la tablette');
+});
+socket.on('satellite-ok', (payload) => {
+  paired = true;
+  const name = (payload && payload.name) || (nameInput && nameInput.value) || 'Caméra 2';
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = name;
+  storeName(name);
+  if (codeEl) codeEl.hidden = true;
+  if (guestHint) guestHint.hidden = true;
+  setState('Jumelée — ' + name);
+});
+socket.on('devices', (snap) => {
+  const next = snap && snap.names && snap.names.cam2;
+  if (!nameInput || !next || document.activeElement === nameInput) return;
+  if (nameInput.value.trim() === next) return;
+  nameInput.value = next;
+  storeName(next);
+  if (paired) setState('Jumelée — ' + next);
+});
+socket.on('disconnect', () => {
+  paired = false;
+  setState('Déconnectée');
+});
+
+async function startCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing },
+    audio: false,
+  });
+  video.srcObject = stream;
+  camOn = true;
+  pump();
+}
+camBtn.onclick = () => {
+  if (camOn && stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    camOn = false;
+    return;
+  }
+  startCam().catch((e) => alert(e.message || e));
+};
+
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+function pump() {
+  if (!camOn || !stream) return;
+  const w = 320;
+  const srcW = video.videoWidth || 320;
+  const srcH = video.videoHeight || 240;
+  const h = Math.max(1, Math.round(srcH * (w / srcW)));
+  canvas.width = w;
+  canvas.height = h;
+  try { ctx.drawImage(video, 0, 0, w, h); } catch (e) {}
+  const jpeg = canvas.toDataURL('image/jpeg', 0.45).split(',')[1];
+  if (jpeg) socket.emit('live-frame', jpeg);
+  setTimeout(pump, 120);
+}
+
+socket.on('torch', async (payload) => {
+  const track = stream && stream.getVideoTracks()[0];
+  if (!track || !track.applyConstraints) return;
+  try { await track.applyConstraints({ advanced: [{ torch: !!(payload && payload.on) }] }); } catch (e) {}
+});
+socket.on('switch-camera', () => {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  if (camOn) startCam().catch(() => {});
+});
+socket.on('screen-off', () => {
+  try { if (window.GamelleHost) GamelleHost.postMessage('off'); } catch (e) {}
+});
+socket.on('screen-on', () => {
+  try { if (window.GamelleHost) GamelleHost.postMessage('on'); } catch (e) {}
+});
+socket.on('take-photo', () => {
+  if (!camOn || !stream || !video.videoWidth) return;
+  const shot = document.createElement('canvas');
+  shot.width = video.videoWidth;
+  shot.height = video.videoHeight;
+  shot.getContext('2d').drawImage(video, 0, 0);
+  const data = shot.toDataURL('image/jpeg', 0.85).split(',')[1];
+  socket.emit('media-captured', { type: 'photo', data: data, ext: 'jpg' });
+});
+let satRecorder = null;
+let satChunks = [];
+socket.on('start-video', () => {
+  if (!camOn || !stream || satRecorder) return;
+  satChunks = [];
+  try {
+    satRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+  } catch (e) {
+    satRecorder = new MediaRecorder(stream);
+  }
+  satRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) satChunks.push(ev.data); };
+  satRecorder.onstop = () => {
+    const blob = new Blob(satChunks, { type: 'video/webm' });
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const raw = String(reader.result || '');
+      const data = raw.indexOf(',') >= 0 ? raw.split(',')[1] : '';
+      if (data) socket.emit('media-captured', { type: 'video', data: data, ext: 'webm' });
+    };
+    reader.readAsDataURL(blob);
+    satRecorder = null;
+  };
+  satRecorder.start();
+});
+socket.on('stop-video', () => {
+  if (satRecorder && satRecorder.state !== 'inactive') satRecorder.stop();
+});
+const talkState = { nextTime: 0 };
+socket.on('talk-audio', ({ rate, samples }) => {
+  if (typeof playTalkPcm === 'function') playTalkPcm(talkState, rate, samples);
+});

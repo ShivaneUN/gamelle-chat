@@ -6,7 +6,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Jni = Join-Path $Root "mobile\android\app\src\main\jniLibs"
 $Work = Join-Path $env:TEMP "gamelle-cloudflared-android"
 $Base = "https://packages.termux.dev/apt/termux-main/pool/main/c/cloudflared"
-$Ver = "2026.8.3"
+$Ver = "2026.10.0"
 
 $maps = @(
   @{ Abi = "arm64-v8a"; Deb = "cloudflared_${Ver}_aarch64.deb" },

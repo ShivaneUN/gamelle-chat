@@ -1,4 +1,4 @@
-# Gamelle Chat — uniquement la tablette branchee en USB au lancement.
+﻿# Gamelle Chat - uniquement la tablette branchee en USB au lancement.
 # Son ADB Wi-Fi est autorise ; les autres appareils Wi-Fi sont ignores.
 # Usage : .\tools\launch-phone.ps1
 param()
@@ -128,9 +128,9 @@ function Resolve-FlutterUsbId([string]$flutterBin, [string]$usbSerial) {
     if ($android.Count -gt 0) { return $android[0].id }
   } catch {
     $line = (& $flutterBin devices) | Where-Object {
-      $_ -match '•\s+(\S+)\s+•\s+android-' -and (Test-UsbAdbSerial $Matches[1])
+      $_ -match '[^\w\s-]\s+(\S+)\s+[^\w\s-]\s+android-' -and (Test-UsbAdbSerial $Matches[1])
     } | Select-Object -First 1
-    if ($line -match '•\s+(\S+)\s+•\s+android-') { return $Matches[1] }
+    if ($line -match '[^\w\s-]\s+(\S+)\s+[^\w\s-]\s+android-') { return $Matches[1] }
   }
   if ($usbSerial -and (Test-UsbAdbSerial $usbSerial)) { return $usbSerial }
   return $null
@@ -148,7 +148,7 @@ function Start-LocalServer {
     try { npm install } finally { Pop-Location }
   }
   Write-Host " Demarrage du serveur (nouvelle fenetre)..."
-  $cmd = "cd /d `"$repoRoot`" && npm start"
+  $cmd = "cd /d `"$repoRoot`" && set GAMELLE_FREE_ONLY=1&& npm start"
   Start-Process -FilePath "cmd.exe" -ArgumentList "/k", $cmd
   for ($i = 0; $i -lt 40; $i++) {
     Start-Sleep -Seconds 1
@@ -226,13 +226,19 @@ if (-not $deviceId) {
 }
 
 Write-Host " Device Flutter : $deviceId"
-Write-Host " Sync assets Node (sans npm)..."
-& (Join-Path $scriptDir "bundle-nodejs-project.ps1") -SkipNpm
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "[ERREUR] Copie des assets Node impossible." -ForegroundColor Red
+Write-Host " Sync assets Node (avec npm si besoin)..."
+try {
+  & (Join-Path $scriptDir "bundle-nodejs-project.ps1")
+  if (-not $?) { throw "bundle exit code $LASTEXITCODE" }
+} catch {
+  Write-Host "[ERREUR] Copie des assets Node impossible : $_" -ForegroundColor Red
   Read-Host "Entree pour fermer"
   exit 1
 }
+
+# Flutter.lnk n'injecte pas de domaine. La tablette garde celui qu'on y enregistre.
+Write-Host " Aucun domaine perso injecte. Un domaine deja enregistre sur la tablette est garde."
+
 Write-Host "----------------------------------------"
 Write-Host " Build en cours..."
 Write-Host "========================================"
