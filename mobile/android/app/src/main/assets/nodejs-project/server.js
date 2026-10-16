@@ -175,9 +175,100 @@ function saveJsonFile(file, data) {
 }
 
 function isLocalRequest(req) {
+  // Le tunnel Cloudflare arrive aussi en 127.0.0.1 : les en-têtes proxy = client distant.
+  const headers = req.headers || {};
+  if (
+    headers['cf-connecting-ip'] ||
+    headers['x-forwarded-for'] ||
+    headers['x-real-ip'] ||
+    headers['cdn-loop'] ||
+    String(headers['via'] || '').toLowerCase().includes('cloudflare')
+  ) {
+    return false;
+  }
   const raw = String(req.socket && req.socket.remoteAddress || '');
   const ip = raw.replace(/^::ffff:/i, '');
   return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
+}
+
+const PAIR_COOKIE = 'gamelle_pair';
+const PAIR_SECRET_FILE = path.join(DATA_DIR, 'pair-secret.key');
+
+function getPairSecret() {
+  try {
+    if (fs.existsSync(PAIR_SECRET_FILE)) {
+      const raw = fs.readFileSync(PAIR_SECRET_FILE);
+      if (raw && raw.length >= 32) return raw.subarray(0, 32);
+    }
+  } catch (e) {}
+  const fresh = crypto.randomBytes(32);
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PAIR_SECRET_FILE, fresh);
+  } catch (e) {}
+  return fresh;
+}
+
+function mintJoinToken(code) {
+  const room = String(code || '').trim();
+  if (room.length < 4) return '';
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getPairSecret(), iv);
+  const plain = Buffer.from(JSON.stringify({ c: room, iat: Date.now() }), 'utf8');
+  const enc = Buffer.concat([cipher.update(plain), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, enc]).toString('base64url');
+}
+
+function openJoinToken(token) {
+  try {
+    const raw = Buffer.from(String(token || ''), 'base64url');
+    if (raw.length < 12 + 16 + 1) return null;
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const enc = raw.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getPairSecret(), iv);
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+    const j = JSON.parse(plain);
+    const room = String((j && j.c) || '').trim();
+    if (room.length < 4) return null;
+    return room;
+  } catch (e) {
+    return null;
+  }
+}
+
+function buildJoinUrl(base) {
+  const root = String(base || '').replace(/\/$/, '');
+  const token = mintJoinToken(readActiveCode());
+  if (!root || !token) return '';
+  return `${root}/j/${token}`;
+}
+
+function setPairCookie(res, token, req) {
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  let c = `${PAIR_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SEC}`;
+  if (secure) c += '; Secure';
+  res.append('Set-Cookie', c);
+}
+
+function clearPairCookie(res, req) {
+  const secure = !!(req.secure || String(req.headers['x-forwarded-proto'] || '').includes('https'));
+  let c = `${PAIR_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  if (secure) c += '; Secure';
+  res.append('Set-Cookie', c);
+}
+
+function getPairCodeFromRequest(req) {
+  const token = parseCookies(req)[PAIR_COOKIE];
+  if (!token) return null;
+  return openJoinToken(token);
+}
+
+function requireAuth(req, res, next) {
+  if (getSessionUser(req)) return next();
+  return res.status(401).json({ ok: false, error: 'Connexion requise' });
 }
 
 function parseCookies(req) {
@@ -313,7 +404,26 @@ app.get('/receiver.html', (req, res) => {
   sendHtml(res, req, 'receiver.html');
 });
 
+// Jumelage chiffré : le QR pointe ici, jamais le code en clair.
+app.get('/j/:token', (req, res) => {
+  const token = String(req.params.token || '').trim();
+  const code = openJoinToken(token);
+  if (!code) {
+    return res.status(400).send('Lien de jumelage invalide ou expiré.');
+  }
+  setPairCookie(res, token, req);
+  if (getSessionUser(req)) {
+    return res.redirect(302, '/controller.html');
+  }
+  return res.redirect(302, '/?next=controller');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.use('/media', (req, res, next) => {
+  if (isLocalRequest(req) || getSessionUser(req)) return next();
+  return res.status(401).json({ ok: false, error: 'Connexion requise' });
+});
 app.use('/media/receiver', express.static(RECEIVER_DIR));
 app.use('/media/controller', express.static(CONTROLLER_DIR));
 app.use('/media/audio', express.static(AUDIO_DIR));
@@ -414,8 +524,26 @@ app.post('/api/auth/logout', (req, res) => {
   const user = getSessionUser(req);
   if (user && user.token) destroySession(user.token);
   clearSessionCookie(res, req);
+  clearPairCookie(res, req);
   res.json({ ok: true });
 });
+
+function kickUserSockets(userId) {
+  const id = String(userId || '');
+  if (!id) return 0;
+  let n = 0;
+  for (const socket of io.sockets.sockets.values()) {
+    if (!socket.data || socket.data.userId !== id) continue;
+    try {
+      socket.emit('account-revoked', { error: 'Compte supprimé' });
+    } catch (e) {}
+    try {
+      socket.disconnect(true);
+    } catch (e) {}
+    n += 1;
+  }
+  return n;
+}
 
 app.delete('/api/auth/users/:id', (req, res) => {
   if (!isLocalRequest(req)) {
@@ -432,6 +560,8 @@ app.delete('/api/auth/users/:id', (req, res) => {
   const sessions = readSessions();
   sessions.sessions = sessions.sessions.filter((s) => s && s.userId !== id);
   writeSessions(sessions);
+  // Coupe immédiatement toute session WebSocket encore ouverte.
+  kickUserSockets(id);
   res.json({ ok: true });
 });
 
@@ -497,41 +627,72 @@ function readNativePublicUrl() {
   return null;
 }
 
-app.get('/api/info', (_req, res) => {
-  res.json({
-    publicUrl: publicUrl || readNativePublicUrl(),
+app.get('/api/info', (req, res) => {
+  const base = publicUrl || readNativePublicUrl();
+  const payload = {
+    publicUrl: base,
     localUrl: `https://${getLocalIp()}:${PORT}`,
     version: updater.pkgVersion(),
-    pairCode: readActiveCode(),
-  });
+  };
+  // joinUrl (token AES) uniquement depuis la tablette — jamais le code en clair.
+  if (isLocalRequest(req)) {
+    payload.joinUrl = base ? buildJoinUrl(base) : '';
+  }
+  res.json(payload);
 });
 
-app.get('/api/active-code', (_req, res) => {
+app.get('/api/active-code', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
   res.json({ code: readActiveCode() });
 });
 
-app.post('/api/alarm-stop', (_req, res) => {
-  const code = readActiveCode();
-  if (code) stopRoomAlarm(code);
-  res.json({ ok: true });
-});
-app.get('/api/alarm-stop', (_req, res) => {
-  const code = readActiveCode();
-  if (code) stopRoomAlarm(code);
-  res.json({ ok: true });
+// Code de salon pour le contrôleur : session + cookie de jumelage (QR chiffré).
+app.get('/api/pair/code', (req, res) => {
+  if (!getSessionUser(req)) {
+    return res.status(401).json({ ok: false, error: 'Connexion requise' });
+  }
+  if (isLocalRequest(req)) {
+    const localCode = readActiveCode();
+    if (localCode) return res.json({ ok: true, code: localCode });
+  }
+  const code = getPairCodeFromRequest(req);
+  if (!code) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Scanne le QR sur la tablette pour jumeler cet appareil.',
+      code: 'PAIR_REQUIRED',
+    });
+  }
+  res.json({ ok: true, code });
 });
 
+function stopActiveAlarm(req, res) {
+  if (!isLocalRequest(req) && !getSessionUser(req)) {
+    return res.status(401).json({ ok: false, error: 'Connexion requise' });
+  }
+  const fromPair = getPairCodeFromRequest(req);
+  const code = isLocalRequest(req) ? readActiveCode() : fromPair;
+  if (code) stopRoomAlarm(code);
+  res.json({ ok: true });
+}
+app.post('/api/alarm-stop', stopActiveAlarm);
+app.get('/api/alarm-stop', stopActiveAlarm);
+
+// Anciens liens /c/CODE en clair → refus. Tokens chiffrés → /j/:token.
 app.get('/c/:code', (req, res) => {
-  const code = String(req.params.code || '').trim();
-  if (!/^[0-9A-Za-z]{4,12}$/.test(code)) return res.redirect('/');
-  if (!getSessionUser(req)) return res.redirect(302, '/?next=controller');
-  try {
-    res.setHeader('Cache-Control', 'no-store');
-  } catch (e) {}
-  sendHtml(res, req, 'controller.html');
+  const raw = String(req.params.code || '').trim();
+  if (openJoinToken(raw)) {
+    return res.redirect(302, `/j/${encodeURIComponent(raw)}`);
+  }
+  return res.status(404).send('Lien obsolète. Scanne le QR affiché sur la tablette.');
 });
 
-app.get('/api/update/status', (_req, res) => {
+app.get('/api/update/status', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, error: 'Réservé à la tablette' });
+  }
   try {
     res.json(updater.getStatus());
   } catch (e) {
@@ -539,7 +700,10 @@ app.get('/api/update/status', (_req, res) => {
   }
 });
 
-app.post('/api/update/apply', (_req, res) => {
+app.post('/api/update/apply', (req, res) => {
+  if (!isLocalRequest(req)) {
+    return res.status(403).json({ ok: false, restart: false, message: 'Réservé à la tablette' });
+  }
   try { persist(); } catch (e) {}
   let result;
   try {
@@ -554,7 +718,15 @@ app.post('/api/update/apply', (_req, res) => {
 });
 
 app.get('/api/live/:code', (req, res) => {
-  const frame = liveJpegs[req.params.code];
+  if (!getSessionUser(req)) {
+    return res.status(401).end();
+  }
+  const wanted = String(req.params.code || '').trim();
+  const allowed = getPairCodeFromRequest(req);
+  if (!allowed || allowed !== wanted) {
+    return res.status(403).end();
+  }
+  const frame = liveJpegs[wanted];
   if (!frame) return res.status(204).end();
   res.setHeader('Content-Type', 'image/jpeg');
   res.setHeader('Cache-Control', 'no-store, no-cache');
@@ -788,6 +960,15 @@ io.on('connection', (socket) => {
         socket.emit('auth-required', { error: 'Connexion requise' });
         socket.disconnect(true);
         return;
+      }
+      const wanted = String(code || '').trim();
+      if (!isLocalRequest(socket.request)) {
+        const paired = getPairCodeFromRequest(socket.request);
+        if (!paired || paired !== wanted) {
+          socket.emit('pair-required', { error: 'Scanne le QR sur la tablette' });
+          socket.disconnect(true);
+          return;
+        }
       }
       socket.data.userId = user.id;
       socket.data.username = user.username;

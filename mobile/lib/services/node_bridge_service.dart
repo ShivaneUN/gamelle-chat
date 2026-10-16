@@ -26,6 +26,7 @@ class NodeBridgeService {
   String? lastError;
   String localUrl = 'https://127.0.0.1:3000';
   String? publicUrl;
+  String? joinUrl;
   String? pairCode;
   String? tunnelError;
   bool tunnelEnabled = true;
@@ -38,10 +39,11 @@ class NodeBridgeService {
 
   String? get controllerShareUrl => scannableQrUrl;
 
+  /// QR = lien /j/<token AES> uniquement (pas d’URL en clair ni de code).
   String? get scannableQrUrl {
-    final raw = publicUrl;
-    if (raw == null || raw.isEmpty) return null;
-    final uri = Uri.tryParse(raw);
+    final join = joinUrl;
+    if (join == null || join.isEmpty) return null;
+    final uri = Uri.tryParse(join);
     if (uri == null) return null;
     if (uri.scheme != 'https' && uri.scheme != 'http') return null;
     final host = uri.host;
@@ -50,9 +52,8 @@ class NodeBridgeService {
     }
     if (host == 'api.trycloudflare.com') return null;
     if (!_isAllowedPublicHost(host)) return null;
-    final base = raw.replaceAll(RegExp(r'/$'), '');
-    // Même URL que le QR HTML : ouvre directement le contrôleur.
-    return '$base/controller.html';
+    if (!uri.path.startsWith('/j/')) return null;
+    return join.replaceAll(RegExp(r'/$'), '');
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();
@@ -78,15 +79,15 @@ class NodeBridgeService {
           final body = await res.transform(utf8.decoder).join();
           final json = jsonDecode(body);
           if (json is Map) {
-            final code = '${json['pairCode'] ?? ''}';
-            if (code.length >= 4 && pairCode != code) {
-              pairCode = code;
-              _controller.add(NodeBridgeMessage(tag: 'pairCode', message: code));
-            }
             final url = '${json['publicUrl'] ?? ''}';
             if (_isAllowedPublicUrl(url) && publicUrl != url) {
               publicUrl = url;
               _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: url));
+            }
+            final join = '${json['joinUrl'] ?? ''}';
+            if (_isAllowedPublicUrl(join) && join.contains('/j/') && joinUrl != join) {
+              joinUrl = join;
+              _controller.add(NodeBridgeMessage(tag: 'joinUrl', message: join));
             }
           }
         } catch (_) {}
@@ -223,6 +224,7 @@ class NodeBridgeService {
 
   Future<void> _clearStalePublicUrl() async {
     publicUrl = null;
+    joinUrl = null;
     try {
       final dir = await _persistDataDir();
       if (dir == null) return;
@@ -338,6 +340,7 @@ class NodeBridgeService {
     _pollStarted = false;
     _infoPollStarted = false;
     pairCode = null;
+    joinUrl = null;
     _controller.add(const NodeBridgeMessage(tag: 'node', message: 'STOPPED'));
   }
 
@@ -358,6 +361,7 @@ class NodeBridgeService {
     } catch (_) {}
     status = NodeStatus.idle;
     publicUrl = null;
+    joinUrl = null;
     _tunnelStarted = false;
     _pollStarted = false;
     _infoPollStarted = false;

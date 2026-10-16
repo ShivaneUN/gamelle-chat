@@ -6,36 +6,24 @@ function setBtnLabel(btn, label, className) {
   else btn.textContent = label;
 }
 
-function readControllerCode() {
-  const params = new URLSearchParams(location.search);
-  let next = (params.get('code') || '').trim();
-  if (next.length >= 4) {
-    try { sessionStorage.setItem('gamellePairCode', next); } catch (e) {}
-    try { localStorage.setItem('gamellePairCode', next); } catch (e) {}
-    try {
-      const url = new URL(location.href);
-      url.searchParams.delete('code');
-      history.replaceState(null, '', '/controller.html');
-    } catch (e) {}
-    return next;
-  }
-  const m = String(location.pathname || '').match(/\/c\/([^/]+)\/?$/);
-  if (m && m[1]) {
-    next = decodeURIComponent(m[1]).trim();
-    if (next.length >= 4) {
-      try { sessionStorage.setItem('gamellePairCode', next); } catch (e) {}
-      try { localStorage.setItem('gamellePairCode', next); } catch (e) {}
-      location.replace('/controller.html');
-      throw new Error('code-redirect');
-    }
-  }
+function rememberPairCode(next) {
+  const c = String(next || '').trim();
+  if (c.length < 4) return '';
+  try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
+  try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
+  return c;
+}
+
+function readCachedPairCode() {
   try {
     const saved = sessionStorage.getItem('gamellePairCode') || localStorage.getItem('gamellePairCode');
     if (saved && String(saved).trim().length >= 4) return String(saved).trim();
   } catch (e) {}
   return '';
 }
-const code = readControllerCode();
+
+// Plus de code en clair dans l’URL : le QR pose un cookie chiffré, puis /api/pair/code.
+let code = readCachedPairCode();
 const statusEl = document.getElementById('status');
 const remoteVideo = document.getElementById('remoteVideo');
 const remoteRelay = document.getElementById('remoteRelay');
@@ -43,30 +31,69 @@ const liveHint = document.getElementById('liveHint');
 const gallery = document.getElementById('gallery');
 const cameraSelect = document.getElementById('cameraSelect');
 
-if (!code) {
-  fetch('/api/active-code').then((r) => r.json()).then((j) => {
-    const c = String((j && j.code) || '').trim();
-    if (c.length >= 4) {
-      try { sessionStorage.setItem('gamellePairCode', c); } catch (e) {}
-      try { localStorage.setItem('gamellePairCode', c); } catch (e) {}
-      location.replace('/controller.html');
-      return;
-    }
-    setTimeout(() => location.reload(), 800);
-  }).catch(() => {
-    setTimeout(() => location.reload(), 800);
-  });
-  throw new Error('code-redirect');
-}
-
 const socket = io({ withCredentials: true });
 let pcCam = null;   // reçoit la caméra du récepteur
 let talkStream = null;
 const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+let pairReady = false;
 
-socket.on('connect', () => socket.emit('join', { code, role: 'controller' }));
+async function resolveControllerPairCode() {
+  try {
+    const r = await fetch('/api/pair/code', { credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) {
+      location.replace('/');
+      return '';
+    }
+    if (r.status === 403 && j && j.code === 'PAIR_REQUIRED') {
+      if (statusEl) statusEl.textContent = 'Scanne le QR affiché sur la tablette pour jumeler.';
+      return '';
+    }
+    const c = String((j && j.code) || '').trim();
+    if (c.length >= 4) {
+      code = rememberPairCode(c);
+      return code;
+    }
+  } catch (e) {}
+  return '';
+}
+
+function emitControllerJoin() {
+  if (!code || code.length < 4) return;
+  socket.emit('join', { code, role: 'controller' });
+}
+
+(async function bootControllerPairing() {
+  const resolved = await resolveControllerPairCode();
+  if (!resolved) {
+    // Cookie de jumelage absent : on attend un scan QR (pas de fuite via /api/active-code).
+    setTimeout(() => location.reload(), 2500);
+    return;
+  }
+  pairReady = true;
+  if (socket.connected) emitControllerJoin();
+})();
+
+socket.on('connect', () => {
+  if (pairReady && code) emitControllerJoin();
+});
 socket.on('auth-required', () => {
   location.replace('/');
+});
+socket.on('account-revoked', () => {
+  try {
+    sessionStorage.removeItem('gamellePairCode');
+    localStorage.removeItem('gamellePairCode');
+  } catch (e) {}
+  location.replace('/');
+});
+socket.on('pair-required', () => {
+  try {
+    sessionStorage.removeItem('gamellePairCode');
+    localStorage.removeItem('gamellePairCode');
+  } catch (e) {}
+  if (statusEl) statusEl.textContent = 'Scanne le QR affiché sur la tablette pour jumeler.';
+  setTimeout(() => location.reload(), 2000);
 });
 socket.on('disconnect', (reason) => {
   if (reason === 'io server disconnect') {

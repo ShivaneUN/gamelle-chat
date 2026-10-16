@@ -71,6 +71,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         _injectPublicUrl(msg.message);
         if (mounted) setState(() {});
       }
+      if (msg.tag == 'joinUrl' && msg.message.contains('/j/')) {
+        _injectPublicUrl(NodeBridgeService.instance.publicUrl);
+        if (mounted) setState(() {});
+      }
       if (msg.tag == 'pairCode' || msg.tag == 'localUrl') {
         if (mounted) setState(() {});
       }
@@ -212,13 +216,16 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     final web = _web;
     if (web == null || url == null || !url.startsWith('http')) return;
     final escaped = url.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+    final join = NodeBridgeService.instance.scannableQrUrl;
+    final joinEscaped = (join ?? '').replaceAll(r'\', r'\\').replaceAll("'", r"\'");
     try {
       await web.runJavaScript('''
         window.__GAMELLE_PUBLIC_URL__ = '$escaped';
-        if (typeof refreshControllerLink === 'function') {
+        ${joinEscaped.isNotEmpty ? "window.__GAMELLE_CONTROLLER_URL__ = '$joinEscaped';" : ''}
+        if (typeof applyJoinUrl === 'function' && window.__GAMELLE_CONTROLLER_URL__) {
+          applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__);
+        } else if (typeof refreshControllerLink === 'function') {
           refreshControllerLink();
-        } else if (typeof applyRemoteOrigin === 'function') {
-          applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
         }
       ''');
     } catch (_) {}
@@ -229,8 +236,9 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     String? url = preferredUrl?.trim();
     if (url != null && url.isNotEmpty) {
       url = url.replaceAll(RegExp(r'/$'), '');
-      if (!url.contains('/controller.html')) {
-        url = '$url/controller.html';
+      // N’accepte que le lien de jumelage chiffré (/j/…), pas une URL en clair.
+      if (!url.contains('/j/')) {
+        url = fromBridge;
       }
     } else {
       url = fromBridge;
@@ -270,12 +278,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: ScanQr(data: url!, size: side),
-                ),
-                const SizedBox(height: 12),
-                SelectableText(
-                  url,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFFF7A45), fontSize: 12),
                 ),
               ],
             ),

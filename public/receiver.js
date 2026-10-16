@@ -60,24 +60,24 @@ const statusEl = document.getElementById('status');
 const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
-function paintControllerLink(origin) {
-  const base = String(origin || '').replace(/\/$/, '');
-  const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(base) : false;
-  const share = scannable ? (base + '/controller.html') : '';
-  window.__GAMELLE_CONTROLLER_URL__ = share;
+function paintControllerJoin(joinUrl) {
+  const share = String(joinUrl || '').trim();
+  const scannable = share && (typeof isScannableQrUrl !== 'function' || isScannableQrUrl(share));
+  window.__GAMELLE_CONTROLLER_URL__ = scannable ? share : '';
   const urlEl = document.getElementById('ctrlLinkUrl');
   const hint = document.getElementById('ctrlLinkHint');
   const img = document.getElementById('ctrlQrImg');
   const box = document.getElementById('ctrlQrBox');
+  // Jamais afficher le lien en clair sous le QR (lien = token chiffré dans le QR seulement).
   if (urlEl) {
-    urlEl.textContent = share;
-    urlEl.hidden = !share;
+    urlEl.textContent = '';
+    urlEl.hidden = true;
   }
   if (!scannable || !share) {
     if (box) box.hidden = true;
     if (img) img.removeAttribute('src');
     if (hint) hint.textContent = 'En attente du tunnel Cloudflare…';
-    return true;
+    return false;
   }
   if (hint) hint.textContent = 'Connecter votre appareil';
   if (img && typeof makeQrDataUrl === 'function') {
@@ -86,36 +86,34 @@ function paintControllerLink(origin) {
       img.width = 280;
       img.height = 280;
       if (box) box.hidden = false;
+      return true;
     } catch (e) {
       if (box) box.hidden = true;
     }
   }
-  return true;
+  return false;
 }
 
-function applyRemoteOrigin(origin) {
-  if (!origin) return false;
-  const url = String(origin).replace(/\/$/, '');
-  if (typeof isScannableQrUrl === 'function' && !isScannableQrUrl(url)) return false;
-  paintControllerLink(url);
-  return true;
+function applyJoinUrl(joinUrl) {
+  if (!joinUrl) return false;
+  return paintControllerJoin(joinUrl);
 }
 
 function refreshControllerLink() {
-  applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__ || '');
+  applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__ || '');
 }
 
-paintControllerLink('');
+paintControllerJoin('');
 
 (async function waitPublicControllerUrl() {
   for (;;) {
-    if (applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__)) return;
+    if (window.__GAMELLE_CONTROLLER_URL__ && applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__)) return;
     try {
       const info = await fetch('/api/info').then((r) => r.json());
       if (info && info.publicUrl) {
         window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
-        if (applyRemoteOrigin(info.publicUrl)) return;
       }
+      if (info && info.joinUrl && applyJoinUrl(info.joinUrl)) return;
     } catch (e) {}
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -274,13 +272,14 @@ document.querySelectorAll('[data-close]').forEach((el) => {
 function openControllerLinkModal() {
   (async () => {
     try {
-      if (window.__GAMELLE_PUBLIC_URL__) {
-        applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
-      }
       const info = await fetch('/api/info').then((r) => r.json());
       if (info && info.publicUrl) {
         window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
-        applyRemoteOrigin(info.publicUrl);
+      }
+      if (info && info.joinUrl) {
+        applyJoinUrl(info.joinUrl);
+      } else {
+        refreshControllerLink();
       }
     } catch (e) {
       refreshControllerLink();
