@@ -26,9 +26,11 @@ cleanup() {
     kill "$PID" 2>/dev/null || true
     wait "$PID" 2>/dev/null || true
   fi
-  pkill -f "PORT=${PORT}.*node server.js" 2>/dev/null || true
+  pkill -f "node server.js" 2>/dev/null || true
+  [[ -n "${MOB_ROOT:-}" ]] && rm -rf "$MOB_ROOT" 2>/dev/null || true
 }
 trap cleanup EXIT
+MOB_ROOT=""
 
 echo "=== 1) Contrat source (HTTP local + Flutter) ==="
 if rg -n "const server = http\.createServer\(app\)" server.js >/dev/null; then
@@ -76,16 +78,63 @@ else
   bad "node_bridge_service.dart introuvable"
 fi
 
-echo "=== 2) Démarrage serveur HTTP ==="
+echo "=== 1b) Bundle mobile (ce que l’APK embarque) ==="
+ICONV_LIB="mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/lib/index.js"
+ICONV_ENC="mobile/android/app/src/main/assets/nodejs-project/node_modules/iconv-lite/encodings/index.js"
+if [[ -f "$ICONV_LIB" && -s "$ICONV_LIB" ]]; then
+  ok "iconv-lite/lib/index.js présent"
+else
+  bad "iconv-lite/lib/index.js MANQUANT (Node crash au boot Android)"
+fi
+if [[ -f "$ICONV_ENC" && -s "$ICONV_ENC" ]]; then
+  ok "iconv-lite/encodings/index.js présent"
+else
+  bad "iconv-lite/encodings/index.js MANQUANT"
+fi
+# Diff vs APK 0.2.19 de référence si disponible
+REF_APK="${REF_APK:-/tmp/apk-compare/GamelleChat-0.2.19.apk}"
+if [[ -f "$REF_APK" ]]; then
+  if miss_js="$(python3 - <<PY
+import zipfile
+from pathlib import Path
+apk = zipfile.ZipFile("$REF_APK")
+prefix = "assets/nodejs-project/node_modules/"
+apk_files = {n[len(prefix):] for n in apk.namelist() if n.startswith(prefix) and not n.endswith("/")}
+root = Path("mobile/android/app/src/main/assets/nodejs-project/node_modules")
+local = {str(p.relative_to(root)).replace("\\\\", "/") for p in root.rglob("*") if p.is_file()}
+miss_js = sorted(m for m in (apk_files - local) if m.endswith(".js"))
+print(",".join(miss_js[:30]))
+PY
+)"; then
+    if [[ -z "$miss_js" ]]; then
+      ok "node_modules assets: aucun .js manquant vs 0.2.19"
+    else
+      bad "node_modules assets manquants: $miss_js"
+    fi
+  else
+    bad "comparaison node_modules vs 0.2.19 impossible"
+  fi
+fi
+
+echo "=== 2) Démarrage serveur HTTP (layout Android nodejs-project) ==="
 fuser -k "${PORT}/tcp" 2>/dev/null || true
 fuser -k "$((PORT + 1))/tcp" 2>/dev/null || true
 sleep 0.5
-# Salon actif pour jumelage
-mkdir -p data
-echo '{"code":"424242"}' > data/active-code.json
 
+# CRITIQUE : démarrer comme sur la tablette (cwd = .../nodejs-project),
+# pas depuis la racine du repo (où npm install masque les trous du bundle APK).
+MOB_ROOT="/tmp/gamelle-precheck-mobile-$$"
+rm -rf "$MOB_ROOT"
+mkdir -p "$MOB_ROOT"
+cp -a mobile/android/app/src/main/assets/nodejs-project "$MOB_ROOT/"
+# Salon actif pour jumelage (persist mobile = sibling gamelle-persist)
+mkdir -p "$MOB_ROOT/gamelle-persist/data"
+echo '{"code":"424242"}' > "$MOB_ROOT/gamelle-persist/data/active-code.json"
+
+cd "$MOB_ROOT/nodejs-project"
 PORT="$PORT" TUNNEL=0 node server.js >"$LOG" 2>&1 &
 PID=$!
+cd "$ROOT"
 
 ready=0
 for _ in $(seq 1 40); do
@@ -96,11 +145,23 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 if [[ "$ready" -eq 1 ]]; then
-  ok "HTTP écoute sur $BASE"
+  ok "HTTP écoute sur $BASE (bundle mobile)"
 else
-  bad "HTTP n'écoute pas sur $BASE"
+  bad "HTTP n'écoute pas sur $BASE (bundle mobile)"
   echo "----- log -----"
   head -80 "$LOG" || true
+fi
+if rg -q "Cannot find module|MODULE_NOT_FOUND" "$LOG"; then
+  bad "crash MODULE_NOT_FOUND au boot mobile"
+  rg "Cannot find module|MODULE_NOT_FOUND" "$LOG" | head -5
+else
+  ok "pas de MODULE_NOT_FOUND au boot"
+fi
+# Listen doit être loopback
+if rg -q "listen EADDRINUSE" "$LOG"; then
+  bad "EADDRINUSE au démarrage"
+else
+  ok "pas d'EADDRINUSE"
 fi
 
 http_code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "$BASE/" || echo 000)"
