@@ -547,6 +547,20 @@ function disconnectControllersForUser(userId, exceptSocketId) {
   }
 }
 
+/** Compte supprimé : coupe immédiatement toute socket encore ouverte pour cet userId. */
+function kickUserSockets(userId) {
+  const id = String(userId || '');
+  if (!id || !io || !io.sockets || !io.sockets.sockets) return 0;
+  let n = 0;
+  for (const s of [...io.sockets.sockets.values()]) {
+    if (!s || !s.data || String(s.data.userId || '') !== id) continue;
+    try { s.emit('account-revoked', { error: 'Compte supprimé' }); } catch (e) {}
+    try { s.disconnect(true); } catch (e) {}
+    n += 1;
+  }
+  return n;
+}
+
 function userHasLiveController(userId) {
   if (!userId || !io || !io.sockets || !io.sockets.sockets) return false;
   for (const s of io.sockets.sockets.values()) {
@@ -866,6 +880,8 @@ app.delete('/api/auth/users/:id', (req, res) => {
   const sessions = readSessions();
   sessions.sessions = sessions.sessions.filter((s) => s && s.userId !== id);
   writeSessions(sessions);
+  // Coupe tout de suite les contrôleurs encore connectés avec ce compte.
+  kickUserSockets(id);
   res.json({ ok: true });
 });
 
