@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../services/cloudflare_tunnel.dart';
 import '../services/node_bridge_service.dart';
 
 const _bg = Color(0xFF0B0D12);
@@ -11,8 +12,9 @@ const _card = Color(0xFF151821);
 const _tile = Color(0xFF1C2030);
 const _accent = Color(0xFFFF7A45);
 const _muted = Color(0xFF8B93A7);
+const _ok = Color(0xFF3DDC97);
 
-/// Panneau réglages (Wi‑Fi, serveur, Cloudflare, notifs) —
+/// Panneau réglages (serveur, Cloudflare, mon domaine, notifs) —
 /// page pleine ou panneau gauche de l’accueil (à la place du QR).
 class SettingsPanel extends StatefulWidget {
   const SettingsPanel({
@@ -33,7 +35,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
   StreamSubscription<NodeBridgeMessage>? _sub;
   bool _busy = false;
   bool _tunnelBusy = false;
+  bool _domainBusy = false;
   PermissionStatus _notifStatus = PermissionStatus.denied;
+
+  bool _domainEnabled = false;
+  String _domainUrl = '';
+  bool _hasToken = false;
+  String _tokenMask = '';
+  bool _editingToken = false;
+  bool _showToken = true;
+  static const _serviceUrl = 'localhost:3001';
+  final _urlCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -42,12 +55,34 @@ class _SettingsPanelState extends State<SettingsPanel> {
       if (mounted) setState(() {});
     });
     _refreshNotif();
+    _loadCustomDomain();
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    _urlCtrl.dispose();
+    _tokenCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCustomDomain() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      if (!mounted) return;
+      setState(() {
+        _takeDomainStatus(s);
+        if (_urlCtrl.text.isEmpty && s.publicUrl.isNotEmpty) {
+          _urlCtrl.text = s.publicUrl;
+        }
+      });
+      await _bridge.refreshCustomDomainFlag();
+      // Domaine actif → Cloudflare libre OFF.
+      if (s.enabled && s.hasToken && s.publicUrl.isNotEmpty && _bridge.tunnelEnabled) {
+        _bridge.tunnelEnabled = false;
+        if (mounted) setState(() {});
+      }
+    } catch (_) {}
   }
 
   Future<void> _refreshNotif() async {
@@ -92,10 +127,204 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (_tunnelBusy) return;
     setState(() => _tunnelBusy = true);
     try {
+      if (on && _domainEnabled) {
+        // Libre ON → Mon domaine OFF automatiquement.
+        await CloudflareTunnel.setCustomDomain(enabled: false);
+        if (mounted) {
+          setState(() => _domainEnabled = false);
+        }
+        await _bridge.refreshCustomDomainFlag();
+      }
       await _bridge.setTunnelEnabled(on);
     } finally {
       if (mounted) setState(() => _tunnelBusy = false);
     }
+  }
+
+  Future<void> _applyDomain({
+    bool? enabled,
+    String? publicUrl,
+    String? token,
+    bool clearToken = false,
+  }) async {
+    if (_domainBusy) return;
+    setState(() => _domainBusy = true);
+    try {
+      final nextEnabled = enabled ?? _domainEnabled;
+      final CustomDomainStatus s;
+      if (clearToken) {
+        s = await CloudflareTunnel.clearCustomDomainToken();
+      } else {
+        s = await CloudflareTunnel.setCustomDomain(
+          enabled: nextEnabled,
+          publicUrl: publicUrl,
+          token: token,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _takeDomainStatus(s);
+        _editingToken = false;
+        _tokenCtrl.clear();
+        if (s.publicUrl.isNotEmpty) {
+          _urlCtrl.text = s.publicUrl;
+        } else if (clearToken) {
+          _urlCtrl.clear();
+        }
+      });
+
+      final domainLive = s.enabled && s.hasToken && s.publicUrl.isNotEmpty;
+      if (domainLive) {
+        // Domaine + token enregistrés → connexion du tunnel nommé.
+        _bridge.tunnelEnabled = false;
+        _bridge.customDomainActive = true;
+        await _bridge.restartTunnel(clearPublicUrl: true);
+      } else if (clearToken) {
+        // Suppression : le lien du token est coupé. Le tunnel gratuit ne repart pas seul.
+        _bridge.tunnelEnabled = false;
+        _bridge.customDomainActive = false;
+        _urlCtrl.clear();
+        await _bridge.restartTunnel(clearPublicUrl: true);
+      } else {
+        // Mon domaine OFF → Cloudflare libre ON.
+        _bridge.customDomainActive = false;
+        _bridge.tunnelEnabled = true;
+        await _bridge.restartTunnel(clearPublicUrl: true);
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _showToken = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_domainErrorText(e))),
+      );
+    } finally {
+      if (mounted) setState(() => _domainBusy = false);
+    }
+  }
+
+  Future<void> _toggleDomain(bool on) async {
+    final url = _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : _domainUrl;
+    if (on && url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Indique d’abord ton lien domaine.')),
+      );
+      return;
+    }
+    if (on && !_hasToken && _tokenCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ajoute d’abord le token tunnel.')),
+      );
+      return;
+    }
+    final token = _tokenReadyForSave();
+    if (token == null && _tokenCtrl.text.trim().isNotEmpty) return;
+    await _applyDomain(enabled: on, publicUrl: url, token: token);
+  }
+
+  Future<void> _saveUrl() async {
+    final url = _urlCtrl.text.trim();
+    if (url.isEmpty) return;
+    final typed = _tokenReadyForSave();
+    if (typed == null && _tokenCtrl.text.trim().isNotEmpty) return;
+    final hasToken = typed != null || _hasToken;
+    await _applyDomain(
+      enabled: hasToken,
+      publicUrl: url,
+      token: typed,
+    );
+  }
+
+  /// Le token Cloudflare est une longue ligne sans espace. On retire
+  /// les retours à la ligne d’un collage, et la commande `--token` si elle est collée avec.
+  String _cleanToken(String raw) {
+    var t = raw.trim();
+    final quoted = RegExp("^['\"](.+)['\"]\$").firstMatch(t);
+    if (quoted != null) t = quoted.group(1)!.trim();
+    final flagged = RegExp(r'--token(?:=|\s+)(\S+)').firstMatch(t);
+    if (flagged != null) t = flagged.group(1)!;
+    t = t.replaceFirst(RegExp(r'^token\s*[:=]\s*', caseSensitive: false), '');
+    return t.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _looksLikeTunnelToken(String token) {
+    return RegExp(r'^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$').hasMatch(token);
+  }
+
+  String _domainErrorText(Object e) {
+    final s = e.toString();
+    if (s.contains('Token trop court')) {
+      return 'Token trop court. Colle le token Cloudflare en entier : une longue ligne, pas l’identifiant du tunnel.';
+    }
+    if (s.contains('URL invalide')) return 'Lien de domaine invalide.';
+    return 'Domaine : $s';
+  }
+
+  void _rejectShortToken(int length) {
+    setState(() => _showToken = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Token trop court : $length caractères. Le token Cloudflare est une longue ligne, en général plus de 100 caractères. Une ligne courte avec des tirets est l’identifiant du tunnel, pas le token.',
+        ),
+      ),
+    );
+  }
+
+  /// null si le champ est vide. Le champ reste affiché si le token est trop court.
+  String? _tokenReadyForSave() {
+    final typed = _tokenCtrl.text;
+    if (typed.trim().isEmpty) return null;
+    final token = _cleanToken(typed);
+    if (token != typed) {
+      _tokenCtrl.value = TextEditingValue(
+        text: token,
+        selection: TextSelection.collapsed(offset: token.length),
+      );
+    }
+    if (token.length < 40) {
+      _rejectShortToken(token.length);
+      return null;
+    }
+    return token;
+  }
+
+  Future<void> _pasteToken() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final raw = data?.text ?? '';
+    if (!mounted) return;
+    if (raw.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Presse-papiers vide. Copie le token, puis appuie sur Coller.')),
+      );
+      return;
+    }
+    final token = _cleanToken(raw);
+    setState(() {
+      _showToken = true;
+      _editingToken = true;
+      _tokenCtrl.value = TextEditingValue(
+        text: token,
+        selection: TextSelection.collapsed(offset: token.length),
+      );
+    });
+  }
+
+  Future<void> _saveToken() async {
+    final token = _tokenReadyForSave();
+    if (token == null) return;
+    final url = _urlCtrl.text.trim().isNotEmpty ? _urlCtrl.text.trim() : _domainUrl;
+    if (url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Indique aussi le domaine pour l’activer.')),
+      );
+      return;
+    }
+    await _applyDomain(enabled: true, publicUrl: url, token: token);
+  }
+
+  Future<void> _deleteToken() async {
+    await _applyDomain(clearToken: true);
   }
 
   Future<void> _openNotifSettings() async {
@@ -108,6 +337,32 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (_notifStatus.isPermanentlyDenied) return 'Refusées — ouvrir les réglages';
     if (_notifStatus.isDenied) return 'Non accordées';
     return _notifStatus.toString().split('.').last;
+  }
+
+  void _takeDomainStatus(CustomDomainStatus s) {
+    _domainEnabled = s.enabled;
+    _domainUrl = s.publicUrl;
+    _hasToken = s.hasToken;
+    _tokenMask = s.tokenMask;
+  }
+
+  bool get _domainUp {
+    if (!_domainEnabled || !_hasToken || _domainUrl.isEmpty) return false;
+    final live = _bridge.publicUrl ?? '';
+    if (live.isEmpty) return false;
+    final err = _bridge.tunnelError;
+    return err == null || err.isEmpty;
+  }
+
+  String get _domainSubtitle {
+    if (!_domainEnabled) return 'Off';
+    if (_domainUrl.isEmpty) return 'Indique le domaine';
+    final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
+    if (!_hasToken) return '$host — token manquant';
+    final err = _bridge.tunnelError;
+    if (err != null && err.isNotEmpty) return err;
+    if (_domainUp) return '$host — actif';
+    return '$host — connexion…';
   }
 
   @override
@@ -143,18 +398,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
         child: Column(
           children: [
             _SettingsTile(
-              icon: Icons.wifi_rounded,
-              title: 'Wi-Fi local',
-              subtitle: _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), ''),
-              onTap: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-              trailing: IconButton(
-                tooltip: 'Copier',
-                onPressed: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
-                icon: const Icon(Icons.copy_rounded, color: _accent),
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFF2A3142)),
-            _SettingsTile(
               icon: Icons.power_settings_new_rounded,
               title: 'Serveur',
               subtitle: running
@@ -169,16 +412,23 @@ class _SettingsPanelState extends State<SettingsPanel> {
             const Divider(height: 1, color: Color(0xFF2A3142)),
             _SettingsTile(
               icon: Icons.cloud_outlined,
-              title: 'Cloudflare',
-              subtitle: !tunnelOn
-                  ? 'Désactivé — accès local uniquement'
-                  : (_bridge.publicUrl != null
-                      ? 'Tunnel actif'
-                      : (_bridge.tunnelError ?? 'Connexion…')),
+              title: 'Cloudflare libre',
+              subtitle: _domainEnabled
+                  ? 'Off — Mon domaine actif'
+                  : (!tunnelOn
+                      ? 'Désactivé — accès local uniquement'
+                      : (_bridge.publicUrl != null
+                          ? 'Tunnel actif'
+                          : (_bridge.tunnelError ?? 'Connexion…'))),
               trailing: Switch(
-                value: tunnelOn,
+                value: tunnelOn && !_domainEnabled,
                 activeThumbColor: _accent,
-                onChanged: _tunnelBusy ? null : _toggleTunnel,
+                onChanged: (_tunnelBusy || _domainBusy)
+                    ? null
+                    : (on) {
+                        if (!on && _domainEnabled) return;
+                        _toggleTunnel(on);
+                      },
               ),
             ),
             const Divider(height: 1, color: Color(0xFF2A3142)),
@@ -196,12 +446,89 @@ class _SettingsPanelState extends State<SettingsPanel> {
           ],
         ),
       ),
+      const SizedBox(height: 12),
+      _SettingsCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SettingsTile(
+              icon: Icons.language_rounded,
+              title: 'Mon domaine',
+              subtitle: _domainSubtitle,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Aide',
+                    onPressed: _showDomainHelp,
+                    icon: const Icon(Icons.help_outline_rounded, color: _accent),
+                  ),
+                  Switch(
+                    value: _domainEnabled,
+                    activeThumbColor: _accent,
+                    onChanged: _domainBusy ? null : _toggleDomain,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _urlCtrl,
+                      enabled: !_domainBusy,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: 'https://ton-domaine.tld',
+                        hintStyle: TextStyle(color: _muted),
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (_) => _saveUrl(),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _domainBusy ? null : _saveUrl,
+                    icon: const Icon(Icons.check_rounded, color: _accent),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            _buildServerHostRow(),
+            const Divider(height: 1, color: Color(0xFF2A3142)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: _buildTokenRow(),
+            ),
+            if (_hasToken || _domainUrl.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: OutlinedButton.icon(
+                  onPressed: _domainBusy ? null : _deleteToken,
+                  icon: const Icon(Icons.link_off_rounded, size: 18),
+                  label: const Text('Supprimer le domaine'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0x55FFFFFF)),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
       Padding(
         padding: const EdgeInsets.only(top: 12, left: 4, right: 4),
         child: Text(
           running
-              ? 'Le Wi-Fi local reste disponible même si Cloudflare est coupé.'
-              : 'Démarre le serveur pour exposer le Wi-Fi local et le tunnel.',
+              ? 'Le récepteur reste sur cette tablette.'
+              : 'Démarre le serveur pour ouvrir le domaine.',
           style: const TextStyle(color: _muted, fontSize: 13),
         ),
       ),
@@ -227,6 +554,254 @@ class _SettingsPanelState extends State<SettingsPanel> {
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         children: body,
       ),
+    );
+  }
+
+  Widget _buildTokenRow() {
+    if (_editingToken || !_hasToken) {
+      final cleaned = _cleanToken(_tokenCtrl.text);
+      final count = cleaned.length;
+      final short = count > 0 && count < 40;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Icon(Icons.lock_outline_rounded, color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: CallbackShortcuts(
+                  bindings: {
+                    const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
+                      _pasteToken();
+                    },
+                  },
+                  child: TextField(
+                    controller: _tokenCtrl,
+                    enabled: !_domainBusy,
+                    obscureText: !_showToken,
+                    obscuringCharacter: '•',
+                    enableInteractiveSelection: true,
+                    minLines: 1,
+                    maxLines: _showToken ? null : 1,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: _showToken ? 13 : 14,
+                      letterSpacing: _showToken ? 0 : 1.2,
+                    ),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'Colle le token du tunnel',
+                      hintStyle: TextStyle(color: _muted),
+                      border: InputBorder.none,
+                    ),
+                    onSubmitted: (_) => _saveToken(),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: _showToken ? 'Masquer le token' : 'Afficher le token',
+                visualDensity: VisualDensity.compact,
+                onPressed: _domainBusy ? null : () => setState(() => _showToken = !_showToken),
+                icon: Icon(
+                  _showToken ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                  color: Colors.white70,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Enregistrer le token',
+                visualDensity: VisualDensity.compact,
+                onPressed: _domainBusy ? null : _saveToken,
+                icon: const Icon(Icons.check_rounded, color: _accent),
+              ),
+              if (_editingToken)
+                IconButton(
+                  tooltip: 'Annuler',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _domainBusy
+                      ? null
+                      : () => setState(() {
+                            _editingToken = false;
+                            _showToken = true;
+                            _tokenCtrl.clear();
+                          }),
+                  icon: const Icon(Icons.close_rounded, color: _muted),
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 30, right: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _domainBusy ? null : () { _pasteToken(); },
+                icon: const Icon(Icons.content_paste_rounded, size: 18),
+                label: const Text('Coller'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 30, right: 8, bottom: 8),
+            child: Text(
+              count == 0
+                  ? 'Copie le token, puis appuie sur Coller. Ctrl+V ne marche pas sur cette tablette.'
+                  : short
+                      ? '$count caractères — trop court'
+                      : _looksLikeTunnelToken(cleaned)
+                          ? '$count caractères — token complet'
+                          : '$count caractères — ce n’est pas un token Cloudflare',
+              style: TextStyle(
+                color: short || (count >= 40 && !_looksLikeTunnelToken(cleaned)) ? _accent : _muted,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final up = _domainUp;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.lock_rounded, color: up ? _ok : _accent, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _tokenMask.isEmpty ? 'Token enregistré' : _tokenMask,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Coller un token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy ? null : () { _pasteToken(); },
+              icon: const Icon(Icons.content_paste_rounded, color: Colors.white),
+            ),
+            IconButton(
+              tooltip: 'Modifier le token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy
+                  ? null
+                  : () => setState(() {
+                        _editingToken = true;
+                        _showToken = true;
+                        _tokenCtrl.clear();
+                      }),
+              icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            ),
+            IconButton(
+              tooltip: 'Supprimer le token',
+              visualDensity: VisualDensity.compact,
+              onPressed: _domainBusy ? null : _deleteToken,
+              icon: const Icon(Icons.delete_outline_rounded, color: Colors.white70),
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 30, bottom: 8),
+          child: Text(
+            up
+                ? 'Actif — le site Cloudflare voit ce tunnel'
+                : 'Connexion… le site reste inactif tant que ce n’est pas vert',
+            style: TextStyle(color: up ? _ok : _muted, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildServerHostRow() {
+    final host = _domainUrl.replaceFirst(RegExp(r'^https?://'), '');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            host.isEmpty ? 'Ce serveur n’a pas encore d’adresse.' : 'Ce serveur',
+            style: const TextStyle(color: _muted, fontSize: 12),
+          ),
+          if (host.isNotEmpty)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    host,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copier l’adresse',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _copy(_domainUrl, done: 'Adresse copiée'),
+                  icon: const Icon(Icons.copy_rounded, color: _accent, size: 20),
+                ),
+              ],
+            ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Cloudflare : $_serviceUrl',
+                  style: TextStyle(color: Colors.white, fontSize: 14),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copier localhost:3001',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _copy(_serviceUrl, done: 'localhost:3001 copié'),
+                icon: const Icon(Icons.copy_rounded, color: _accent, size: 20),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDomainHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Créer mon domaine', style: TextStyle(color: Colors.white)),
+          content: const SingleChildScrollView(
+            child: Text(
+              'Exemple avec Cloudflare.\n\n'
+              '1. Dans Cloudflare Zero Trust, crée un tunnel.\n'
+              '2. Ajoute un nom public : ton sous-domaine et ton domaine.\n'
+              '3. Type de service : HTTP. URL : localhost:3001. Laisse le chemin vide.\n'
+              '4. Enregistre, puis copie le token long. L’identifiant avec des tirets n’est pas le token.\n'
+              '5. Ici, colle ton adresse https://… et ce token, puis active Mon domaine.\n\n'
+              'localhost:3001 est le serveur de cette tablette. Il est le même sur chaque appareil. '
+              'C’est le token collé ici qui relie ton domaine à cette tablette.\n\n'
+              'Plusieurs tablettes peuvent partager le même domaine si elles ont la même version. '
+              'Une version plus récente sur ce domaine coupe la plus ancienne. Un autre domaine continue sans mise à jour.\n\n'
+              'Le téléphone ouvre ensuite cette adresse. Le compte se crée sur cette tablette.',
+              style: TextStyle(color: Colors.white, height: 1.35),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Compris', style: TextStyle(color: _accent)),
+            ),
+          ],
+        );
+      },
     );
   }
 }

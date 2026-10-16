@@ -358,7 +358,7 @@
       if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return false;
       if (h.indexOf('ton-') === 0) return false;
       if (h.endsWith('.trycloudflare.com')) return true;
-      // Named Tunnel perso (pas de domaine hardcodé dans le dépôt public).
+      // Domaine Named Tunnel perso (pas de domaine hardcodé dans le dépôt public).
       return h.indexOf('.') > 0 && !h.endsWith('.local');
     } catch (e) {
       return false;

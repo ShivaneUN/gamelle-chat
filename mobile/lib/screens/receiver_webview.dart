@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,12 +32,14 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   static const _native = MethodChannel('gamelle/webview');
   static const _events = EventChannel('gamelle/webview_events');
   static const _life = MethodChannel('gamelle/lifecycle');
+  static const _pair = MethodChannel('gamelle/pairing');
 
   WebViewController? _web;
   StreamSubscription<NodeBridgeMessage>? _urlSub;
   StreamSubscription<dynamic>? _rendererSub;
   int? _webId;
   int _generation = 0;
+  Timer? _nearbyTimer;
   double _progress = 0;
 
   bool _isAllowedPublicUrl(String url) {
@@ -47,7 +50,6 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return false;
     if (h.startsWith('ton-')) return false;
     if (h.endsWith('.trycloudflare.com')) return true;
-    // Named Tunnel perso : domaine public (pas de domaine hardcodé).
     return h.contains('.') && !h.endsWith('.local');
   }
   bool _failed = false;
@@ -58,21 +60,28 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_life.invokeMethod<void>('keepAlive', {'camera': true}));
+    if (widget.url.contains('receiver.html')) {
+      unawaited(_pair.invokeMethod<void>('startBrowse'));
+      _nearbyTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        unawaited(_pushNearby());
+      });
+    }
     _rendererSub = _events.receiveBroadcastStream().listen((event) {
       final map = event is Map ? Map<String, dynamic>.from(event) : null;
-      if (map?['type'] == 'rendererGone') {
+      final type = map?['type']?.toString();
+      if (type == 'rendererGone') {
         _recoverAfterRendererGone();
+      } else if (type == 'screenOn') {
+        unawaited(_syncScreenOnJs());
+      } else if (type == 'screenOff') {
+        unawaited(_syncScreenOffJs());
       }
     });
     _urlSub = NodeBridgeService.instance.messages.listen((msg) {
-      if (msg.tag == 'publicUrl' &&
+      if ((msg.tag == 'publicUrl' || msg.tag == 'savedUrl') &&
           msg.message.startsWith('http') &&
           _isAllowedPublicUrl(msg.message)) {
         _injectPublicUrl(msg.message);
-        if (mounted) setState(() {});
-      }
-      if (msg.tag == 'joinUrl' && msg.message.contains('/j/')) {
-        _injectPublicUrl(NodeBridgeService.instance.publicUrl);
         if (mounted) setState(() {});
       }
       if (msg.tag == 'pairCode' || msg.tag == 'localUrl') {
@@ -110,6 +119,18 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             if (context.mounted) Navigator.of(context).maybePop();
             return;
           }
+          if (m.startsWith('join|')) {
+            final next = m.substring('join|'.length).trim();
+            if (next.startsWith('http')) {
+              unawaited(_web?.loadRequest(Uri.parse(next)));
+            }
+            return;
+          }
+          if (m.startsWith('pairqr|')) {
+            final raw = m.substring('pairqr|'.length).trim();
+            _showPairQr(raw);
+            return;
+          }
           if (m == 'qr' || m.startsWith('qr|')) {
             final fromJs = m.startsWith('qr|') ? m.substring(3).trim() : '';
             _showScanQr(fromJs.isEmpty ? null : fromJs);
@@ -126,6 +147,41 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
           }
           if (m == 'on') {
             unawaited(_life.invokeMethod<void>('screenOn'));
+            return;
+          }
+          if (m.startsWith('saveFile|')) {
+            unawaited(_saveMediaFromJs(m.substring('saveFile|'.length)));
+            return;
+          }
+          if (m.startsWith('volume|')) {
+            final raw = m.substring('volume|'.length).trim();
+            final pct = int.tryParse(raw) ?? 70;
+            unawaited(_life.invokeMethod<void>('setOutputVolume', {'volume': pct}));
+            return;
+          }
+          if (m.startsWith('advertise|')) {
+            final name = m.substring('advertise|'.length).trim();
+            unawaited(_pair.invokeMethod<void>('advertise', {'name': name}));
+            return;
+          }
+          if (m == 'advertise-stop') {
+            unawaited(_pair.invokeMethod<void>('stopAdvertise'));
+            return;
+          }
+          if (m.startsWith('pair-device|')) {
+            final rest = m.substring('pair-device|'.length);
+            final parts = rest.split('|');
+            if (parts.length >= 3) {
+              final host = parts[0].trim();
+              final port = int.tryParse(parts[1].trim()) ?? 3000;
+              final url = parts.sublist(2).join('|').trim();
+              unawaited(_pair.invokeMethod<void>('sendLink', {
+                'host': host,
+                'port': port,
+                'url': url,
+              }));
+            }
+            return;
           }
         },
       )
@@ -137,9 +193,18 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
             setState(() => _progress = progress / 100);
           },
           onPageFinished: (_) {
-            _injectPublicUrl(NodeBridgeService.instance.publicUrl);
+            _injectPublicUrl(
+              NodeBridgeService.instance.publicUrl ??
+                  NodeBridgeService.instance.savedPublicUrl,
+            );
             _unlockWebAudio();
             unawaited(_native.invokeMethod<void>('audioFocus'));
+            if (widget.url.contains('scan.html')) {
+              unawaited(_offerDeviceName());
+            }
+            if (widget.url.contains('receiver.html')) {
+              unawaited(_pushNearby());
+            }
           },
           onWebResourceError: (error) {
             if (!mounted) return;
@@ -178,6 +243,26 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     } catch (_) {}
   }
 
+  Future<void> _syncScreenOnJs() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.runJavaScript(
+        'if (typeof syncScreenOnFromNative === "function") syncScreenOnFromNative();',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncScreenOffJs() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.runJavaScript(
+        'if (typeof syncScreenOffFromNative === "function") syncScreenOffFromNative();',
+      );
+    } catch (_) {}
+  }
+
   Future<void> _unlockWebAudio() async {
     final web = _web;
     if (web == null) return;
@@ -187,6 +272,34 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
         if (typeof unlockTalkAudio === 'function') unlockTalkAudio();
       ''');
     } catch (_) {}
+  }
+
+  Future<void> _saveMediaFromJs(String rawJson) async {
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map) return;
+      final name = '${decoded['name'] ?? 'gamelle.bin'}';
+      final mime = '${decoded['mime'] ?? 'application/octet-stream'}';
+      final b64 = '${decoded['base64'] ?? ''}';
+      if (b64.isEmpty) return;
+      final out = await _life.invokeMethod<dynamic>('saveMedia', {
+        'name': name,
+        'mime': mime,
+        'base64': b64,
+      });
+      if (!mounted) return;
+      final map = out is Map ? Map<String, dynamic>.from(out) : <String, dynamic>{};
+      final ok = map['ok'] == true;
+      final msg = '${map['message'] ?? (ok ? 'Enregistré' : 'Échec')}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Enregistrement impossible: $e')),
+      );
+    }
   }
 
   Future<void> _recoverAfterRendererGone() async {
@@ -216,19 +329,43 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     final web = _web;
     if (web == null || url == null || !url.startsWith('http')) return;
     final escaped = url.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
-    final join = NodeBridgeService.instance.scannableQrUrl;
-    final joinEscaped = (join ?? '').replaceAll(r'\', r'\\').replaceAll("'", r"\'");
     try {
       await web.runJavaScript('''
         window.__GAMELLE_PUBLIC_URL__ = '$escaped';
-        ${joinEscaped.isNotEmpty ? "window.__GAMELLE_CONTROLLER_URL__ = '$joinEscaped';" : ''}
-        if (typeof applyJoinUrl === 'function' && window.__GAMELLE_CONTROLLER_URL__) {
-          applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__);
-        } else if (typeof refreshControllerLink === 'function') {
+        if (typeof refreshControllerLink === 'function') {
           refreshControllerLink();
+        } else if (typeof applyRemoteOrigin === 'function') {
+          applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
         }
       ''');
     } catch (_) {}
+  }
+
+  void _showPairQr(String url) {
+    final data = url.trim();
+    if (data.isEmpty || !mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierColor: const Color(0xEE000000),
+      builder: (ctx) {
+        final side = (MediaQuery.sizeOf(ctx).shortestSide * 0.72).clamp(240.0, 340.0);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF151821),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ScanQr(data: data, size: side),
+              const SizedBox(height: 12),
+              const Text(
+                'L’autre récepteur scanne ce QR',
+                style: TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _showScanQr([String? preferredUrl]) {
@@ -236,9 +373,10 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
     String? url = preferredUrl?.trim();
     if (url != null && url.isNotEmpty) {
       url = url.replaceAll(RegExp(r'/$'), '');
-      // N’accepte que le lien de jumelage chiffré (/j/…), pas une URL en clair.
-      if (!url.contains('/j/')) {
-        url = fromBridge;
+      url = url.replaceAll(RegExp(r'[?&]v=[^&]*'), '');
+      url = url.replaceAll(RegExp(r'\?$'), '').replaceAll(RegExp(r'\?&'), '?');
+      if (!url.contains('/controller.html')) {
+        url = '$url/controller.html';
       }
     } else {
       url = fromBridge;
@@ -279,6 +417,12 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
                   ),
                   child: ScanQr(data: url!, size: side),
                 ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  url,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFFF7A45), fontSize: 12),
+                ),
               ],
             ),
             actions: [
@@ -294,7 +438,28 @@ class _ReceiverWebViewState extends State<ReceiverWebView>
   }
 
   @override
+  Future<void> _offerDeviceName() async {
+    try {
+      final label = await _pair.invokeMethod<String>('deviceLabel');
+      final js = 'window.__gamelleDeviceName = ${jsonEncode(label ?? '')};'
+          ' if (window.__applyDeviceName) window.__applyDeviceName();';
+      await _web?.runJavaScript(js);
+    } catch (_) {}
+  }
+
+  Future<void> _pushNearby() async {
+    try {
+      final raw = await _pair.invokeMethod<List<dynamic>>('nearby');
+      final js = 'window.__setNearby && window.__setNearby(${jsonEncode(raw ?? const [])});';
+      await _web?.runJavaScript(js);
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
+    _nearbyTimer?.cancel();
+    unawaited(_pair.invokeMethod<void>('stopAdvertise'));
+    unawaited(_pair.invokeMethod<void>('stopBrowse'));
     _urlSub?.cancel();
     _rendererSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);

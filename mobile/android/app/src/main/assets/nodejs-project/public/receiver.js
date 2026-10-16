@@ -60,24 +60,25 @@ const statusEl = document.getElementById('status');
 const localVideo = document.getElementById('localVideo');
 const camBtn = document.getElementById('camBtn');
 
-function paintControllerJoin(joinUrl) {
-  const share = String(joinUrl || '').trim();
-  const scannable = share && (typeof isScannableQrUrl !== 'function' || isScannableQrUrl(share));
-  window.__GAMELLE_CONTROLLER_URL__ = scannable ? share : '';
+function paintControllerLink(origin) {
+  const base = String(origin || '').replace(/\/$/, '');
+  const scannable = typeof isScannableQrUrl === 'function' ? isScannableQrUrl(base) : false;
+  // Lien fixe : /controller.html sans ?v=, sinon le téléphone garde une autre adresse.
+  const share = scannable ? (base + '/controller.html') : '';
+  window.__GAMELLE_CONTROLLER_URL__ = share;
   const urlEl = document.getElementById('ctrlLinkUrl');
   const hint = document.getElementById('ctrlLinkHint');
   const img = document.getElementById('ctrlQrImg');
   const box = document.getElementById('ctrlQrBox');
-  // Jamais afficher le lien en clair sous le QR (lien = token chiffré dans le QR seulement).
   if (urlEl) {
-    urlEl.textContent = '';
-    urlEl.hidden = true;
+    urlEl.textContent = share;
+    urlEl.hidden = !share;
   }
   if (!scannable || !share) {
     if (box) box.hidden = true;
     if (img) img.removeAttribute('src');
     if (hint) hint.textContent = 'En attente du tunnel Cloudflare…';
-    return false;
+    return true;
   }
   if (hint) hint.textContent = 'Connecter votre appareil';
   if (img && typeof makeQrDataUrl === 'function') {
@@ -86,34 +87,36 @@ function paintControllerJoin(joinUrl) {
       img.width = 280;
       img.height = 280;
       if (box) box.hidden = false;
-      return true;
     } catch (e) {
       if (box) box.hidden = true;
     }
   }
-  return false;
+  return true;
 }
 
-function applyJoinUrl(joinUrl) {
-  if (!joinUrl) return false;
-  return paintControllerJoin(joinUrl);
+function applyRemoteOrigin(origin) {
+  if (!origin) return false;
+  const url = String(origin).replace(/\/$/, '');
+  if (typeof isScannableQrUrl === 'function' && !isScannableQrUrl(url)) return false;
+  paintControllerLink(url);
+  return true;
 }
 
 function refreshControllerLink() {
-  applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__ || '');
+  applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__ || '');
 }
 
-paintControllerJoin('');
+paintControllerLink('');
 
 (async function waitPublicControllerUrl() {
   for (;;) {
-    if (window.__GAMELLE_CONTROLLER_URL__ && applyJoinUrl(window.__GAMELLE_CONTROLLER_URL__)) return;
+    if (applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__)) return;
     try {
       const info = await fetch('/api/info').then((r) => r.json());
       if (info && info.publicUrl) {
         window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
+        if (applyRemoteOrigin(info.publicUrl)) return;
       }
-      if (info && info.joinUrl && applyJoinUrl(info.joinUrl)) return;
     } catch (e) {}
     await new Promise((r) => setTimeout(r, 1500));
   }
@@ -121,27 +124,50 @@ paintControllerJoin('');
 
 const socket = io();
 let localStream = null;
-let pcCam = null;   // envoie la caméra vers le contrôleur
+let pcCam = null;   // envoie la caméra vers le contrôleur (WebRTC si 1 seul ctrl)
+let peerControllerCount = 0;
+let webrtcSendReady = false;
 let mediaRecorder = null;
 let recordedChunks = [];
 let micOn = false;
 let talkSoundOn = true;
 let alarmSoundOn = true;
-const MIC_AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+// WebView Android : l'annulation d'écho du navigateur rend souvent la piste muette.
+// Le retour haut-parleur est retiré dans talk-pcm.js. Le gain automatique reste allumé.
+const MIC_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 };
 
+socket.on('active-code', ({ code: next } = {}) => {
+  const c = String(next || '').trim();
+  if (c.length >= 4) code = commitPairCode(c);
+});
 socket.on('connect', () => {
   resolvePairCode().then((c) => {
     socket.emit('join', { code: c, role: 'receiver' });
     refreshControllerLink();
     startBatteryWatch();
+    // Re-sync après reconnexion (cam / écran / live).
+    try {
+      if (typeof camOn !== 'undefined' && camOn) {
+        socket.emit('cam-status', { on: true });
+        if (typeof torchWanted !== 'undefined' && torchWanted) {
+          socket.emit('torch-status', { on: true, unsupported: false });
+        }
+        if (typeof startLiveRelay === 'function') startLiveRelay();
+        if (typeof syncLiveTransport === 'function') syncLiveTransport();
+      }
+      if (typeof screenOn !== 'undefined') {
+        socket.emit(screenOn ? 'screen-on' : 'screen-off');
+      }
+    } catch (e) {}
   });
 });
 socket.on('peers', ({ controllers, names }) => {
   const n = Number(controllers) || 0;
+  peerControllerCount = n;
   const list = Array.isArray(names) ? names.filter(Boolean) : [];
   window.__GAMELLE_PEER_NAMES__ = list;
   if (n <= 0) {
-    setStatus(false, 'Pas de contrôleur en ligne');
+    setStatus(true, 'Récepteur prêt · aucun contrôleur');
   } else if (n === 1) {
     const who = list[0] ? ` · ${list[0]}` : '';
     setStatus(true, `1 contrôleur en ligne${who}`);
@@ -149,12 +175,18 @@ socket.on('peers', ({ controllers, names }) => {
     setStatus(true, `${n} contrôleurs en ligne`);
   }
   renderPeersPop();
+  syncLiveTransport();
 });
 socket.on('room-state', (state) => {
   msgLibrary.setMessages(state.messages);
   schedManager.setSchedules(state.schedules);
   renderGallery(state.media || []);
   if (alarmControls.applySync) alarmControls.applySync(state.manualAlarm);
+  if (state && typeof state.screenOn === 'boolean') {
+    screenOn = state.screenOn;
+    renderScreenOffBtn();
+  }
+  if (state && state.outputVolume != null) applyReceiverVolume(state.outputVolume, false);
 });
 
 function setStatus(on, text) {
@@ -163,7 +195,7 @@ function setStatus(on, text) {
   statusEl.style.cursor = on ? 'pointer' : 'default';
   statusEl.title = on ? 'Voir qui est en ligne' : '';
 }
-setStatus(false, 'Pas de contrôleur en ligne');
+setStatus(true, 'Récepteur prêt · connexion…');
 
 function renderPeersPop() {
   const pop = document.getElementById('peersPop');
@@ -235,7 +267,15 @@ const alarmControls = createAlarmControls({
   getMessages: msgLibrary.getMessages,
   playSound: true,
   isAudioUnlocked: () => alarmSoundOn,
+  ensureUnlocked: () => {
+    if (!alarmSoundOn) {
+      alarmSoundOn = true;
+      renderAlarmSoundBtn();
+    }
+    unlockSoundEngine();
+  },
 });
+window.alarmControls = alarmControls;
 
 function openModal(id) {
   const el = document.getElementById(id);
@@ -272,14 +312,13 @@ document.querySelectorAll('[data-close]').forEach((el) => {
 function openControllerLinkModal() {
   (async () => {
     try {
+      if (window.__GAMELLE_PUBLIC_URL__) {
+        applyRemoteOrigin(window.__GAMELLE_PUBLIC_URL__);
+      }
       const info = await fetch('/api/info').then((r) => r.json());
       if (info && info.publicUrl) {
         window.__GAMELLE_PUBLIC_URL__ = info.publicUrl;
-      }
-      if (info && info.joinUrl) {
-        applyJoinUrl(info.joinUrl);
-      } else {
-        refreshControllerLink();
+        applyRemoteOrigin(info.publicUrl);
       }
     } catch (e) {
       refreshControllerLink();
@@ -314,6 +353,57 @@ if (homeBtn) {
 }
 
 const unlockMicBtn = document.getElementById('unlockMicBtn');
+let recvVolume = 70;
+let volumeDragging = false;
+let lastTalkAckEmit = 0;
+
+function applyReceiverVolume(vol, emit) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(vol))));
+  if (!Number.isFinite(n)) return;
+  recvVolume = n;
+  const slider = document.getElementById('recvVolume');
+  const pct = document.getElementById('recvVolumePct');
+  if (slider && !volumeDragging) slider.value = String(n);
+  if (pct) pct.textContent = n + '%';
+  if (typeof setTalkPlaybackVolume === 'function') setTalkPlaybackVolume(n / 100);
+  if (typeof setAlarmPlaybackVolume === 'function') setAlarmPlaybackVolume(n / 100);
+  try {
+    if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
+      GamelleHost.postMessage('volume|' + n);
+    }
+  } catch (e) {}
+  if (emit) socket.emit('set-receiver-volume', { volume: n });
+}
+
+(function wireVolumeSlider() {
+  const slider = document.getElementById('recvVolume');
+  if (!slider) return;
+  const paint = () => {
+    const n = Math.max(0, Math.min(100, Math.round(Number(slider.value) || 0)));
+    const pct = document.getElementById('recvVolumePct');
+    if (pct) pct.textContent = n + '%';
+  };
+  slider.addEventListener('pointerdown', () => { volumeDragging = true; });
+  slider.addEventListener('pointerup', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('change', () => {
+    volumeDragging = false;
+    applyReceiverVolume(slider.value, true);
+  });
+  slider.addEventListener('input', () => {
+    paint();
+    applyReceiverVolume(slider.value, true);
+  });
+  applyReceiverVolume(slider.value, false);
+})();
+
+socket.on('receiver-volume', (payload) => {
+  if (volumeDragging) return;
+  const vol = payload && payload.volume != null ? payload.volume : payload;
+  applyReceiverVolume(vol, false);
+});
 
 function renderMicStatus(state) {
   setBtnLabel(unlockMicBtn, 'Micro', micOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
@@ -343,11 +433,13 @@ unlockMicBtn.onclick = async () => {
     if (micOn) {
       micOn = false;
       stopMicTalk();
+      if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
       if (localStream) localStream.getAudioTracks().forEach((t) => { t.enabled = false; t.stop(); localStream.removeTrack(t); });
       renderMicStatus('granted');
       return;
     }
     let testStream;
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(true);
     try {
       testStream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false });
     } catch (e) {
@@ -364,6 +456,7 @@ unlockMicBtn.onclick = async () => {
     refreshMicStatus();
   } catch (e) {
     micOn = false;
+    if (typeof setMicCaptureSession === 'function') setMicCaptureSession(false);
     refreshMicStatus();
     let tip = e.name + ' — ' + e.message;
     if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -423,7 +516,6 @@ document.getElementById('alarmSoundBtn').onclick = () => {
   if (alarmControls.setSoundEnabled) alarmControls.setSoundEnabled(alarmSoundOn);
   renderAlarmSoundBtn();
 };
-unlockSoundEngine();
 renderTalkSoundBtn();
 renderAlarmSoundBtn();
 document.addEventListener('pointerdown', unlockSoundEngine);
@@ -457,11 +549,27 @@ if (bgBtn) {
 function renderScreenOffBtn() {
   const btn = document.getElementById('screenOffBtn');
   if (!btn) return;
-  setBtnLabel(
-    btn,
-    screenOn ? 'Écran off' : 'Écran on',
-    screenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off'
-  );
+  // Comme Son : label fixe, surbrillance = écran allumé (on).
+  setBtnLabel(btn, 'Écran', screenOn ? 'tile-btn toggle-on' : 'tile-btn toggle-off');
+}
+
+/** Écran rallumé au toucher (overlay natif) → resync bouton + contrôleur. */
+function syncScreenOnFromNative() {
+  screenOn = true;
+  renderScreenOffBtn();
+  try {
+    socket.emit('screen-on');
+  } catch (e) {}
+}
+
+/** Écran remis off après alarme (natif) → resync bouton + contrôleur. */
+function syncScreenOffFromNative() {
+  if (!screenOn) return;
+  screenOn = false;
+  renderScreenOffBtn();
+  try {
+    socket.emit('screen-off');
+  } catch (e) {}
 }
 
 const screenOffBtn = document.getElementById('screenOffBtn');
@@ -503,7 +611,8 @@ async function startMicTalk(stream, ownsStream) {
   talkSendOwnsStream = !!ownsStream;
   talkCapture = await startTalkCapture(stream, ({ rate, samples }) => {
     if (!micOn) return;
-    socket.emit('talk-audio', { rate, samples });
+    if (typeof setMicLevel === 'function') setMicLevel(samples);
+    socket.emit('talk-audio', { rate, samples, target: window.__gamelleTarget || '' });
   });
 }
 
@@ -515,6 +624,7 @@ function stopMicTalk() {
   }
   talkSendStream = null;
   talkSendOwnsStream = false;
+  if (typeof clearMicLevel === 'function') clearMicLevel();
 }
 
 // --- Caméra locale : activer / désactiver ---
@@ -549,9 +659,9 @@ function renderCamBtnPending(on) {
 async function enableCamera() {
   try {
     const videoConstraints = {
-      facingMode: { ideal: 'environment' },
+      facingMode: { ideal: facingModeFor(preferredFacing) },
       width: { ideal: 640 },
-      frameRate: { ideal: 24, max: 30 },
+      frameRate: { ideal: 30, max: 30 },
     };
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
@@ -587,6 +697,7 @@ async function enableCamera() {
     socket.emit('cam-status', { on: true });
     sendCameraList();
     if (torchWanted) await applyTorch(true);
+    syncLiveTransport();
   } catch (e) {
     renderCamBtn();
     alert('Impossible d\'accéder à la caméra: ' + e.name + ' — ' + e.message + '\n\nClique le 🔒 à gauche de l\'adresse → Caméra → Autoriser.');
@@ -645,11 +756,25 @@ socket.on('torch', async (payload) => {
   await applyTorch(!!(payload && payload.on));
 });
 
-// --- Changement de caméra demandé par le contrôleur, sans couper le direct ---
-socket.on('switch-camera', async (payload) => {
-  if (!camOn) return;
+let preferredFacing = 'Arrière';
+function facingModeFor(label) {
+  return label === 'Avant' ? 'user' : 'environment';
+}
+function renderFacingBtn() {
+  const btn = document.getElementById('facingBtn');
+  if (!btn) return;
+  btn.textContent = preferredFacing;
+  btn.setAttribute('aria-label', 'Caméra ' + preferredFacing);
+}
+function publishFacing() {
+  socket.emit('camera-facing', { facing: preferredFacing });
+}
+
+// --- Changement de caméra, sans couper le direct ---
+async function switchTabletCamera(payload) {
+  if (!camOn) return false;
   const deviceId = payload && payload.deviceId;
-  const facingMode = (payload && payload.facingMode) || 'environment';
+  const facingMode = (payload && payload.facingMode) || facingModeFor(preferredFacing);
   const oldStream = localStream;
 
   // Libérer l'objectif actuel avant d'ouvrir l'autre (requis sur beaucoup d'Android).
@@ -661,12 +786,12 @@ socket.on('switch-camera', async (payload) => {
 
   const videoAttempts = [];
   if (deviceId) {
-    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+    videoAttempts.push({ deviceId: { exact: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+    videoAttempts.push({ deviceId: { ideal: deviceId }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
   }
-  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
-  videoAttempts.push({ width: { ideal: 640 }, frameRate: { ideal: 24, max: 30 } });
+  videoAttempts.push({ facingMode: { exact: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+  videoAttempts.push({ facingMode: { ideal: facingMode }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
+  videoAttempts.push({ width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } });
 
   let newStream = null;
   let lastErr = null;
@@ -686,7 +811,7 @@ socket.on('switch-camera', async (payload) => {
     console.warn('Changement de caméra impossible:', lastErr && (lastErr.name + ' ' + lastErr.message));
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, frameRate: { ideal: 30, max: 30 } },
         audio: micOn ? MIC_AUDIO : false,
       });
       localVideo.srcObject = localStream;
@@ -699,7 +824,7 @@ socket.on('switch-camera', async (payload) => {
     } catch (e2) {
       console.warn('Impossible de rétablir la caméra:', e2.message);
     }
-    return;
+    return false;
   }
 
   try {
@@ -722,14 +847,117 @@ socket.on('switch-camera', async (payload) => {
     if (micOn) await startMicTalk(localStream, false);
     sendCameraList();
     if (torchWanted) await applyTorch(true);
+    return true;
   } catch (e) {
     console.warn('Changement de caméra impossible:', e.message);
+    return false;
+  }
+}
+
+socket.on('switch-camera', async (payload) => {
+  const facingMode = (payload && payload.facingMode) || 'environment';
+  preferredFacing = facingMode === 'user' ? 'Avant' : 'Arrière';
+  renderFacingBtn();
+  publishFacing();
+  await switchTabletCamera(payload);
+});
+
+const facingBtn = document.getElementById('facingBtn');
+if (facingBtn) {
+  facingBtn.onclick = async () => {
+    preferredFacing = preferredFacing === 'Avant' ? 'Arrière' : 'Avant';
+    renderFacingBtn();
+    publishFacing();
+    await switchTabletCamera({ facingMode: facingModeFor(preferredFacing) });
+  };
+}
+
+let visioArmed = false;
+let pcVisio = null;
+const visioRemote = document.getElementById('visioRemote');
+const visioArmBtn = document.getElementById('visioArmBtn');
+const fluxWrap = document.getElementById('fluxWrap');
+
+function renderVisioArm() {
+  if (!visioArmBtn) return;
+  visioArmBtn.className = 'chip-btn ' + (visioArmed ? 'toggle-on' : 'toggle-off');
+  visioArmBtn.textContent = 'Visio';
+}
+if (visioArmBtn) {
+  visioArmBtn.onclick = () => {
+    visioArmed = !visioArmed;
+    renderVisioArm();
+    socket.emit('visio-arm', { on: visioArmed });
+  };
+}
+
+function stopVisioRecv() {
+  if (fluxWrap) fluxWrap.classList.remove('visio-on');
+  if (visioRemote) {
+    visioRemote.srcObject = null;
+    visioRemote.classList.remove('on');
+    visioRemote.style.display = 'none';
+  }
+  if (pcVisio) {
+    try { pcVisio.close(); } catch (e) {}
+    pcVisio = null;
+  }
+}
+
+socket.on('visio-state', (state) => {
+  visioArmed = !!(state && state.armed);
+  renderVisioArm();
+  if (state && state.facing) {
+    preferredFacing = state.facing === 'Avant' ? 'Avant' : 'Arrière';
+    renderFacingBtn();
+  }
+  if (!state || !state.live) stopVisioRecv();
+});
+
+socket.on('signal', async (payload) => {
+  if (!payload || payload.channel !== 'visio') return;
+  if (payload.type === 'offer' && payload.sdp) {
+    stopVisioRecv();
+    const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+    try {
+      pcVisio = new RTCPeerConnection({ iceServers });
+    } catch (e) {
+      pcVisio = null;
+      return;
+    }
+    pcVisio.ontrack = (e) => {
+      const stream = (e.streams && e.streams[0]) || null;
+      if (!visioRemote || !stream) return;
+      visioRemote.srcObject = stream;
+      visioRemote.playsInline = true;
+      visioRemote.muted = true;
+      visioRemote.classList.add('on');
+      visioRemote.style.display = 'block';
+      if (fluxWrap) fluxWrap.classList.add('visio-on');
+      visioRemote.play().catch(() => {});
+    };
+    pcVisio.onicecandidate = (e) => {
+      if (e.candidate) socket.emit('signal', { channel: 'visio', type: 'candidate', candidate: e.candidate });
+    };
+    try {
+      await pcVisio.setRemoteDescription(payload.sdp);
+      const answer = await pcVisio.createAnswer();
+      await pcVisio.setLocalDescription(answer);
+      socket.emit('signal', { channel: 'visio', type: 'answer', sdp: pcVisio.localDescription });
+    } catch (e) {
+      stopVisioRecv();
+    }
+    return;
+  }
+  if (!pcVisio) return;
+  if (payload.type === 'candidate' && payload.candidate) {
+    try { await pcVisio.addIceCandidate(payload.candidate); } catch (e) {}
   }
 });
 
 function disableCamera() {
   stopLiveRelay();
-  if (pcCam) { pcCam.close(); pcCam = null; }
+  stopWebrtcSender();
   const keepTalking = micOn;
   stopMicTalk();
   torchWanted = false;
@@ -746,15 +974,142 @@ function disableCamera() {
   socket.emit('cam-status', { on: false });
   socket.emit('torch-status', { on: false, unsupported: false });
   if (keepTalking) {
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((s) => {
+    navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO, video: false }).then((s) => {
       if (!micOn) { s.getTracks().forEach((t) => t.stop()); return; }
       startMicTalk(s, true).catch(() => {});
     }).catch(() => {});
   }
 }
 
+// --- Live mix v1 : WebRTC si 1 contrôleur (STUN/LAN), sinon JPEG (4G / multi) ---
+function preferWebrtcSend() {
+  return !!camOn && peerControllerCount === 1 && !!localStream;
+}
+
+let controllerSeesDirect = false;
+
+function stopWebrtcSender() {
+  webrtcSendReady = false;
+  controllerSeesDirect = false;
+  if (pcCam) {
+    try { pcCam.onicecandidate = null; } catch (e) {}
+    try { pcCam.oniceconnectionstatechange = null; } catch (e) {}
+    try { pcCam.onconnectionstatechange = null; } catch (e) {}
+    try { pcCam.close(); } catch (e) {}
+    pcCam = null;
+  }
+}
+
+function onWebrtcSendState() {
+  if (!pcCam) return;
+  const ice = pcCam.iceConnectionState || '';
+  const conn = pcCam.connectionState || '';
+  if (ice === 'connected' || ice === 'completed' || conn === 'connected') {
+    webrtcSendReady = true;
+    // JPEG jusqu’à ce que le contrôleur voie vraiment l’image directe.
+    if (controllerSeesDirect) stopLiveRelay();
+    return;
+  }
+  if (ice === 'failed' || ice === 'disconnected' || conn === 'failed' || conn === 'disconnected') {
+    webrtcSendReady = false;
+    controllerSeesDirect = false;
+    if (camOn && !liveRelayTimer) startLiveRelay();
+  }
+}
+
+async function startWebrtcSender(force) {
+  if (!preferWebrtcSend()) return;
+  if (!force && pcCam) {
+    const st = pcCam.connectionState || '';
+    if (st === 'new' || st === 'connecting' || st === 'connected') return;
+  }
+  stopWebrtcSender();
+  if (!localStream) return;
+  const iceServers = (typeof ICE_SERVERS !== 'undefined' && Array.isArray(ICE_SERVERS)) ? ICE_SERVERS : [];
+  try {
+    pcCam = new RTCPeerConnection({ iceServers });
+  } catch (e) {
+    pcCam = null;
+    if (camOn && !liveRelayTimer) startLiveRelay();
+    return;
+  }
+  try {
+    localStream.getTracks().forEach((t) => {
+      if (t.kind === 'audio') return;
+      try { pcCam.addTrack(t, localStream); } catch (e) {}
+    });
+  } catch (e) {}
+  pcCam.onicecandidate = (e) => {
+    if (e.candidate) {
+      try {
+        socket.emit('signal', { channel: 'cam', type: 'candidate', candidate: e.candidate });
+      } catch (err) {}
+    }
+  };
+  pcCam.oniceconnectionstatechange = onWebrtcSendState;
+  pcCam.onconnectionstatechange = onWebrtcSendState;
+  try {
+    const offer = await pcCam.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+    await pcCam.setLocalDescription(offer);
+    socket.emit('signal', { channel: 'cam', type: 'offer', sdp: pcCam.localDescription });
+  } catch (e) {
+    stopWebrtcSender();
+    if (camOn && !liveRelayTimer) startLiveRelay();
+  }
+}
+
+function syncLiveTransport() {
+  if (!camOn) {
+    stopWebrtcSender();
+    stopLiveRelay();
+    return;
+  }
+  if (preferWebrtcSend()) {
+    // JPEG tant que le contrôleur n’a pas confirmé l’image directe.
+    const direct = webrtcSendReady && controllerSeesDirect;
+    if (!direct && (!liveRelayTimer || liveRelayMode !== 'single')) startLiveRelay();
+    startWebrtcSender(false).catch(() => {});
+  } else {
+    controllerSeesDirect = false;
+    // 2 contrôleurs et plus : pas de direct, JPEG allégé pour rester fluide.
+    stopWebrtcSender();
+    if (!liveRelayTimer || liveRelayMode !== 'multi') startLiveRelay();
+  }
+}
+
 // Relais JPEG via le serveur : marche aussi hors WiFi (4G / autre réseau)
 let liveRelayTimer = null;
+let liveRelayMode = '';
+
+function relayMode() {
+  return peerControllerCount > 1 ? 'multi' : 'single';
+}
+
+function liveRelayProfile() {
+  if (relayMode() === 'multi') {
+    return {
+      mode: 'multi',
+      intervalMs: 80,
+      minMs: 70,
+      maxMs: 160,
+      width: 288,
+      quality: 0.34,
+      slowAt: 85,
+      fastAt: 40,
+    };
+  }
+  // 1 contrôleur en secours 4G : proche de 30 fps, même taille d'image.
+  return {
+    mode: 'single',
+    intervalMs: 33,
+    minMs: 33,
+    maxMs: 42,
+    width: 288,
+    quality: 0.34,
+    slowAt: 40,
+    fastAt: 24,
+  };
+}
 let liveGrabber = null;
 let liveGrabberTrack = null;
 let jsAwakeOsc = null;
@@ -787,7 +1142,9 @@ function keepCameraAlive() {
     }
     if (localVideo) localVideo.play().catch(() => {});
   } catch (e) {}
-  startLiveRelay();
+  // JPEG tant que le contrôleur n’a pas l’image directe à l’écran.
+  if (webrtcSendReady && controllerSeesDirect) return;
+  if (!liveRelayTimer || liveRelayMode !== relayMode()) startLiveRelay();
 }
 
 function startLiveRelay() {
@@ -799,10 +1156,11 @@ function startLiveRelay() {
   liveGrabberTrack = null;
   let busy = false;
   let lastSent = 0;
-  // JPEG via tunnel : viser un flux stable (~8–10 fps) plutôt que 12 fps théoriques.
-  let intervalMs = 100;
-  const WIDTH = 240;
-  const QUALITY = 0.36;
+  const profile = liveRelayProfile();
+  liveRelayMode = profile.mode;
+  let intervalMs = profile.intervalMs;
+  const WIDTH = profile.width;
+  const QUALITY = profile.quality;
 
   const tick = () => {
     if (!camOn || !localStream || !localVideo) return;
@@ -830,10 +1188,22 @@ function startLiveRelay() {
     const t0 = now;
     const afterSend = () => {
       const dt = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
-      // Adapter : si l’encode est lent, on ralentit pour éviter l’empilement / freeze.
-      if (dt > 90) intervalMs = Math.min(180, Math.max(intervalMs, Math.round(dt * 1.15)));
-      else if (dt < 45) intervalMs = Math.max(90, intervalMs - 5);
+      if (dt > profile.slowAt) intervalMs = Math.min(profile.maxMs, Math.max(intervalMs, Math.round(dt * 1.05)));
+      else if (dt < profile.fastAt) intervalMs = Math.max(profile.minMs, intervalMs - 2);
       busy = false;
+    };
+
+    const emitFrame = (payload) => {
+      try {
+        // volatile = drop si buffer plein (mieux pour le live 4G que d’empiler).
+        if (socket && socket.volatile && typeof socket.volatile.emit === 'function') {
+          socket.volatile.emit('live-frame', payload);
+        } else {
+          socket.emit('live-frame', payload);
+        }
+      } catch (e) {
+        try { socket.emit('live-frame', payload); } catch (e2) {}
+      }
     };
 
     if (typeof canvas.toBlob === 'function') {
@@ -842,19 +1212,19 @@ function startLiveRelay() {
           busy = false;
           return;
         }
-        try { socket.emit('live-frame', blob); } catch (e) {}
+        emitFrame(blob);
         afterSend();
       }, 'image/jpeg', QUALITY);
       return;
     }
     try {
       const data = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-      if (data) socket.emit('live-frame', data);
+      if (data) emitFrame(data);
     } catch (e) {}
     afterSend();
   };
 
-  liveRelayTimer = setInterval(tick, 40);
+  liveRelayTimer = setInterval(tick, 16);
   tick();
 }
 function stopLiveRelay() {
@@ -865,15 +1235,47 @@ function stopLiveRelay() {
 
 // --- Voix du contrôleur (relais PCM, marche hors LAN) ---
 socket.on('talk-audio', ({ rate, samples }) => {
-  if (!talkSoundOn) return;
-  playTalkPcm(talkPlayState, rate, samples);
+  if (!talkSoundOn) {
+    const now = Date.now();
+    if (now - lastTalkAckEmit > 400) {
+      lastTalkAckEmit = now;
+      socket.emit('talk-audio-ack', { ok: false, reason: 'muted' });
+    }
+    return;
+  }
+  const ok = playTalkPcm(talkPlayState, rate, samples);
+  const now = Date.now();
+  if (now - lastTalkAckEmit > 300) {
+    lastTalkAckEmit = now;
+    socket.emit('talk-audio-ack', { ok: !!ok });
+  }
 });
 
 socket.on('signal', async (payload) => {
-  if (payload.channel === 'cam' && pcCam) {
-    if (payload.type === 'answer') await pcCam.setRemoteDescription(payload.sdp);
-    if (payload.type === 'candidate') { try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {} }
+  if (!payload || payload.channel !== 'cam') return;
+  if (payload.type === 'seeing') {
+    controllerSeesDirect = !!payload.on && preferWebrtcSend();
+    if (controllerSeesDirect && webrtcSendReady) stopLiveRelay();
+    else if (camOn && !liveRelayTimer) startLiveRelay();
+    return;
   }
+  if (payload.type === 'ready') {
+    // Nouvelle page contrôleur : JPEG tout de suite, direct seulement s’il s’affiche.
+    if (preferWebrtcSend()) {
+      startWebrtcSender(true).catch(() => {});
+      if (camOn && !controllerSeesDirect && !liveRelayTimer) startLiveRelay();
+    }
+    return;
+  }
+  if (!pcCam) return;
+  try {
+    if (payload.type === 'answer' && payload.sdp) {
+      await pcCam.setRemoteDescription(payload.sdp);
+    }
+    if (payload.type === 'candidate' && payload.candidate) {
+      try { await pcCam.addIceCandidate(payload.candidate); } catch (e) {}
+    }
+  } catch (e) {}
 });
 
 // --- Capture photo sur demande du contrôleur ---
@@ -919,11 +1321,64 @@ function renderGallery(media) {
   media.forEach((m) => {
     const div = document.createElement('div');
     div.className = 'item';
-    div.innerHTML = m.type === 'video'
+    const el = m.type === 'video'
       ? `<video src="${m.url}" controls></video>`
-      : `<img src="${m.url}">`;
+      : `<img src="${m.url}" alt="">`;
+    div.innerHTML = `${el}
+      <div class="gallery-actions">
+        <button type="button" class="save" data-url="${m.url}" data-name="${m.name}" data-type="${m.type || ''}" title="Enregistrer sur l’appareil">↓</button>
+        <button type="button" class="del" data-name="${m.name}" title="Effacer">✕</button>
+      </div>`;
     gallery.appendChild(div);
   });
+  gallery.querySelectorAll('.del').forEach((btn) => {
+    btn.onclick = () => {
+      if (!confirm('Effacer définitivement de la tablette ?')) return;
+      socket.emit('delete-media', { name: btn.dataset.name, permanent: true });
+    };
+  });
+  gallery.querySelectorAll('.save').forEach((btn) => {
+    btn.onclick = () => saveMediaToDevice(btn.dataset.url, btn.dataset.name, btn.dataset.type);
+  });
+}
+
+async function saveMediaToDevice(url, name, type) {
+  if (!url) return;
+  const fileName = name || ('gamelle_' + Date.now() + (type === 'video' ? '.webm' : '.jpg'));
+  const mime = type === 'video' ? 'video/webm' : 'image/jpeg';
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    const blob = await res.blob();
+    // App Android : enregistre dans Photos/Films → GamelleChat
+    if (window.GamelleHost && typeof GamelleHost.postMessage === 'function') {
+      const buf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      const b64 = btoa(bin);
+      GamelleHost.postMessage('saveFile|' + JSON.stringify({
+        name: fileName,
+        mime: blob.type || mime,
+        base64: b64,
+      }));
+      return;
+    }
+    // Navigateur : téléchargement classique
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1500);
+  } catch (e) {
+    alert('Enregistrement impossible : ' + (e && e.message ? e.message : e));
+  }
 }
 
 let lastBattery = null;
@@ -956,4 +1411,249 @@ function startBatteryWatch() {
     emitBattery({ level: null, charging: false, unsupported: true });
   });
 }
+
+(function setupDevicesPanel() {
+  const openBtn = document.getElementById('openDevicesBtn');
+  const openTile = document.getElementById('openDevicesTile');
+  const codeEl = document.getElementById('linkCode');
+  const urlEl = document.getElementById('linkUrl');
+  const listEl = document.getElementById('deviceList');
+  const preview = document.getElementById('cam2Preview');
+  let linkUrl = '';
+  let ensemble = false;
+  let simult = false;
+  let mediaSync = false;
+  let devices = { main: true, satellite: false, pending: [], names: { main: 'Tablette', cam2: 'Caméra 2' } };
+  const flags = { torch: false, screen: true };
+  function targetFor(which) {
+    if (ensemble) return 'all';
+    return which;
+  }
+  function hitsMain(target) {
+    return target === 'all' || target === 'main';
+  }
+  function paint() {
+    if (!listEl) return;
+    const names = devices.names || {};
+    const rows = [{ id: 'main', name: names.main || 'Tablette', on: devices.main !== false }];
+    if (devices.satellite || devices.satelliteKnown) {
+      rows.push({ id: 'cam2', name: names.cam2 || 'Caméra 2', on: !!devices.satellite });
+    }
+    const pencil = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z"/></svg>';
+    listEl.innerHTML = rows.map((r) => (
+      '<div class="device-row"><div class="device-name"><b>' + r.name + '</b>' +
+      '<button type="button" class="rename-btn" data-act="rename" data-id="' + r.id + '" title="Renommer">' + pencil + '</button>' +
+      '<span class="status-dot' + (r.on ? ' on' : '') + '" title="' + (r.on ? 'En ligne' : 'Hors ligne') + '"></span></div>' +
+      '<div class="device-actions">' +
+      '<button type="button" class="' + (flags.torch ? 'sync-on' : 'sync-off') + '" data-act="torch" data-id="' + r.id + '">Lampe</button>' +
+      '<button type="button" class="' + (flags.screen ? 'sync-on' : 'sync-off') + '" data-act="screen" data-id="' + r.id + '">Écran</button>' +
+      '<button type="button" class="' + (micOn ? 'sync-on' : 'sync-off') + '" data-act="mic" data-id="' + r.id + '">Micro</button>' +
+      (r.id === 'cam2' ? '<button type="button" class="sync-off device-drop" data-act="drop" data-id="cam2">Retirer</button>' : '') +
+      '</div></div>'
+    )).join('');
+    const live2 = document.getElementById('cam2Live');
+    if (preview) preview.classList.toggle('on', simult && !!preview.getAttribute('src'));
+    if (live2) live2.classList.toggle('on', simult && !!live2.getAttribute('src'));
+    document.body.classList.toggle('simult', simult);
+    const simBtn = document.getElementById('simultBtn');
+    const ensBtn = document.getElementById('ensembleBtn');
+    const tile = document.getElementById('openDevicesTile');
+    if (simBtn) simBtn.className = 'chip-btn ' + (simult ? 'sync-on' : 'sync-off');
+    if (tile) tile.className = 'tile-btn ' + (simult ? 'toggle-on' : 'toggle-off');
+    if (ensBtn) ensBtn.className = 'chip-btn ' + (ensemble ? 'sync-on' : 'sync-off');
+    const mediaBtn = document.getElementById('mediaSyncBtn');
+    if (mediaBtn) mediaBtn.className = 'chip-btn ' + (mediaSync ? 'sync-on' : 'sync-off');
+  }
+  function rName(id) {
+    const names = devices.names || {};
+    return names[id] || (id === 'cam2' ? 'Caméra 2' : 'Tablette');
+  }
+  if (listEl && !listEl.dataset.bound) {
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-act]');
+      if (!b) return;
+      ev.preventDefault();
+      const id = b.getAttribute('data-id');
+      const act = b.getAttribute('data-act');
+      const target = targetFor(id);
+      if (act === 'rename') {
+        const nameEl = b.parentElement && b.parentElement.querySelector('b');
+        if (!nameEl || nameEl.dataset.editing) return;
+        nameEl.dataset.editing = '1';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rename-input';
+        input.value = rName(id);
+        input.maxLength = 24;
+        nameEl.replaceWith(input);
+        input.focus();
+        input.select();
+        let saved = false;
+        const save = () => {
+          if (saved) return;
+          saved = true;
+          const next = input.value.trim();
+          if (next) {
+            if (!devices.names) devices.names = {};
+            devices.names[id] = next;
+            socket.emit('rename-device', { id: id, name: next });
+          }
+          paint();
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            save();
+          }
+        });
+        input.addEventListener('blur', save);
+        return;
+      }
+      if (act === 'torch') {
+        flags.torch = !flags.torch;
+        if (hitsMain(target)) applyTorch(flags.torch);
+        socket.emit('torch', { on: flags.torch, target: target });
+        paint();
+        return;
+      }
+      if (act === 'screen') {
+        flags.screen = !flags.screen;
+        if (hitsMain(target)) {
+          screenOn = flags.screen;
+          nativeHost(flags.screen ? 'on' : 'off');
+          renderScreenOffBtn();
+        }
+        socket.emit(flags.screen ? 'screen-on' : 'screen-off', { target: target });
+        paint();
+        return;
+      }
+      if (act === 'mic') {
+        window.__gamelleTarget = target === 'all' ? 'all' : id;
+        if (hitsMain(target) && unlockMicBtn) unlockMicBtn.click();
+        paint();
+        return;
+      }
+      if (act === 'drop') socket.emit('drop-satellite');
+    });
+  }
+  function esc(text) {
+    return String(text || '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+  const nearbyEl = document.getElementById('nearbyList');
+  window.__setNearby = function (list) {
+    if (!nearbyEl) return;
+    const rows = Array.isArray(list) ? list : [];
+    nearbyEl._rows = rows;
+    if (!rows.length) {
+      nearbyEl.innerHTML = '<p class="hint">Aucun appareil en jumelage sur le Wi-Fi.</p>';
+      return;
+    }
+    try { socket.emit('nearby-report', rows); } catch (e) {}
+    nearbyEl.innerHTML = rows.map((r, i) => {
+      const title = r.kind === 'camera'
+        ? (r.name || 'Caméra Wi-Fi')
+        : ('Jumelage cam · ' + (r.name || 'Caméra'));
+      const sub = r.kind === 'camera' ? 'Caméra Wi-Fi reconnue' : 'Prête à jumeler';
+      const btn = r.kind === 'camera'
+        ? ''
+        : '<button type="button" data-near="' + i + '">Jumeler</button>';
+      return '<div class="device-row"><div class="device-name"><b>' + esc(title) + '</b><span class="hint">' + esc(sub) + '</span></div>' + btn + '</div>';
+    }).join('');
+  };
+  if (nearbyEl && !nearbyEl.dataset.bound) {
+    nearbyEl.dataset.bound = '1';
+    nearbyEl.addEventListener('click', async (ev) => {
+      const b = ev.target.closest('[data-near]');
+      if (!b) return;
+      const row = (nearbyEl._rows || [])[Number(b.getAttribute('data-near'))];
+      if (!row || !row.host || row.kind === 'camera') return;
+      if (!linkUrl) await loadLink();
+      if (!linkUrl || !window.GamelleHost || !GamelleHost.postMessage) return;
+      GamelleHost.postMessage('pair-device|' + row.host + '|' + (row.port || 3000) + '|' + linkUrl);
+      b.textContent = 'Envoyé';
+    });
+  }
+  async function loadLink() {
+    try {
+      const j = await fetch('/api/link').then((r) => r.json());
+      if (!j || !j.ok) return;
+      if (codeEl) codeEl.textContent = j.code || '------';
+      linkUrl = j.url || '';
+      if (urlEl) urlEl.textContent = linkUrl;
+      if (linkUrl) socket.emit('link-share', { url: linkUrl });
+    } catch (e) {}
+  }
+  socket.on('pair-nearby', async ({ host, port } = {}) => {
+    if (!host) return;
+    if (!linkUrl) await loadLink();
+    if (!linkUrl || !window.GamelleHost || !GamelleHost.postMessage) return;
+    GamelleHost.postMessage('pair-device|' + host + '|' + (port || 3000) + '|' + linkUrl);
+  });
+  function openDevices() {
+    const img = document.getElementById('linkQrImg');
+    if (img) {
+      img.hidden = true;
+      img.removeAttribute('src');
+    }
+    openModal('devicesModal');
+    loadLink();
+  }
+  if (openBtn) openBtn.onclick = openDevices;
+  if (openTile) {
+    openTile.onclick = () => {
+      simult = !simult;
+      paint();
+    };
+  }
+  function showLinkQrImg() {
+    const img = document.getElementById('linkQrImg');
+    if (!img || !linkUrl) return;
+    try {
+      img.src = makeQrDataUrl(linkUrl, 8, 4);
+      img.hidden = false;
+    } catch (e) {
+      img.hidden = true;
+    }
+    if (window.GamelleHost && GamelleHost.postMessage) {
+      GamelleHost.postMessage('pairqr|' + linkUrl);
+    }
+  }
+  const showQr = document.getElementById('showLinkQr');
+  if (showQr) showQr.onclick = showLinkQrImg;
+  socket.on('request-link', () => { loadLink(); });
+  const simBtn = document.getElementById('simultBtn');
+  if (simBtn) simBtn.onclick = () => { simult = !simult; paint(); };
+  const ensBtn = document.getElementById('ensembleBtn');
+  if (ensBtn) ensBtn.onclick = () => { ensemble = !ensemble; paint(); };
+  const mediaBtn = document.getElementById('mediaSyncBtn');
+  if (mediaBtn) mediaBtn.onclick = () => {
+    mediaSync = !mediaSync;
+    socket.emit('set-media-sync', { on: mediaSync });
+    paint();
+  };
+  socket.on('media-sync', (msg) => {
+    mediaSync = !!(msg && msg.on);
+    paint();
+  });
+  socket.on('devices', (snap) => {
+    devices = snap || devices;
+    if (snap && typeof snap.mediaSync === 'boolean') mediaSync = snap.mediaSync;
+    paint();
+  });
+  socket.on('live-frame', (data) => {
+    if (!preview || !data || data.deviceId !== 'cam2' || typeof data.jpeg !== 'string') return;
+    preview.src = 'data:image/jpeg;base64,' + data.jpeg;
+    const live2 = document.getElementById('cam2Live');
+    if (live2) live2.src = preview.src;
+    if (simult) {
+      preview.classList.add('on');
+      if (live2) live2.classList.add('on');
+    }
+  });
+  paint();
+  loadLink();
+})();
 

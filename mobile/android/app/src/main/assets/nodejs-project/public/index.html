@@ -19,22 +19,118 @@
 <div class="wrap center">
   <h1>Gamelle Chat</h1>
   <p class="muted">Connexion contrôleur</p>
-  <form id="loginForm" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
-    <label class="hint" for="username">Identifiant</label>
-    <input id="username" name="username" autocomplete="username" required
+  <form id="loginForm" method="POST" action="/api/auth/login" autocomplete="off" class="card" style="max-width:360px;margin:20px auto;text-align:left;padding:20px;">
+    <label class="hint" for="gamelleUser">Identifiant</label>
+    <input id="gamelleUser" name="gamelle-id" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" readonly required
+      onfocus="this.removeAttribute('readonly')"
       style="width:100%;margin:6px 0 14px;padding:12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
-    <label class="hint" for="password">Mot de passe</label>
+    <label class="hint" for="gamellePass">Mot de passe</label>
     <div style="position:relative;margin:6px 0 14px;">
-      <input id="password" name="password" type="password" autocomplete="current-password" required
-        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;">
+      <input id="gamellePass" name="gamelle-secret" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" readonly required
+        onfocus="this.removeAttribute('readonly')"
+        style="width:100%;padding:12px 44px 12px 12px;border-radius:12px;border:0;background:#1C2030;color:#fff;-webkit-text-security:disc;">
       <button id="togglePass" type="button" class="chip-btn" title="Afficher / masquer"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:6px 10px;">•••</button>
     </div>
-    <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"></p>
+    <p id="loginError" class="hint" style="color:#FF7A45;min-height:1.2em;"><!--LOGIN_ERROR--></p>
     <button id="loginBtn" class="chip-btn toggle-on" type="submit" style="width:100%;justify-content:center;">Se connecter</button>
   </form>
-  <p class="muted" style="font-size:13px;">Les comptes se créent uniquement sur la tablette (Accueil → Comptes).</p>
+  <p class="muted" style="font-size:13px;">Même identifiant et mot de passe que dans Comptes sur la tablette.</p>
+  <p class="muted" style="font-size:12px;">Serveur <!--SERVER_VER--></p>
 </div>
-<script src="/login.js?v=1"></script>
+<script>
+(function () {
+  try { localStorage.removeItem('gamelleSession'); } catch (e) {}
+  var form = document.getElementById('loginForm');
+  var userEl = document.getElementById('gamelleUser');
+  var passEl = document.getElementById('gamellePass');
+  var errEl = document.getElementById('loginError');
+  var btn = document.getElementById('loginBtn');
+  var toggle = document.getElementById('togglePass');
+  function existingToken() {
+    try { return sessionStorage.getItem('gamelleSession') || ''; } catch (e) { return ''; }
+  }
+  var typedUser = '';
+  var typedPass = '';
+  function rememberTyped() {
+    typedUser = String(userEl && userEl.value || '');
+    typedPass = String(passEl && passEl.value || '');
+  }
+  if (userEl) userEl.addEventListener('input', rememberTyped);
+  if (passEl) passEl.addEventListener('input', rememberTyped);
+  if (toggle && passEl) {
+    toggle.addEventListener('click', function () {
+      var hidden = passEl.style.webkitTextSecurity !== 'none';
+      passEl.style.webkitTextSecurity = hidden ? 'none' : 'disc';
+      toggle.textContent = hidden ? 'ABC' : '•••';
+    });
+  }
+  var kept = existingToken();
+  if (kept) {
+    fetch('/api/auth/me', {
+      credentials: 'same-origin',
+      headers: { Authorization: 'Bearer ' + kept, Accept: 'application/json' }
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.authenticated) location.replace('/controller.html?access=' + encodeURIComponent(kept));
+      else try { sessionStorage.removeItem('gamelleSession'); } catch (e) {}
+    }).catch(function () {});
+  }
+  if (btn) btn.addEventListener('pointerdown', rememberTyped, true);
+  if (!form) return;
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var username = String(typedUser || (userEl && userEl.value) || '').trim();
+    var password = typedPass !== '' ? typedPass : String(passEl && passEl.value || '');
+    if (!username || !password) {
+      if (errEl) errEl.textContent = 'Identifiant et mot de passe requis.';
+      return;
+    }
+    if (btn) btn.disabled = true;
+    function postLogin() {
+      return fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
+      }).then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }).catch(function () { return { ok: false, status: r.status, j: {} }; });
+      });
+    }
+    function oldServerAnswer(res) {
+      var j = (res && res.j) || {};
+      var err = String(j.error || '');
+      if (res && res.ok && j.ok && !j.token) return true;
+      if (err === 'Identifiants incorrects') return true;
+      if (j.code === 'SESSION_ACTIVE' || res.status === 409) return true;
+      return false;
+    }
+    var attempt = 0;
+    function tryLogin() {
+      attempt += 1;
+      return postLogin().then(function (res) {
+        var j = res.j || {};
+        if (res.ok && j.ok && j.token) return res;
+        if (attempt < 5 && oldServerAnswer(res)) return tryLogin();
+        return res;
+      });
+    }
+    tryLogin().then(function (res) {
+      var j = res.j || {};
+      if (!res.ok || !j.ok || !j.token) {
+        if (errEl) errEl.textContent = j.error || 'Le serveur a refusé la connexion.';
+        if (btn) btn.disabled = false;
+        return;
+      }
+      try { sessionStorage.setItem('gamelleSession', j.token); } catch (err) {}
+      try { localStorage.removeItem('gamelleSession'); } catch (err) {}
+      if (passEl) passEl.value = '';
+      location.replace('/controller.html?access=' + encodeURIComponent(j.token));
+    }).catch(function () {
+      if (errEl) errEl.textContent = 'Impossible de joindre le serveur';
+      if (btn) btn.disabled = false;
+    });
+  });
+})();
+</script>
 </body>
 </html>

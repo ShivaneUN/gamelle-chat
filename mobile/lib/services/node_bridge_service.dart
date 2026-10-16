@@ -24,12 +24,16 @@ class NodeBridgeService {
   NodeStatus status = NodeStatus.idle;
   bool get running => status == NodeStatus.running;
   String? lastError;
-  String localUrl = 'https://127.0.0.1:3000';
+  String localUrl = 'http://127.0.0.1:3000';
   String? publicUrl;
-  String? joinUrl;
+  /// Dernier lien public, conservé quand le serveur ou le tunnel est arrêté.
+  String? savedPublicUrl;
   String? pairCode;
   String? tunnelError;
+  /// Cloudflare libre (trycloudflare). Exclusif avec [customDomainActive].
   bool tunnelEnabled = true;
+  /// Mon domaine (Named Tunnel). Exclusif avec [tunnelEnabled] libre.
+  bool customDomainActive = false;
 
   String? get controllerPublicUrl {
     final base = publicUrl;
@@ -39,11 +43,16 @@ class NodeBridgeService {
 
   String? get controllerShareUrl => scannableQrUrl;
 
-  /// QR = lien /j/<token AES> uniquement (pas d’URL en clair ni de code).
+  String? get _shareBase {
+    final live = publicUrl;
+    if (live != null && live.isNotEmpty) return live;
+    return null;
+  }
+
   String? get scannableQrUrl {
-    final join = joinUrl;
-    if (join == null || join.isEmpty) return null;
-    final uri = Uri.tryParse(join);
+    final raw = _shareBase;
+    if (raw == null || raw.isEmpty) return null;
+    final uri = Uri.tryParse(raw);
     if (uri == null) return null;
     if (uri.scheme != 'https' && uri.scheme != 'http') return null;
     final host = uri.host;
@@ -52,8 +61,9 @@ class NodeBridgeService {
     }
     if (host == 'api.trycloudflare.com') return null;
     if (!_isAllowedPublicHost(host)) return null;
-    if (!uri.path.startsWith('/j/')) return null;
-    return join.replaceAll(RegExp(r'/$'), '');
+    final base = raw.replaceAll(RegExp(r'/$'), '');
+    // Lien public fixe. Jamais de ?v= : le téléphone mémorise exactement cette adresse.
+    return '$base/controller.html';
   }
 
   final _controller = StreamController<NodeBridgeMessage>.broadcast();
@@ -71,45 +81,37 @@ class NodeBridgeService {
         return host == '127.0.0.1' || host == 'localhost';
       }
       ..connectionTimeout = const Duration(seconds: 2);
+    var failStreak = 0;
     try {
       while (status == NodeStatus.running) {
         try {
-          final req = await client.getUrl(Uri.parse('https://127.0.0.1:3000/api/info'));
+          final req = await client.getUrl(Uri.parse('http://127.0.0.1:3000/api/info'));
           final res = await req.close().timeout(const Duration(seconds: 3));
           final body = await res.transform(utf8.decoder).join();
           final json = jsonDecode(body);
+          failStreak = 0;
           if (json is Map) {
+            final code = '${json['pairCode'] ?? ''}';
+            if (code.length >= 4 && pairCode != code) {
+              pairCode = code;
+              _controller.add(NodeBridgeMessage(tag: 'pairCode', message: code));
+            }
             final url = '${json['publicUrl'] ?? ''}';
             if (_isAllowedPublicUrl(url) && publicUrl != url) {
               publicUrl = url;
               _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: url));
             }
-            var join = '${json['joinUrl'] ?? ''}';
-            // Si le tunnel natif a l’URL mais pas encore de joinUrl serveur → on la demande.
-            final base = (publicUrl != null && publicUrl!.isNotEmpty)
-                ? publicUrl!
-                : (_isAllowedPublicUrl(url) ? url : '');
-            if ((!join.contains('/j/')) && base.isNotEmpty) {
-              try {
-                final jReq = await client.getUrl(
-                  Uri.parse(
-                    'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(base)}',
-                  ),
-                );
-                final jRes = await jReq.close().timeout(const Duration(seconds: 3));
-                final jBody = await jRes.transform(utf8.decoder).join();
-                final jJson = jsonDecode(jBody);
-                if (jJson is Map) {
-                  join = '${jJson['joinUrl'] ?? ''}';
-                }
-              } catch (_) {}
-            }
-            if (_isAllowedPublicUrl(join) && join.contains('/j/') && joinUrl != join) {
-              joinUrl = join;
-              _controller.add(NodeBridgeMessage(tag: 'joinUrl', message: join));
-            }
           }
-        } catch (_) {}
+        } catch (_) {
+          failStreak += 1;
+          // Node mort alors que le statut dit encore « running ».
+          if (failStreak >= 8) {
+            status = NodeStatus.error;
+            lastError = 'Serveur local injoignable';
+            _controller.add(const NodeBridgeMessage(tag: 'status', message: 'error'));
+            break;
+          }
+        }
         await Future<void>.delayed(const Duration(seconds: 2));
       }
     } finally {
@@ -126,7 +128,7 @@ class NodeBridgeService {
     if (h == 'localhost' || h == '127.0.0.1' || h == '::1') return false;
     if (h.startsWith('ton-')) return false;
     if (h.endsWith('.trycloudflare.com')) return true;
-    // Named Tunnel perso : domaine public (pas de domaine hardcodé).
+    // Named Tunnel perso : tout domaine public (plus de domaine hardcodé dans le repo).
     return h.contains('.') && !h.endsWith('.local');
   }
 
@@ -138,9 +140,14 @@ class NodeBridgeService {
 
   void _emit(String tag, String message) {
     if (tag == 'publicUrl') {
-      if (!_isAllowedPublicUrl(message)) return;
-      publicUrl = message;
-      unawaited(_persistPublicUrl(message));
+      if (message.isEmpty) {
+        publicUrl = null;
+      } else {
+        if (!_isAllowedPublicUrl(message)) return;
+        publicUrl = message;
+        savedPublicUrl = message;
+        unawaited(_persistPublicUrl(message));
+      }
     }
     if (tag == 'localUrl' && message.startsWith('http')) {
       localUrl = message;
@@ -148,7 +155,7 @@ class NodeBridgeService {
     if (tag == 'node' && message == 'LISTENING') {
       status = NodeStatus.running;
       lastError = null;
-      _startTunnel();
+      unawaited(refreshCustomDomainFlag().then((_) => _startTunnel()));
       unawaited(_pollServerInfo());
     }
     if (tag == 'node' && message.startsWith('ERROR')) {
@@ -192,20 +199,6 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
-  Future<bool> _portOpen(int port) async {
-    try {
-      final socket = await Socket.connect(
-        '127.0.0.1',
-        port,
-        timeout: const Duration(seconds: 1),
-      );
-      socket.destroy();
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   Future<void> _pollUntilListening() async {
     if (_pollStarted) return;
     _pollStarted = true;
@@ -215,18 +208,10 @@ class NodeBridgeService {
       }
       ..connectionTimeout = const Duration(seconds: 2);
     try {
-      // Jusqu’~60s : génération cert 2048 bits possible au 1er boot.
-      for (var i = 0; i < 120; i++) {
+      for (var i = 0; i < 50; i++) {
         if (status == NodeStatus.running) return;
-        // TCP d’abord (plus fiable que HTTPS pendant le boot).
-        if (await _portOpen(3000) || await _portOpen(3001)) {
-          if (status != NodeStatus.running) {
-            _emit('node', 'LISTENING');
-          }
-          return;
-        }
         try {
-          final req = await client.getUrl(Uri.parse('https://127.0.0.1:3000'));
+          final req = await client.getUrl(Uri.parse('http://127.0.0.1:3000'));
           final res = await req.close().timeout(const Duration(seconds: 3));
           await res.drain<void>();
           if (status != NodeStatus.running) {
@@ -234,11 +219,11 @@ class NodeBridgeService {
           }
           return;
         } catch (_) {
-          await Future<void>.delayed(const Duration(milliseconds: 500));
+          await Future<void>.delayed(const Duration(milliseconds: 400));
         }
       }
       if (status != NodeStatus.running && status != NodeStatus.error) {
-        _emit('node', 'ERROR Le serveur Node n’écoute pas sur https://127.0.0.1:3000');
+        _emit('node', 'ERROR Le serveur Node n’écoute pas sur http://127.0.0.1:3000');
       }
     } finally {
       client.close(force: true);
@@ -263,9 +248,37 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
+  /// Lien du domaine configuré, lisible même si Node ne tourne pas.
+  Future<void> rememberShareUrl() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      customDomainActive =
+          s.enabled && s.hasToken && s.publicUrl.trim().isNotEmpty;
+      final configured = s.publicUrl.trim();
+      if (s.enabled && _isAllowedPublicUrl(configured)) {
+        savedPublicUrl = configured;
+        unawaited(_persistPublicUrl(configured));
+      }
+    } catch (_) {}
+    if (savedPublicUrl == null || savedPublicUrl!.isEmpty) {
+      try {
+        final dir = await _persistDataDir();
+        if (dir != null) {
+          final file = File('${dir.path}${Platform.pathSeparator}public-url.json');
+          if (await file.exists()) {
+            final decoded = jsonDecode(await file.readAsString());
+            final url = decoded is Map ? '${decoded['url'] ?? ''}' : '';
+            if (_isAllowedPublicUrl(url)) savedPublicUrl = url;
+          }
+        }
+      } catch (_) {}
+    }
+    _controller.add(NodeBridgeMessage(tag: 'savedUrl', message: savedPublicUrl ?? ''));
+  }
+
   Future<void> _clearStalePublicUrl() async {
     publicUrl = null;
-    joinUrl = null;
+    savedPublicUrl = null;
     try {
       final dir = await _persistDataDir();
       if (dir == null) return;
@@ -274,51 +287,26 @@ class NodeBridgeService {
     } catch (_) {}
   }
 
-  Future<void> _fetchJoinUrl(String base) async {
-    final root = base.replaceAll(RegExp(r'/$'), '');
-    if (!_isAllowedPublicUrl(root)) return;
-    final client = HttpClient()
-      ..badCertificateCallback = (cert, host, port) {
-        return host == '127.0.0.1' || host == 'localhost';
-      }
-      ..connectionTimeout = const Duration(seconds: 2);
-    try {
-      final req = await client.getUrl(
-        Uri.parse(
-          'https://127.0.0.1:3000/api/pair/join-url?base=${Uri.encodeQueryComponent(root)}',
-        ),
-      );
-      final res = await req.close().timeout(const Duration(seconds: 3));
-      final body = await res.transform(utf8.decoder).join();
-      final json = jsonDecode(body);
-      if (json is Map) {
-        final join = '${json['joinUrl'] ?? ''}';
-        if (_isAllowedPublicUrl(join) && join.contains('/j/') && joinUrl != join) {
-          joinUrl = join;
-          _controller.add(NodeBridgeMessage(tag: 'joinUrl', message: join));
-        }
-      }
-    } catch (_) {
-    } finally {
-      client.close(force: true);
-    }
-  }
-
   Future<void> _startTunnel() async {
-    if (!tunnelEnabled) return;
+    // Libre OU domaine nommé — le natif choisit selon custom-domain.json.
+    if (!tunnelEnabled && !customDomainActive) return;
     if (_tunnelStarted) return;
     _tunnelStarted = true;
-    await _clearStalePublicUrl();
     _tunnelSub ??= CloudflareTunnel.events().listen((event) {
       final type = '${event['type'] ?? ''}';
       final value = '${event['value'] ?? ''}';
-      if (type == 'url' && _isAllowedPublicUrl(value)) {
-        publicUrl = value;
-        tunnelError = null;
-        unawaited(_persistPublicUrl(value));
-        _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
-        // Mint le QR chiffré tout de suite (ne pas attendre le poll /api/info).
-        unawaited(_fetchJoinUrl(value));
+      if (type == 'url') {
+        if (value.isEmpty) {
+          publicUrl = null;
+          tunnelError = null;
+          _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
+        } else if (_isAllowedPublicUrl(value)) {
+          publicUrl = value;
+          savedPublicUrl = value;
+          tunnelError = null;
+          unawaited(_persistPublicUrl(value));
+          _controller.add(NodeBridgeMessage(tag: 'publicUrl', message: value));
+        }
       } else if (type == 'error') {
         if (publicUrl != null) return;
         tunnelError = value;
@@ -343,11 +331,20 @@ class NodeBridgeService {
     publicUrl = null;
     tunnelError = null;
     _tunnelStarted = false;
-    await _clearStalePublicUrl();
     _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
   }
 
-  /// Active ou coupe le tunnel Cloudflare sans toucher au serveur Node.
+  Future<void> refreshCustomDomainFlag() async {
+    try {
+      final s = await CloudflareTunnel.getCustomDomain();
+      customDomainActive =
+          s.enabled && s.hasToken && s.publicUrl.trim().isNotEmpty;
+    } catch (_) {
+      customDomainActive = false;
+    }
+  }
+
+  /// Cloudflare libre uniquement. Si on l’allume, Mon domaine passe OFF côté appelant.
   Future<void> setTunnelEnabled(bool enabled) async {
     if (tunnelEnabled == enabled) {
       if (!enabled) return;
@@ -355,14 +352,40 @@ class NodeBridgeService {
     }
     tunnelEnabled = enabled;
     if (!enabled) {
-      await _stopTunnel();
-      _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'off'));
+      // Couper le libre seulement si pas de domaine nommé actif.
+      if (!customDomainActive) {
+        await _stopTunnel();
+        _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'off'));
+      }
       return;
     }
+    // Libre ON → domaine nommé doit être OFF (géré par l’UI avant l’appel).
+    customDomainActive = false;
     if (status == NodeStatus.running) {
+      _tunnelStarted = false;
       await _startTunnel();
     }
     _controller.add(const NodeBridgeMessage(tag: 'tunnel', message: 'on'));
+  }
+
+  /// Relance le tunnel après changement Mon domaine / Cloudflare libre.
+  Future<void> restartTunnel({bool clearPublicUrl = false}) async {
+    _tunnelStarted = false;
+    try {
+      await CloudflareTunnel.stop();
+    } catch (_) {}
+    if (clearPublicUrl) {
+      publicUrl = null;
+      savedPublicUrl = null;
+      tunnelError = null;
+      await _clearStalePublicUrl();
+      _controller.add(const NodeBridgeMessage(tag: 'publicUrl', message: ''));
+    } else {
+      tunnelError = null;
+    }
+    if (status != NodeStatus.running) return;
+    if (!tunnelEnabled && !customDomainActive) return;
+    await _startTunnel();
   }
 
   /// Lance Node.js (Foreground Service, sinon dans le process Flutter).
@@ -371,17 +394,13 @@ class NodeBridgeService {
     if (status == NodeStatus.starting) return true;
     lastError = null;
     status = NodeStatus.starting;
+    await rememberShareUrl();
     _pollStarted = false;
     await _ensureListener();
     await _waitForCopiedAssets();
     try {
       await const MethodChannel('gamelle/github').invokeMethod<void>('applyOverlay');
     } catch (_) {}
-    // Coupe une éventuelle instance zombie qui occupe :3000.
-    try {
-      await const MethodChannel('gamelle/github').invokeMethod<void>('stopNode');
-    } catch (_) {}
-    await Future<void>.delayed(const Duration(milliseconds: 500));
     try {
       try {
         await Nodejs.startService(
@@ -418,7 +437,6 @@ class NodeBridgeService {
     _pollStarted = false;
     _infoPollStarted = false;
     pairCode = null;
-    joinUrl = null;
     _controller.add(const NodeBridgeMessage(tag: 'node', message: 'STOPPED'));
   }
 
@@ -439,7 +457,6 @@ class NodeBridgeService {
     } catch (_) {}
     status = NodeStatus.idle;
     publicUrl = null;
-    joinUrl = null;
     _tunnelStarted = false;
     _pollStarted = false;
     _infoPollStarted = false;
