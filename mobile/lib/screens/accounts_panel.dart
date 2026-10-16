@@ -54,7 +54,7 @@ class _AccountsPanelState extends State<AccountsPanel> {
     final base = NodeBridgeService.instance.localUrl;
     final uri = Uri.tryParse(base);
     if (uri == null || uri.host.isEmpty) {
-      return Uri.parse('https://127.0.0.1:3000$path');
+      return Uri.parse('http://127.0.0.1:3000$path');
     }
     return uri.replace(path: path, query: null, fragment: null);
   }

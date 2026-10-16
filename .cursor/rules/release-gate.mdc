@@ -14,9 +14,10 @@ alwaysApply: true
 
 ## Mandatory checks before asking to publish
 Run `tools/pre-release-check.sh` (or equivalent) and confirm:
-- Node listens with **`http.createServer`** on `:3000` (never local HTTPS for the tablet poll)
-- `http://127.0.0.1:PORT/` and `/api/info` return 200 over **HTTP**
+- Node listens with **`http.createServer`** on **`127.0.0.1:3000`** only (never `0.0.0.0`, never local HTTPS)
+- `http://127.0.0.1:PORT/` and `/api/info` return 200 over **HTTP**; `localUrl` is loopback (no LAN IP)
 - HTTPS on the same local port is refused / fails
+- Distant access is Cloudflare only (tunnel → HTTP origin on loopback)
 - Sensitive routes: remote (spoofed CF headers) → 401/403; local → allowed where expected
 - Pairing: `/api/pair/join-url` local OK; `/j/<token>` decrypts; plaintext `/c/CODE` rejected or redirected safely
 - Flutter contract: poll URLs remain `http://127.0.0.1:3000` (unless user approved changing them)

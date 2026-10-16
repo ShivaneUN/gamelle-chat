@@ -683,7 +683,8 @@ app.get('/api/info', (req, res) => {
     const base = resolvePublicBase();
     const payload = {
       publicUrl: base,
-      localUrl: `http://${getLocalIp()}:${PORT}`,
+      // Loopback only — pas d’écoute LAN ; distant = Cloudflare uniquement.
+      localUrl: `http://127.0.0.1:${PORT}`,
       version: updater.pkgVersion(),
     };
     // joinUrl (token AES) uniquement depuis la tablette — jamais le code en clair.
@@ -1466,24 +1467,25 @@ function onHttpListening() {
   // Signal direct à Flutter (ne dépend pas du parse de console.log).
   try { notifyFlutter('node', 'LISTENING'); } catch (e) {}
   setImmediate(migrateMediaInBackground);
-  const ip = getLocalIp();
   console.log('\n=== Gamelle Chat ===');
-  console.log(`Sur la tablette (récepteur) : http://127.0.0.1:${PORT}`);
-  console.log(`Même WiFi                   : http://${ip}:${PORT}`);
-  console.log('Domaine : le tunnel nommé parle en HTTP à ce serveur (ingress Cloudflare).');
+  console.log(`Sur la tablette (loopback)  : http://127.0.0.1:${PORT}`);
+  console.log('LAN Wi‑Fi                   : fermé (écoute 127.0.0.1 seulement)');
+  console.log('Distant                     : Cloudflare HTTPS uniquement');
+  console.log('Domaine : le tunnel nommé parle en HTTP à l’origine locale (ingress).');
   // Sur la tablette, Android ouvre le seul cloudflared. Node n'en lance pas un second.
   if (process.env.TUNNEL === '0' || isMobileBundle()) {
     console.log(isMobileBundle()
       ? 'Tunnel : un seul connecteur, ouvert par l’application.'
-      : 'Tunnel distant désactivé (TUNNEL=0). Hors WiFi, ça ne marchera pas.');
+      : 'Tunnel distant désactivé (TUNNEL=0). Sans Cloudflare, pas d’accès distant.');
     console.log('================================================\n');
   } else {
-    console.log('Ouverture de l\'accès distant (autre WiFi / 4G)...');
+    console.log('Ouverture de l\'accès distant (Cloudflare)...');
     startPublicTunnel(`http://127.0.0.1:${TUNNEL_PORT}`);
   }
 }
 
-server.listen(PORT, '0.0.0.0', onHttpListening);
+// Pas d’écoute 0.0.0.0 : voisin Wi‑Fi ne peut pas joindre :3000. Distant = tunnel.
+server.listen(PORT, '127.0.0.1', onHttpListening);
 
 function markPublicUrl(url) {
   publicUrl = String(url || '').replace(/\/$/, '');

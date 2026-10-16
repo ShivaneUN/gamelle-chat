@@ -46,6 +46,21 @@ if rg -n "localUrl: \`https://" server.js >/dev/null; then
 else
   ok "server.js: localUrl pas en https://"
 fi
+if rg -n "server\.listen\(PORT, '127\.0\.0\.1'" server.js >/dev/null; then
+  ok "server.js: listen 127.0.0.1 seulement"
+else
+  bad "server.js: listen pas limité à 127.0.0.1"
+fi
+if rg -n "server\.listen\(PORT, '0\.0\.0\.0'" server.js >/dev/null; then
+  bad "server.js: encore listen 0.0.0.0 (LAN ouvert)"
+else
+  ok "server.js: pas de listen 0.0.0.0"
+fi
+if rg -n "localUrl: \`http://127\.0\.0\.1:" server.js >/dev/null; then
+  ok "server.js: localUrl = http://127.0.0.1"
+else
+  bad "server.js: localUrl pas en 127.0.0.1"
+fi
 if [[ -f mobile/lib/services/node_bridge_service.dart ]]; then
   if rg -n "http://127\.0\.0\.1:3000" mobile/lib/services/node_bridge_service.dart >/dev/null; then
     ok "Flutter poll http://127.0.0.1:3000"
@@ -100,8 +115,11 @@ fi
 
 info="$(curl -sf --connect-timeout 2 "$BASE/api/info" || true)"
 echo "$info" | rg -q '"version"' && ok "/api/info JSON" || bad "/api/info JSON"
-echo "$info" | rg -q 'http://' && ok "/api/info localUrl http://" || bad "/api/info localUrl pas http://"
+echo "$info" | rg -q '"localUrl":"http://127.0.0.1:' && ok "/api/info localUrl loopback" || bad "/api/info localUrl pas 127.0.0.1"
 echo "$info" | rg -q 'https://[0-9]+\.[0-9]+' && bad "/api/info localUrl en https IP" || ok "/api/info sans localUrl https IP"
+# localUrl ne doit plus exposer une IP LAN
+echo "$info" | rg -q '"localUrl":"http://(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' \
+  && bad "/api/info localUrl expose une IP LAN" || ok "/api/info sans IP LAN"
 
 echo "=== 3) Local vs distant (Cloudflare spoof) ==="
 # Local loopback sans en-têtes CF
@@ -194,10 +212,20 @@ else
 fi
 
 echo "=== 7) Log démarrage ==="
-if rg -q "Sur la tablette \(récepteur\) : http://" "$LOG"; then
-  ok "banner HTTP tablette"
+if rg -q "Sur la tablette \(loopback\)" "$LOG" && rg -q "http://127.0.0.1" "$LOG"; then
+  ok "banner HTTP loopback"
 else
-  bad "banner HTTP tablette manquant"
+  bad "banner HTTP loopback manquant"
+fi
+if rg -q "écoute 127.0.0.1 seulement" "$LOG"; then
+  ok "banner LAN fermé"
+else
+  bad "banner LAN fermé manquant"
+fi
+if rg -q "Cloudflare HTTPS uniquement" "$LOG"; then
+  ok "banner distant Cloudflare"
+else
+  bad "banner distant Cloudflare manquant"
 fi
 if rg -q "https://localhost:${PORT}|https://127.0.0.1:${PORT}" "$LOG"; then
   bad "banner encore en https local"

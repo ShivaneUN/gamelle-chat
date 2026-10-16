@@ -143,13 +143,13 @@ class _SettingsPanelState extends State<SettingsPanel> {
         child: Column(
           children: [
             _SettingsTile(
-              icon: Icons.wifi_rounded,
-              title: 'Wi-Fi local',
+              icon: Icons.phonelink_rounded,
+              title: 'Tablette (loopback)',
               subtitle: _bridge.localUrl.replaceFirst(RegExp(r'^https?://'), ''),
-              onTap: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
+              onTap: () => _copy(_bridge.localUrl, done: 'Lien tablette copié'),
               trailing: IconButton(
                 tooltip: 'Copier',
-                onPressed: () => _copy(_bridge.localUrl, done: 'Lien local copié'),
+                onPressed: () => _copy(_bridge.localUrl, done: 'Lien tablette copié'),
                 icon: const Icon(Icons.copy_rounded, color: _accent),
               ),
             ),
